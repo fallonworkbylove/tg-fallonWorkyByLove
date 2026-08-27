@@ -21,6 +21,7 @@ const db = require('../db');
 const {
   generateReply,
   describeImage,
+  transcribeAudio,
 } = require('./aiResponder');
 const {
   findVoiceForText,
@@ -550,7 +551,7 @@ function sleep(ms) {
 
 /**
  * Вычисляет случайную задержку (в мс) в диапазоне [min, max] секунд.
- * Значения жёстко ограничиваютс�� рамками 1..60 секунд, чтобы бот всегда
+ * Значения жёстко ограничиваютс�� рамками 1..60 ��екунд, чтобы бот всегда
  * отвечал «по-человече��ки» и не завис на слишком долгой паузе.
  */
 function pickReplyDelayMs(settings) {
@@ -725,7 +726,7 @@ async function getDialogAgeHours(accountId, peerId) {
     return ms / (60 * 60 * 1000);
   } catch (err) {
     console.error(
-      `[Аккаунт ${accountId}] Не смог посчитать возраст диал��га (NFT-кампания выключена):`,
+      `[Аккаунт ${accountId}] Не смог посчитать возраст диал��га (NFT-камп��ния выключена):`,
       err.message,
     );
     return null;
@@ -1110,9 +1111,23 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
   // 1. Обычный текст (или по��пись отсутствует у медиа).
   const rawText = message.message || '';
 
-  // 2. Голосовое или аудио — распознавание отключено, ИИ не расшифровывает
-  // содержимое голосовых сообщений (возвращаем как есть, без транскрипции).
+  // 2. Голосовое или аудио — скачиваем и расшифровываем через Whisper.
   if (message.voice || message.audio) {
+    const client = getActiveClient(accountId);
+    if (!client) return rawText;
+
+    try {
+      const buffer = await client.downloadMedia(message, {});
+      if (buffer && buffer.length) {
+        const transcript = await transcribeAudio(buffer);
+        if (transcript) {
+          return rawText ? `${rawText}\n[Голосовое]: ${transcript}` : `[Голосовое]: ${transcript}`;
+        }
+      }
+    } catch (e) {
+      console.error(`[Аккаунт ${accountId}] Не удалось расшифровать голосовое:`, e.message);
+    }
+
     return rawText;
   }
 
@@ -1745,7 +1760,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 
       const peerId = String(sender.id);
 
-      // Если это сообщение сейчас ��опит live-обработчик — не вмешиваемся.
+      // Если это сообщение сей��ас ��опит live-обработчик — не вмешиваемся.
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
       // Если по диалогу идёт «пауза занятости» — не отвечаем, ждём таймер.
       if (deferredDialogs.has(bufferKey(accountId, peerId))) continue;
