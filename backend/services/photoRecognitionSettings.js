@@ -1,13 +1,14 @@
 const db = require('../db');
 
 // ---------------------------------------------------------------------------
-// СПИСОК ЧАТОВ С ОТКЛЮЧЁННЫМ РАСПОЗНАВАНИЕМ ФОТО.
+// СПИСОК ПОЛЬЗОВАТЕЛЕЙ С ОТКЛЮЧЁННЫМ РАСПОЗНАВАНИЕМ ФОТО.
 //
 // Список общий для ВСЕХ Telegram-сессий (аккаунтов) одного пользователя
-// панели: если чат (по User ID или @username собеседника) добавлен сюда,
-// ни один из аккаунтов не будет отправлять его фото в vision-модель —
-// сообщение просто пройдёт как текст (подпись) или будет проигнорировано,
-// как обычное фото без описания.
+// панели: если собеседник добавлен сюда по его @username, ни один из
+// аккаунтов не будет отправлять его фото в vision-модель — сообщение
+// просто пройдёт как текст (подпись) или будет проигнорировано, как
+// обычное фото без описания. Определение строго по username: у
+// собеседников без username распознавание фото заблокировать нельзя.
 // ---------------------------------------------------------------------------
 
 /**
@@ -44,21 +45,25 @@ async function getUserIdForAccount(accountId) {
 
 /**
  * Проверяет, отключено ли распознавание фото для этого собеседника
- * (по numeric peerId ИЛИ по username) для ВСЕХ сессий владельца аккаунта.
+ * ПО USERNAME (без @, без учёта регистра) для ВСЕХ сессий владельца аккаунта.
+ * Если у собеседника нет username — считаем, что он не может быть добавлен
+ * в список, и распознавание не блокируется.
  */
 async function isPhotoRecognitionDisabled(accountId, peerId, username) {
   try {
+    if (!username) return false;
+
     const userId = await getUserIdForAccount(accountId);
     if (!userId) return false;
 
-    const peerIdentifier = normalizeIdentifier(peerId);
-    const usernameIdentifier = username ? normalizeIdentifier(username) : peerIdentifier;
+    const usernameIdentifier = normalizeIdentifier(username);
+    if (!usernameIdentifier) return false;
 
     const [rows] = await db.execute(
       `SELECT id FROM photo_recognition_disabled_chats
-       WHERE user_id = ? AND chat_identifier IN (?, ?)
+       WHERE user_id = ? AND chat_identifier = ?
        LIMIT 1`,
-      [userId, peerIdentifier, usernameIdentifier],
+      [userId, usernameIdentifier],
     );
     return rows.length > 0;
   } catch (err) {
