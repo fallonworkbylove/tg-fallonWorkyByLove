@@ -1,0 +1,707 @@
+:root {
+  color-scheme: dark;
+  --bg: #111827;
+  --bg-grid: rgba(255, 255, 255, 0.05);
+  --card: #1f2937;
+  --text: #f9fafb;
+  --muted: #9ca3af;
+  --primary: #2563eb;
+  --primary-strong: #1d4ed8;
+  --danger: #ef4444;
+  --danger-strong: #dc2626;
+  --border: #374151;
+  --shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background-color: var(--bg);
+  background-image: linear-gradient(var(--bg-grid) 1px, transparent 1px), linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  color: var(--text);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  max-width: 430px;
+  /* dvh корректно учитывает адресную строку и клавиатуру на телефонах. */
+  min-height: 100dvh;
+  margin: 0 auto;
+  background: linear-gradient(180deg, #1f2937 0%, var(--bg) 100%);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding-bottom: 80px;
+}
+
+.topbar {
+  background: linear-gradient(135deg, #111827 0%, #24324d 100%);
+  color: white;
+  padding: 18px 20px 22px;
+  box-shadow: 0 8px 24px rgba(17, 24, 39, 0.18);
+}
+
+.topbar__content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.eyebrow {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  opacity: 0.78;
+  margin: 0 0 4px;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.content {
+  padding: 16px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tab-panel {
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tab-panel.active {
+  display: flex;
+}
+
+.card,
+.section-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  padding: 16px;
+  color: #f9fafb;
+}
+
+.panel-hero {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: linear-gradient(135deg, #f3f8ff 0%, #ffffff 100%);
+  color: #111827;
+}
+
+.panel-hero__icon {
+  font-size: 1.5rem;
+  background: #e7f1ff;
+  color: #111827;
+  border-radius: 14px;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+}
+
+.action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.btn {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: white;
+  box-shadow: 0 8px 20px rgba(47, 128, 237, 0.18);
+}
+
+.btn-primary:hover {
+  background: var(--primary-strong);
+}
+
+.btn-secondary {
+  background: #1e3a8a;
+  color: #dbeafe;
+}
+
+.btn-danger {
+  background: #ffe5e5;
+  color: var(--danger-strong);
+}
+
+.btn.small {
+  padding: 8px 12px;
+  font-size: 0.9rem;
+}
+
+.btn.full {
+  width: 100%;
+}
+
+.tg-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--bg);
+  background-image: linear-gradient(var(--bg-grid) 1px, transparent 1px), linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.tg-gate[hidden] {
+  display: none;
+}
+
+.tg-gate__card {
+  max-width: 360px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: center;
+}
+
+.tg-gate__text {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.tg-gate__hint {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.form-hint {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--primary);
+  border-radius: 12px;
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.stat-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px;
+  background: #18212f;
+}
+
+.stat-card strong {
+  display: block;
+  font-size: 1.15rem;
+  margin-bottom: 4px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.account-item,
+.lesson-item,
+.option-item {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px;
+  background: #18212f;
+  color: #d1d5db;
+}
+
+.account-item__head,
+.section-card__header,
+.lesson-item__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.badge-soft {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.badge.success {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge.warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+/* Индикатор реального подключения аккаунта (живой клиент в процессе). */
+.online-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.online-dot.is-online {
+  background: #16a34a;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.18);
+}
+
+.online-dot.is-offline {
+  background: #9ca3af;
+  box-shadow: 0 0 0 3px rgba(156, 163, 175, 0.18);
+}
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  color: #d1d5db;
+}
+
+input,
+textarea,
+select {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: white;
+  color: #111827;
+  /* 16px — минимум, при котором iOS/Safari НЕ зумит страницу при фокусе.
+     Именно из-за зума после открытия клавиатуры «не получалось опустить». */
+  font-size: 16px;
+  max-width: 100%;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.limits-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.limits-grid > div {
+  border-radius: 14px;
+  background: #f9fbff;
+  border: 1px solid var(--border);
+  padding: 10px;
+  color: #111827;
+}
+
+.list {
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.empty-state {
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  padding: 18px;
+  text-align: center;
+  background: #18212f;
+  color: #d1d5db;
+}
+
+.empty-state h3 {
+  margin-bottom: 6px;
+  color: #f9fafb;
+}
+
+.empty-state .btn {
+  margin-top: 10px;
+}
+
+.notice {
+  background: #fff4f4;
+  color: #b42318;
+  border: 1px solid #fecaca;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.bottom-nav {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 430px;
+  box-sizing: border-box;
+  z-index: 1000;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(17, 24, 39, 0.96);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(55, 65, 81, 0.9);
+}
+
+.nav-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 8px 2px;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.nav-btn.active {
+  background: #1e3a8a;
+  color: #dbeafe;
+}
+
+@media (max-width: 420px) {
+  .bottom-nav {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .nav-btn {
+    font-size: 0.68rem;
+    padding: 8px 1px;
+  }
+
+  .action-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- Модальное окно деталей аккаунта --- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(3, 7, 18, 0.72);
+  backdrop-filter: blur(4px);
+  animation: modal-fade 0.16s ease;
+  /* Оверлей сам прокручивается: когда на телефоне открыта клавиатура и вьюпорт
+     становится низким, содержимое можно доскроллить, а не «упирается». */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  }
+  
+.modal-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: modal-pop 0.18s ease;
+  /* Карточка никогда не выше видимой области (dvh учитывает клавиатуру),
+     внутри — своя прокрутка. flex-shrink:0 в старых webkit мешает — фиксируем. */
+  max-height: calc(100dvh - 40px);
+  /* На iOS не делаем вложенный scroll-контейнер: скроллится overlay.
+     Два overflow-y подряд в Telegram WebView часто блокируют touch-scroll. */
+  overflow: visible;
+  overscroll-behavior: auto;
+  flex: 0 0 auto;
+  }
+
+.modal-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-card__eyebrow {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.modal-card__title {
+  font-size: 1.25rem;
+  color: var(--text);
+}
+
+.modal-close {
+  border: none;
+  background: #18212f;
+  color: var(--muted);
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.modal-close:hover {
+  background: var(--danger);
+  color: white;
+}
+
+.modal-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.modal-meta__item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #18212f;
+}
+
+.modal-meta__label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+.modal-meta__value {
+  font-weight: 700;
+}
+
+.modal-meta__value.is-on {
+  color: #4ade80;
+}
+
+.modal-meta__value.is-off {
+  color: #fbbf24;
+}
+
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  color: #d1d5db;
+}
+
+.modal-field textarea {
+  width: 100%;
+  min-height: 120px;
+  line-height: 1.5;
+}
+
+.modal-field__hint {
+  font-weight: 500;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.modal-delay {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.modal-delay input {
+  width: 100%;
+  text-align: center;
+}
+
+.modal-delay__sep {
+  color: var(--muted);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.modal-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  /* Кнопки «прилипают» к низу прокручиваемой карточки: даже при открытой
+     клавиатуре «Сохранить» остаётся доступным, не надо доскроллировать. */
+  position: sticky;
+  bottom: -20px;
+  z-index: 1;
+  background: var(--card);
+  padding: 12px 0 calc(4px + env(safe-area-inset-bottom, 0px));
+  margin-top: auto;
+  box-shadow: 0 -10px 16px -8px var(--card);
+  }
+
+/* Пока модалка открыта — фон под ней не скроллится и не «дёргается»,
+   когда телефон открывает/закрывает клавиатуру. */
+body.modal-open {
+  overflow: hidden;
+}
+
+/* Клавиатура открыта — нижняя навигация не должна закрывать активное поле. */
+body.keyboard-open .bottom-nav {
+  display: none;
+}
+
+body.keyboard-open .app-shell {
+  padding-bottom: 16px;
+}
+
+/* --- Мобильная адаптация ��одалки (телефоны) --- */
+@media (max-width: 560px) {
+  .modal-overlay {
+    /* Прижимаем карточку к верху: при открытой клавиатуре центрирование
+       уводит поля за пределы экрана. */
+    align-items: flex-start;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .modal-overlay {
+    height: var(--keyboard-viewport-height, 100%);
+    max-height: var(--keyboard-viewport-height, 100%);
+  }
+
+  .modal-card {
+    max-width: 100%;
+    max-height: none;
+    min-height: min-content;
+    padding: 16px;
+    gap: 14px;
+    border-radius: 18px;
+    margin: 0 auto;
+  }
+
+  .modal-actions {
+    /* Sticky внутри iOS WebView может перехватывать жест прокрутки.
+       Кнопки остаются обычным последним блоком карточки. */
+    position: static;
+    padding: 10px 0 calc(2px + env(safe-area-inset-bottom, 0px));
+    box-shadow: none;
+  }
+
+  /* Промпт — самое высокое поле. На телефоне ограничиваем, чтобы поля ниже
+     (ссылка на медиа-чат) были достижимы без длинной прокрутки. */
+  .modal-field textarea {
+    min-height: 96px;
+    max-height: 40dvh;
+  }
+
+  /* Крупнее тап-таргеты на кнопках модалки. */
+  .modal-actions .btn {
+    padding: 12px 14px;
+  }
+}
+
+/* Очень низкий экран (клавиатура занимает почти всё) — ужимаем отступы. */
+@media (max-height: 480px) {
+  .modal-overlay {
+    align-items: flex-start;
+    padding: 8px;
+  }
+
+  .modal-card {
+    max-height: calc(100dvh - 16px);
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .modal-field textarea {
+    min-height: 64px;
+  }
+}
+
+@keyframes modal-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

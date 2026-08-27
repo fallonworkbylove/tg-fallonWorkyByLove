@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- interactive-widget=resizes-content: клавиатура СЖИМАЕТ вьюпорт, поэтому
+         100dvh и прокрутка модалки работают корректно на телефоне.
+         viewport-fit=cover + safe-area отступы в CSS — для «чёлки» и жестовой полосы. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <title>Telegram Mini App</title>
+    <link rel="stylesheet" href="styles.css?v=3" />
+  </head>
+  <body>
+    <div id="tg-gate" class="tg-gate" hidden>
+      <div class="tg-gate__card card">
+        <p class="eyebrow">Telegram Mini App</p>
+        <h2>Откройте в Telegram</h2>
+        <p class="tg-gate__text">Это приложение работает внутри Telegram. Запустите его через вашего бота, чтобы авторизоваться и загрузить данные.</p>
+        <button id="tg-gate-bypass" class="btn btn-secondary full" type="button">Продолжить для теста</button>
+        <p class="tg-gate__hint">Тестовый режим работает без данных Telegram и предназначен только для разработки.</p>
+      </div>
+    </div>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="topbar__content">
+          <div>
+            <p class="eyebrow">Telegram Mini App</p>
+            <h1 id="page-title">Панель</h1>
+          </div>
+          <button class="icon-btn" type="button">⋯</button>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="tab-panel active" data-panel="panel">
+          <div class="panel-hero card">
+            <div class="panel-hero__icon">📊</div>
+            <div>
+              <h2>Панель</h2>
+              <p>Управляйте аккаунтами, примерами и настройками в одном месте.</p>
+            </div>
+          </div>
+
+          <div class="action-row">
+            <button class="btn btn-primary" data-action="refresh" type="button">Обновить</button>
+            <button class="btn btn-secondary" data-action="open-accounts" type="button">Добавить аккаунт</button>
+            <button class="btn btn-secondary" data-action="topup" type="button">Пополнить</button>
+            <button class="btn btn-danger" data-action="logout" type="button">Выйти</button>
+          </div>
+
+          <div id="panel-summary" class="stats-grid"></div>
+          <div id="panel-accounts" class="stack"></div>
+        </section>
+
+        <section class="tab-panel" data-panel="accounts">
+          <div class="section-card card">
+            <h2>Подключить аккаунт</h2>
+            <form id="account-form" class="form-grid">
+              <label>
+                <span>Телефон</span>
+                <input id="account-phone" type="text" placeholder="+79990000000" required />
+              </label>
+
+              <label id="account-code-field" hidden>
+                <span>Код из Telegram</span>
+                <input id="account-code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="12345" />
+              </label>
+
+              <label id="account-password-field" hidden>
+                <span>Облачный пароль (2FA)</span>
+                <input id="account-password" type="password" placeholder="Ваш пароль двухфакторной защиты" />
+              </label>
+
+              <label>
+                <span>Промпт аккаунта</span>
+                <textarea id="account-prompt" rows="3" placeholder="Ты отвечаешь спокойно, уверенно и по делу."></textarea>
+              </label>
+
+              <p id="account-form-hint" class="form-hint" hidden></p>
+
+              <button id="account-submit" class="btn btn-primary full" type="submit">Получить код</button>
+            </form>
+          </div>
+
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Лимиты</h3>
+              <span class="badge badge-soft">Бесплатно</span>
+            </div>
+            <div id="limits-values" class="limits-grid">
+              <div>
+                <strong>0</strong>
+                <p>Использовано</p>
+              </div>
+              <div>
+                <strong>1</strong>
+                <p>Доступно</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Список аккаунтов</h3>
+              <button class="btn btn-secondary small" type="button">Обновить</button>
+            </div>
+            <div id="accounts-list" class="stack"></div>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="learn">
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Обучающие примеры</h3>
+              <span class="badge badge-soft">Примеры</span>
+            </div>
+            <div id="learn-list" class="stack"></div>
+          </div>
+
+          <div class="section-card card">
+            <h3>Новый пример</h3>
+            <form id="example-form" class="form-grid">
+              <label>
+                <span>Аккаунт</span>
+                <select id="example-account"></select>
+              </label>
+              <label>
+                <span>Сообщение человека</span>
+                <textarea id="example-client" rows="2" placeholder="Что написал человек"></textarea>
+              </label>
+              <label>
+                <span>Как надо ответить</span>
+                <textarea id="example-reply" rows="2" placeholder="Подходящий ответ"></textarea>
+              </label>
+              <label>
+                <span>Заметка</span>
+                <input id="example-note" type="text" placeholder="Например: отвечать конкретнее, без воды" />
+              </label>
+              <button class="btn btn-primary full" type="submit" data-action="save-example">Сохранить пример</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="info">
+          <div class="section-card card">
+            <h2>О сервисе</h2>
+            <p>Это Telegram Mini App для управления AI-ассистентами и обучением сценариев ответов для аккаунтов.</p>
+            <h3>Blacklist</h3>
+            <p>Blacklist — это список Telegram User ID, которым AI-автоответчик не будет отвечать. Если человек находится в blacklist, система увидит входящее сообщение, но не отправит его в AI и не будет писать ответ. Это удобно для блокировки нежелательных пользователей, спама или людей, которым должен отвечать только человек.</p>
+            <h3>Инструкция</h3>
+            <ul class="list">
+              <li>Добавляйте аккаунты с промптом и проверяйте лимиты.</li>
+              <li>Сохраняйте проверенные сценарии в разделе Учить.</li>
+              <li>Настройте задержку и черный список в разделе Опции.</li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="options">
+          <div class="section-card card">
+            <h2>Опции</h2>
+            <div class="form-grid">
+              <label>
+                <span>Задержка ответов</span>
+                <input id="delay-input" type="number" min="15" max="25" value="15" />
+              </label>
+              <label>
+                <span>Минимум секунд</span>
+                <input id="min-input" type="number" min="15" max="25" value="15" />
+              </label>
+              <label>
+                <span>Максимум секунд</span>
+                <input id="max-input" type="number" min="15" max="25" value="25" />
+              </label>
+              <button id="save-options" class="btn btn-primary" type="button" data-action="save-options">Сохранить</button>
+              <label>
+                <span>Blacklist</span>
+                <input id="blacklist-input" type="text" placeholder="User ID" />
+              </label>
+              <button id="add-blacklist" class="btn btn-secondary" type="button">Добавить User ID</button>
+              <button id="clear-blacklist" class="btn btn-danger" type="button">Очистить blacklist</button>
+            </div>
+            <div id="options-preview" class="stack"></div>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="stats">
+          <div id="stats-cards" class="stats-grid"></div>
+          <div class="section-card card">
+            <h3>Сообщения по аккаунтам</h3>
+            <div id="stats-accounts" class="stack"></div>
+          </div>
+        </section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="Вкладки">
+        <button class="nav-btn active" data-tab="panel" type="button">Панель</button>
+        <button class="nav-btn" data-tab="accounts" type="button">Аккаунты</button>
+        <button class="nav-btn" data-tab="learn" type="button">Учить</button>
+        <button class="nav-btn" data-tab="info" type="button">Инфо</button>
+        <button class="nav-btn" data-tab="options" type="button">Опции</button>
+        <button class="nav-btn" data-tab="stats" type="button">Статы</button>
+      </nav>
+    </div>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="app.js?v=3"></script>
+    </body>
+    </html>
