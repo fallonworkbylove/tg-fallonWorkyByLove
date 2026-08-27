@@ -960,7 +960,7 @@ function renderPhotoExceptions() {
 
   if (!state.photoExceptions.length) {
     container.innerHTML =
-      '<p class="muted">Список пуст — распознавание фото работает во всех чатах.</p>';
+      '<p class="muted">Список пуст — распознавание фото работает для всех пользователей.</p>';
     return;
   }
 
@@ -1501,7 +1501,7 @@ async function deleteBlacklistItem(id) {
 }
 
 /**
- * Удаление одного чата из списка исключений распознавания фото.
+ * Удаление одного пользователя из списка исключений распознавания фото.
  */
 async function deletePhotoExceptionItem(id) {
   if (id === null || id === undefined) {
@@ -1513,21 +1513,21 @@ async function deletePhotoExceptionItem(id) {
     await loadPhotoExceptions();
 
     render();
-    notify('Чат удалён из списка исключений');
+    notify('Пользователь удалён из списка исключений');
   } catch (error) {
     handleRequestError(error);
   }
 }
 
 /**
- * Добавление чата (ID или username) в список исключений
- * распознавания фото — применяется для всех сессий.
+ * Добавление пользователя (ID или username) в список исключений
+ * распознавания фото — применяется для всех сессий (аккаунтов).
  */
 async function handleAddPhotoException() {
   const rawValue = elements.photoExceptionInput?.value?.trim();
 
   if (!rawValue) {
-    notify('Введите ID или username чата');
+    notify('Введите ID или username пользователя');
     return;
   }
 
@@ -1540,7 +1540,7 @@ async function handleAddPhotoException() {
     }
 
     render();
-    notify('Чат добавлен в список исключений');
+    notify('Пользователь добавлен в список исключений');
   } catch (error) {
     handleRequestError(error);
   }
