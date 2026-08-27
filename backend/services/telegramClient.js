@@ -20,7 +20,6 @@ const { NewMessage } = require('telegram/events');
 const db = require('../db');
 const {
   generateReply,
-  transcribeAudio,
   describeImage,
 } = require('./aiResponder');
 const {
@@ -551,7 +550,7 @@ function sleep(ms) {
 
 /**
  * Вычисляет случайную задержку (в мс) в диапазоне [min, max] секунд.
- * Значения жёстко ограничиваются рамками 1..60 секунд, чтобы бот всегда
+ * Значения жёстко ограничиваютс�� рамками 1..60 секунд, чтобы бот всегда
  * отвечал «по-человече��ки» и не завис на слишком долгой паузе.
  */
 function pickReplyDelayMs(settings) {
@@ -726,7 +725,7 @@ async function getDialogAgeHours(accountId, peerId) {
     return ms / (60 * 60 * 1000);
   } catch (err) {
     console.error(
-      `[Аккаунт ${accountId}] Не смог посчитать возраст диалога (NFT-кампания выключена):`,
+      `[Аккаунт ${accountId}] Не смог посчитать возраст диал��га (NFT-кампания выключена):`,
       err.message,
     );
     return null;
@@ -1111,24 +1110,9 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
   // 1. Обычный текст (или по��пись отсутствует у медиа).
   const rawText = message.message || '';
 
-  // 2. Голосовое или аудио — расшифровываем.
+  // 2. Голосовое или аудио — распознавание отключено, ИИ не расшифровывает
+  // содержимое голосовых сообщений (возвращаем как есть, без транскрипции).
   if (message.voice || message.audio) {
-    const client = getActiveClient(accountId);
-    if (!client) return rawText;
-    try {
-      const buffer = await client.downloadMedia(message, {});
-      if (buffer && buffer.length) {
-        const transcript = await transcribeAudio(buffer, 'voice.ogg');
-        if (transcript) {
-          console.log(
-            `[Аккаунт ${accountId}] Голосовое расшифровано: "${transcript}"`,
-          );
-          return `[голосовое сообщение]: ${transcript}`;
-        }
-      }
-    } catch (e) {
-      console.error('Не удалось скачать/расшифровать голосовое:', e.message);
-    }
     return rawText;
   }
 
@@ -1429,7 +1413,7 @@ async function processBufferedMessages(
     //
     // ВАРИАНТ Б: если человек ЯВНО просит фото/видео/кружок, а у аккаунта
     // задан медиа-чат — голосовые заготовки НЕ перехватывают запрос. Иначе
-    // «запиши кружок, что делаешь» ловилось бы триггером «что делаешь» и
+    // «запиши кру��ок, что делаешь» ловилось бы триггером «что делаешь» и
     // уходило голосовое вместо кружка.
     let voice =
       explicitMediaRequest && mediaLinkEarly ? null : findVoiceForText(text);
@@ -1749,7 +1733,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 
       const message = dialog.message;
       if (!message) continue;
-      // Последнее сообщение НАШЕ -> мы уже ответили -> пропускаем.
+      // Последнее сообщение НАШЕ -> мы уже ответили -> пропуска��м.
       if (message.out) continue;
       // Слишком свежие сообщения обрабатывает live-обработчик — не мешаем ему.
       if (minAgeSec > 0 && message.date && nowSec - message.date < minAgeSec) {
