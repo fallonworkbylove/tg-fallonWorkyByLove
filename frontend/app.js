@@ -1006,6 +1006,7 @@ function renderOptions() {
   }
 
   renderBlacklist();
+  renderPhotoExceptions();
 }
 
 function renderStats() {
@@ -1480,6 +1481,86 @@ async function handleClearHistory(accountId, peerId) {
   }
 }
 
+/**
+ * Удаление одной записи из blacklist.
+ */
+async function deleteBlacklistItem(id) {
+  if (id === null || id === undefined) {
+    return;
+  }
+
+  try {
+    await api.deleteBlacklistItem(id);
+    await loadBlacklist();
+
+    render();
+    notify('Запись удалена из blacklist');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
+/**
+ * Удаление одного чата из списка исключений распознавания фото.
+ */
+async function deletePhotoExceptionItem(id) {
+  if (id === null || id === undefined) {
+    return;
+  }
+
+  try {
+    await api.deletePhotoException(id);
+    await loadPhotoExceptions();
+
+    render();
+    notify('Чат удалён из списка исключений');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
+/**
+ * Добавление чата (ID или username) в список исключений
+ * распознавания фото — применяется для всех сессий.
+ */
+async function handleAddPhotoException() {
+  const rawValue = elements.photoExceptionInput?.value?.trim();
+
+  if (!rawValue) {
+    notify('Введите ID или username чата');
+    return;
+  }
+
+  try {
+    await api.addPhotoException(rawValue);
+    await loadPhotoExceptions();
+
+    if (elements.photoExceptionInput) {
+      elements.photoExceptionInput.value = '';
+    }
+
+    render();
+    notify('Чат добавлен в список исключений');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
+/**
+ * Полная очистка списка исключений распознавания фото.
+ */
+async function handleClearPhotoExceptions() {
+  try {
+    await api.clearPhotoExceptions();
+    await loadPhotoExceptions();
+
+    render();
+    notify('Список исключений очищен');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
 function updateOptionsPreview() {
   state.options.delay = toNumber(
     elements.delayInput?.value,
@@ -1663,7 +1744,7 @@ function handleDetails(accountId) {
             aria-label="Максимальная задержка в секундах"
           />
         </div>
-        <small class="modal-field__hint">Бот ответит через случайное время в этом диапазоне (1–60 сек). Например 10 и 20 — ответ придёт через 10–20 секунд.</small>
+        <small class="modal-field__hint">Бот ответит через случайное время в этом диапазоне (1–60 сек). Например 10 и 20 — ответ придёт через 10–20 се��унд.</small>
       </div>
 
       <label class="modal-field">
@@ -1765,6 +1846,14 @@ function bindEvents() {
     elements.clearBlacklist.addEventListener('click', clearBlacklist);
   }
 
+  if (elements.addPhotoException) {
+    elements.addPhotoException.addEventListener('click', handleAddPhotoException);
+  }
+
+  if (elements.clearPhotoExceptions) {
+    elements.clearPhotoExceptions.addEventListener('click', handleClearPhotoExceptions);
+  }
+
   [
     elements.delayInput,
     elements.minInput,
@@ -1835,6 +1924,11 @@ function bindEvents() {
 
     if (action === 'delete-blacklist') {
       deleteBlacklistItem(id);
+      return;
+    }
+
+    if (action === 'delete-photo-exception') {
+      deletePhotoExceptionItem(id);
       return;
     }
 
