@@ -38,7 +38,7 @@ const {
 const { isPhotoRecognitionDisabled } = require('./photoRecognitionSettings');
 
 // Сколько последних сообщений диалога передавать модели как контекст.
-const HISTORY_LIMIT = 20;
+const HISTORY_LIMIT = 10;
 
 const apiId = Number(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;
@@ -1254,7 +1254,7 @@ async function flushMessageBuffer(accountId, peerId, senderName) {
 
   messageBuffers.delete(key);
 
-  // Склеиваем все сообщения серии в один текст (каждое с новой строки).
+  // Склеиваем все сообщения серии в один текст (каждое с новой стро��и).
   const combinedText = entry.texts.join('\n').trim();
 
   await processBufferedMessages(
@@ -1419,7 +1419,7 @@ async function processBufferedMessages(
       explicitMediaRequest && mediaLinkEarly ? null : findVoiceForText(text);
     if (voice && (await wasVoiceSent(accountId, peerId, voice.fileName))) {
       console.log(
-        `[Аккаунт ${accountId}] Голосовое "${voice.fileName}" уже отправлялось ${senderName} — пропус��аю.`,
+        `[Аккаунт ${accountId}] Голосовое "${voice.fileName}" уже отправлялось ${senderName} �� пропус��аю.`,
       );
       // Раньше на voiceOnly-правиле здесь стоял return — и бот молчал совсем:
       // голосовое пропускал, а текст не генерировал (человек оставался без
@@ -1745,7 +1745,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 
       const peerId = String(sender.id);
 
-      // Если это сообщение сейчас копит live-обработчик — не вмешиваемся.
+      // Если это сообщение сейчас ��опит live-обработчик — не вмешиваемся.
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
       // Если по диалогу идёт «пауза занятости» — не отвечаем, ждём таймер.
       if (deferredDialogs.has(bufferKey(accountId, peerId))) continue;
