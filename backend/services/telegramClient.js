@@ -211,7 +211,7 @@ const AGGREGATE_WINDOW_MS = 8000;
 const AGGREGATE_MAX_WAIT_MS = 45000;
 
 // ---------------------------------------------------------------------------
-// «ЖИВОЙ» ИГНОР + РЕ-ЭНГЕЙДЖМЕНТ.
+// «ЖИВ��Й» ИГНОР + РЕ-ЭНГЕЙДЖМЕНТ.
 // Иногда бот, вместо того чтобы сразу ответить, ведёт себя как занятой человек:
 // молчит некоторое время (10–60 мин), а потом САМ пишет собеседнику вопрос
 // («что делаешь?»). Это делает поведение менее «ботским».
@@ -1133,7 +1133,8 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
   }
 
   // 3. Фото — распознаём содержимое, кроме чатов из списка исключений
-  // (распознавание для них отключено во всех сессиях пользователя).
+  // (распознавание для них отключено во всех сессиях пользователя) и кроме
+  // собеседников, спрятанных в АРХИВ (folder_id = 1) — им фото не разбираем.
   if (message.photo) {
     if (peerId && (await isPhotoRecognitionDisabled(accountId, peerId, peerUsername))) {
       console.log(
@@ -1144,6 +1145,19 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
 
     const client = getActiveClient(accountId);
     if (!client) return rawText;
+
+    try {
+      const inputPeer = await message.getInputSender();
+      if (inputPeer && (await isPeerArchived(client, inputPeer))) {
+        console.log(
+          `[Аккаунт ${accountId}] Собеседник в архиве — не распознаю фото.`,
+        );
+        return rawText;
+      }
+    } catch (e) {
+      console.error('Не удалось проверить архив перед распознаванием фото:', e.message);
+    }
+
     try {
       const buffer = await client.downloadMedia(message, {});
       if (buffer && buffer.length) {
