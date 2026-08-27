@@ -1,3 +1,4 @@
+const path = require('path');
 const { TelegramClient, Api } = require('telegram');
 const { ConnectionTCPFull } = require('telegram/network');
 const { StringSession } = require('telegram/sessions');
