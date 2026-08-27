@@ -149,6 +149,24 @@ const api = {
       method: 'DELETE',
     }),
 
+  getPhotoExceptions: () => request('/photo-exceptions'),
+
+  addPhotoException: (chatIdentifier) =>
+    request('/photo-exceptions', {
+      method: 'POST',
+      body: { chatIdentifier },
+    }),
+
+  clearPhotoExceptions: () =>
+    request('/photo-exceptions', {
+      method: 'DELETE',
+    }),
+
+  deletePhotoException: (id) =>
+    request(`/photo-exceptions/${id}`, {
+      method: 'DELETE',
+    }),
+
   getExamples: () => request('/examples'),
 
   addExample: (data) =>
@@ -193,6 +211,7 @@ const state = {
   },
 
   blacklist: [],
+  photoExceptions: [],
 
   stats: {
     messages: 0,
@@ -223,6 +242,10 @@ const elements = {
   blacklistInput: document.getElementById('blacklist-input'),
   addBlacklist: document.getElementById('add-blacklist'),
   clearBlacklist: document.getElementById('clear-blacklist'),
+  photoExceptionInput: document.getElementById('photo-exception-input'),
+  addPhotoException: document.getElementById('add-photo-exception'),
+  clearPhotoExceptions: document.getElementById('clear-photo-exceptions'),
+  photoExceptionsList: document.getElementById('photo-exceptions-list'),
 };
 
 
@@ -451,6 +474,11 @@ async function loadBlacklist() {
   state.blacklist = getResponseArray(response, 'blacklist');
 }
 
+async function loadPhotoExceptions() {
+  const response = await api.getPhotoExceptions();
+  state.photoExceptions = getResponseArray(response, 'chats');
+}
+
 async function loadExamples() {
   const response = await api.getExamples();
   state.examples = getResponseArray(response, 'examples');
@@ -496,6 +524,7 @@ async function loadAllData() {
     loadAccounts(),
     loadOptions(),
     loadBlacklist(),
+    loadPhotoExceptions(),
     loadExamples(),
     loadConversations(),
     loadStats(),
@@ -591,7 +620,7 @@ function renderPanel() {
             <strong>
               <span
                 class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"
-                title="${isOnline ? 'Подключён и слушает сообщения' : 'Не подключён'}"
+                title="${isOnline ? 'Подключён и слушает сообщения' : '��е подключён'}"
               ></span>
               ${escapeHtml(account.phone)}
             </strong>
@@ -920,6 +949,47 @@ function renderBlacklist() {
       <p>${blacklistHtml}</p>
     </div>
   `;
+}
+
+function renderPhotoExceptions() {
+  const container = elements.photoExceptionsList;
+
+  if (!container) {
+    return;
+  }
+
+  if (!state.photoExceptions.length) {
+    container.innerHTML =
+      '<p class="muted">Список пуст — распознавание фото работает во всех чатах.</p>';
+    return;
+  }
+
+  container.innerHTML = state.photoExceptions
+    .map((item) => {
+      const identifier = item?.chat_identifier ?? item?.chatIdentifier ?? '';
+      const itemId = item?.id;
+
+      return `
+        <span class="badge badge-soft">
+          ${escapeHtml(identifier)}
+          ${
+            itemId !== null && itemId !== undefined
+              ? `
+                <button
+                  type="button"
+                  data-action="delete-photo-exception"
+                  data-id="${itemId}"
+                  aria-label="Удалить чат из списка"
+                >
+                  ×
+                </button>
+              `
+              : ''
+          }
+        </span>
+      `;
+    })
+    .join(' ');
 }
 
 function renderOptions() {

@@ -35,6 +35,7 @@ const {
   mediaTag,
   clearMediaCache,
 } = require('./mediaReplies');
+const { isPhotoRecognitionDisabled } = require('./photoRecognitionSettings');
 
 // Сколько последних сообщений диалога передавать модели как контекст.
 const HISTORY_LIMIT = 20;
@@ -859,7 +860,7 @@ function extractMediaRequest(reply) {
     .trim();
 
   // Подстраховка: если модель всё же прислала отказ ВМЕСТЕ с медиа-токеном
-  // (например «неа, пока рано)» + <<PHOTO>>), убираем противоречивый текст —
+  // (например «неа, пока рано)» + <<PHOTO>>), убираем противореч��вый текст —
   // раз медиа реально уходит, отказ выглядит абсурдно. Оставляем пусто:
   // фото уйдёт со своей случайной дружелюбной подписью.
   if (mediaType && REFUSAL_RE.test(text)) {
@@ -1064,7 +1065,7 @@ function parseDurationOverTwoWeeks(text) {
   }
 
   // Дни: больше 14 дней.
-  if (/(день|дня|дней|дн\b|сутк)/.test(t)) {
+  if (/(день|дня|дн��й|дн\b|сутк)/.test(t)) {
     if (num !== null && num > 14) return true;
     return false;
   }
@@ -1105,7 +1106,7 @@ async function shouldAskHowLong(accountId, peerId) {
  *   - фото -> скачивается и описывается через vision.
  * Для голосовых и фото результат помечается тегом, чтобы AI понимал контекст.
  */
-async function extractIncomingText(accountId, message) {
+async function extractIncomingText(accountId, message, peerId, peerUsername) {
   // 1. Обычный текст (или по��пись отсутствует у медиа).
   const rawText = message.message || '';
 
@@ -1130,8 +1131,16 @@ async function extractIncomingText(accountId, message) {
     return rawText;
   }
 
-  // 3. Фото — распознаём содержимое.
+  // 3. Фото — распознаём содержимое, кроме чатов из списка исключений
+  // (распознавание для них отключено во всех сессиях пользователя).
   if (message.photo) {
+    if (peerId && (await isPhotoRecognitionDisabled(accountId, peerId, peerUsername))) {
+      console.log(
+        `[Аккаунт ${accountId}] Распознавание фото отключено для этого чата — пропускаю.`,
+      );
+      return rawText;
+    }
+
     const client = getActiveClient(accountId);
     if (!client) return rawText;
     try {
@@ -1169,21 +1178,24 @@ async function handleIncomingMessage(accountId, event) {
     // Фильтр 1: только личные чаты (не группы/каналы)
     if (!message.isPrivate) return;
 
-    // Фильтр 2: извлекаем текст. Голосовые расшифровываем (Whisper),
-    // фото распознаём (vision) — так бот «слышит» и «видит» сообщения.
-    const text = await extractIncomingText(accountId, message);
-    if (!text || !text.trim()) return;
-
-    // Отправитель
+    // Отправитель — нужен УЖЕ СЕЙЧАС (до распознавания фото), чтобы можно
+    // было проверить, не входит ли этот чат в список исключений.
     const sender = await message.getSender();
 
-    // Фильтр 3: игнорируем ботов
+    // Фильтр 2: игнорируем ботов
     if (sender && sender.bot) return;
 
     const peerId = sender ? String(sender.id) : String(message.senderId);
+    const peerUsername = sender ? sender.username : null;
     const senderName = sender
       ? sender.username || sender.firstName || peerId
       : peerId;
+
+    // Фильтр 3: извлекаем текст. Голосовые расшифровываем (Whisper),
+    // фото распознаём (vision) — так бот «слышит» и «видит» сообщения.
+    // Для чатов из списка исключений распознавание фото пропускается.
+    const text = await extractIncomingText(accountId, message, peerId, peerUsername);
+    if (!text || !text.trim()) return;
 
     const key = bufferKey(accountId, peerId);
     const existing = messageBuffers.get(key);
@@ -1458,7 +1470,7 @@ async function processBufferedMessages(
     }
 
     // 3.7. «Живой» игнор: иногда (≈30–35%) вместо обычного ответа бот ведёт
-    // себя как занятой человек — молчит, а через 10–60 мин сам напишет вопрос
+    // себя как занятой человек — молчит, а через 10–60 мин сам напишет вопро��
     // («что делаешь?»). Не срабатывает: на явную просьбу медиа, на голосовые
     // заготовки, при вынужденном ответе (человек написал во время паузы) и в
     // самом начале знакомства (пока история короткая).
@@ -1755,7 +1767,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 
       // Переиспользуем основную логику ответа: она сама проверит архив,
       // возьмёт историю, сгенерирует ответ, выдержи�� паузу и отправит.
-      // Ждём завершения, чтобы отвечать по одн��му и не словить флуд.
+      // Ждём з��вершения, чтобы отвечать по одн��му и не словить флуд.
       await processBufferedMessages(
         accountId,
         sender,
@@ -1951,7 +1963,7 @@ async function sendGreetings(accountId, kind) {
 function checkWorkBoundary(accountId) {
   const nowWorking = isWithinWorkingHours();
   const prev = workStateByAccount.get(accountId);
-  // Первый вызов (после активации) — только запоминаем, без приветствия,
+  // П��рвый вызов (после активации) — только запоминаем, без приветствия,
   // чтобы рестарт среди дня/ночи не ра��сылал сообщения зря.
   if (prev === undefined) {
     workStateByAccount.set(accountId, nowWorking);
