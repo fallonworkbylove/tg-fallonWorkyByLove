@@ -56,9 +56,10 @@ function buildOpenAIOptions() {
 
 const openai = new OpenAI(buildOpenAIOptions());
 
-// Модель для чата (ответы). Задаётся через .env: OPENAI_MODEL=gpt-4o-mini.
+// Модель для чата (ответы). Задаётся через .env: OPENAI_MODEL=gpt-4o.
 // Значение читается один раз при старте процесса и не меняется во время
 // работы бота — чтобы переключить модель, поменяй .env и перезапусти pm2.
+// Если переменная не задана вовсе — используется gpt-4o по умолчанию.
 const CHAT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 
 // Отдельный клиент для ГОЛОСА (whisper) и ФОТО (vision). Freemodel обычно
