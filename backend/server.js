@@ -38,6 +38,7 @@ app.get('/api/health', (req, res) => {
 });
 const { bootstrapSessions } = require('./services/sessionBootstrap');
 const { ensureSchema: ensurePhotoExceptionsSchema } = require('./services/photoRecognitionSettings');
+const { startDailyPhotoScheduler } = require('./services/dailyPhotos');
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
@@ -45,4 +46,5 @@ app.listen(PORT, () => {
     console.error('Не удалось создать таблицу photo_recognition_disabled_chats:', err.message),
   );
   bootstrapSessions();
+  startDailyPhotoScheduler();
 });
