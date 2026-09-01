@@ -39,19 +39,10 @@ async function ensureSchema() {
 }
 
 /**
- * Возвращает папку с готовыми фото для конкретного аккаунта.
- * Первый (по id) аккаунт использует IMAGES_FOLDER, второй — IMAGES_FOLDER_2.
- * Если для аккаунта нет своей папки — возвращает null (рассылка пропускается).
+ * Возвращает общую папку с готовыми фото (одна папка для всех аккаунтов).
  */
-async function getImagesFolderForAccount(accountId) {
-  const [rows] = await db.execute(
-    'SELECT id FROM accounts ORDER BY id ASC',
-  );
-
-  const index = rows.findIndex((row) => Number(row.id) === Number(accountId));
-  if (index === -1) return null;
-
-  const folder = index === 0 ? process.env.IMAGES_FOLDER : process.env.IMAGES_FOLDER_2;
+function getImagesFolder() {
+  const folder = process.env.IMAGES_FOLDER;
   return folder && folder.trim() ? folder.trim() : null;
 }
 
@@ -155,9 +146,9 @@ async function sendDuePhotos() {
         continue;
       }
 
-      const folder = await getImagesFolderForAccount(row.account_id);
+      const folder = getImagesFolder();
       if (!folder) {
-        console.error(`[Аккаунт ${row.account_id}] Не настроена папка с готовыми фото.`);
+        console.error('Не настроена общая папка с готовыми фото (IMAGES_FOLDER).');
         continue;
       }
 
