@@ -201,6 +201,17 @@ const activeClients = new Map();
 // Ключ: `${accountId}:${peerId}`, значение: { texts, timer, sender, message }.
 const messageBuffers = new Map();
 
+// Защита от дублей: пока диалог УЖЕ находится внутри processBufferedMessages
+// (генерация ответа + человеческая пауза перед отправкой — это может занять
+// заметное время), периодический скан непрочитанных и рассылка приветствий
+// не должны повторно брать тот же диалог в обработку. Без этой защиты диалог
+// успевал «протухнуть» из messageBuffers/deferredDialogs до отправки ответа,
+// и скан запускал вторую (а иногда и третью) параллельную генерацию ответа
+// на одно и то же сообщение — собеседник получал несколько разных по тексту,
+// но по сути повторяющих друг друга сообщений подряд.
+// Ключ: тот же bufferKey (`${accountId}:${peerId}`).
+const processingInFlight = new Set();
+
 // Сколько ждать следующего сообщения перед тем, как ответить (мс).
 // Человек часто пишет мысль несколькими сообщениями с паузами — даём ему
 // договорить, поэтому окно достаточно большое.
@@ -1456,6 +1467,20 @@ async function processBufferedMessages(
   senderName,
   text,
 ) {
+  // Защита от дублей (см. комментарий у объявления processingInFlight выше):
+  // если этот диалог УЖЕ обрабатывается (например, живой обработчик уже
+  // внутри своей человеческой паузы перед ответом), второй параллельный
+  // вызов (из скана непрочитанных или рассылки приветствий) пропускаем,
+  // а не запускаем вторую генерацию ответа на то же сообщение.
+  const inFlightKey = bufferKey(accountId, peerId);
+  if (processingInFlight.has(inFlightKey)) {
+    console.log(
+      `[Аккаунт ${accountId}] ${senderName} уже обрабатывается — пропускаю повторный вызов, чтобы не отправить дублирующий ответ.`,
+    );
+    return;
+  }
+  processingInFlight.add(inFlightKey);
+
   try {
     // Проверяем настройки аккаунта: автоответчик должен быть включён.
     const settings = await getAccountSettings(accountId);
@@ -1733,7 +1758,7 @@ async function processBufferedMessages(
         } catch (_) {
           // Индикатор не критичен.
         }
-        // Пауза чуть больше обычной: голосовое длиннее, «записывает» дольше.
+        // Пауза чуть больше обычной: голосовое длиннее, «записыв��ет» дольше.
         await sleep(4000 + Math.random() * 3000);
 
         await sendVoiceReply(client, sender, nftPath);
@@ -1754,6 +1779,8 @@ async function processBufferedMessages(
       `Ошибка обработки сообщения (аккаунт ${accountId}):`,
       err.message,
     );
+  } finally {
+    processingInFlight.delete(inFlightKey);
   }
 }
 
@@ -1844,6 +1871,9 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
       // Если по диалогу идёт «пауза занятости» — не отвечаем, ждём таймер.
       if (deferredDialogs.has(bufferKey(accountId, peerId))) continue;
+      // Если диалог УЖЕ обрабатывается (live-обработчик внутри своей паузы
+      // перед ответом) — не запускаем вторую генерацию ответа параллельно.
+      if (processingInFlight.has(bufferKey(accountId, peerId))) continue;
 
       // Извлекаем текст последнего входящего (голос -> Whisper, фото -> vision).
       let text;
@@ -1911,7 +1941,7 @@ const NIGHT_GREETINGS = [
 const MORNING_GREETINGS = [
   'доброе утро)',
   'утро доброе, как спалось',
-  'привееет, с добрым утром',
+  'привееет, с добрым ут��ом',
   'доброе, проснулась вот',
   'утречко доброе)',
 ];
@@ -1990,6 +2020,8 @@ async function sendGreetings(accountId, kind) {
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
       // По диалогу с активной паузой занятости приветствие не шлём.
       if (deferredDialogs.has(bufferKey(accountId, peerId))) continue;
+      // Диалог уже обрабатывается (генерация ответа/пауза) — не мешаем ему.
+      if (processingInFlight.has(bufferKey(accountId, peerId))) continue;
 
       const senderName = sender.username || sender.firstName || peerId;
       const phrase = pickRandom(phrases);
