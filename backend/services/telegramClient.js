@@ -211,7 +211,7 @@ const AGGREGATE_WINDOW_MS = 8000;
 const AGGREGATE_MAX_WAIT_MS = 45000;
 
 // ---------------------------------------------------------------------------
-// «ЖИВ��Й» ИГНОР + РЕ-ЭНГЕЙДЖМЕНТ.
+// «ЖИВ����» ИГНОР + РЕ-ЭНГЕЙДЖМЕНТ.
 // Иногда бот, вместо того чтобы сразу ответить, ведёт себя как занятой человек:
 // молчит некоторое время (10–60 мин), а потом САМ пишет собеседнику вопрос
 // («что делаешь?»). Это делает поведение менее «ботским».
@@ -554,13 +554,30 @@ function pickReplyDelayMs(settings) {
 }
 
 /**
+ * Оценивает, сколько времени должен «печатать» бот, чтобы длительность
+ * индикатора «печатает...» соответствовала длине сообщения — короткое «ок)»
+ * не должно печататься 10 секунд, а длинный абзац не должен вылетать мгновенно.
+ * Скорость набора текста берётся случайно (14-22 символа/сек — обычный темп
+ * набора на смартфоне), итог ограничивается разумными рамками 1.2-9 сек.
+ */
+function computeTypingMs(text) {
+  const MIN_MS = 1200;
+  const MAX_MS = 9000;
+  const len = (text || '').length;
+  const charsPerSec = 14 + Math.random() * 8;
+  const ms = (len / charsPerSec) * 1000;
+  return Math.min(MAX_MS, Math.max(MIN_MS, Math.round(ms)));
+}
+
+/**
  * Выдерживает случайную паузу перед ответом. Индикатор «печатает...»
- * показывается ТОЛЬКО в последние TYPING_LEAD_MS м��ллисекунд перед отправкой
- * (по умолчанию 10 сек), а до этого бот ждёт молча.
+ * показывается ТОЛЬКО в последние typingMs миллисекунд перед отправкой
+ * (по умолчанию 10 сек, но можно передать длительность в зависимости от
+ * длины сообщения через computeTypingMs), а до этого бот ждёт молча.
  * Индикатор обновляется каждые ~4 секунды, т.к. Telegram гасит его сам.
  */
-async function waitBeforeReply(client, peer, delayMs) {
-  const TYPING_LEAD_MS = 10000; // за сколько до отправки включать «печатает»
+async function waitBeforeReply(client, peer, delayMs, typingMs = 10000) {
+  const TYPING_LEAD_MS = typingMs; // за сколько до отправки включать «печатает»
   const TYPING_REFRESH = 4000;
 
   // 1. Тихая фаза: ждём без индикатора (если пауза длиннее 10 сек).
@@ -1339,19 +1356,21 @@ async function fireReengage(accountId, peerId) {
       mediaType = null;
     }
 
-    // Небольшая «естественная» пауза перед отправкой — как будто отвлеклась
-    // на пару минут, но всё-таки вернулась ответить на вопрос.
-    const delayMs = pickReplyDelayMs(settings);
-    console.log(
-      `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
-    );
-    await waitBeforeReply(client, sender, delayMs);
-
     let outText = reply;
     if (!outText && rawMediaType && !mediaType) {
       const fillers = ['да по делам)', 'та так, по своим)', 'ничего особенного)', 'да ничё такого)'];
       outText = fillers[Math.floor(Math.random() * fillers.length)];
     }
+
+    // Небольшая «естественная» пауза перед отправкой — как будто отвлеклась
+    // на пару минут, но всё-таки вернулась ответить на вопрос. Длительность
+    // индикатора «печатает...» зависит от длины итогового текста.
+    const delayMs = pickReplyDelayMs(settings);
+    console.log(
+      `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
+    );
+    await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
+
     if (outText) {
       await client.sendMessage(sender, { message: outText });
       await saveMessage(accountId, peerId, senderName, 'assistant', outText);
@@ -1442,7 +1461,7 @@ async function processBufferedMessages(
     const settings = await getAccountSettings(accountId);
     if (!settings || !settings.is_autoreply_enabled) {
       console.log(
-        `[Аккаунт ${accountId}] Сообщение от ${senderName} получено, но автоответчик выключен.`,
+        `[Аккаунт ${accountId}] Сообщение от ${senderName} получено, но ав��оответчик выключен.`,
       );
       return;
     }
@@ -1478,7 +1497,7 @@ async function processBufferedMessages(
     await saveMessage(accountId, peerId, senderName, 'user', text);
 
     // 2.5. Если человек написал во время паузы занятости, отменяем старый
-    // таймер. Больше не отправляем запланированный вопрос вроде «что делаешь?»:
+    // таймер. Больше не отправляем запланированный вопрос ��роде «что делаешь?»:
     // после небольшой естественной задержки отвечаем на актуальное сообщение.
     let forcedDelayMs = null;
     const deferredNow = deferredDialogs.get(bufferKey(accountId, peerId));
@@ -1553,7 +1572,7 @@ async function processBufferedMessages(
       console.log(
         `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед фиксированным ответом для ${senderName}.`,
       );
-      await waitBeforeReply(client, sender, delayMs);
+      await waitBeforeReply(client, sender, delayMs, computeTypingMs(fixedReply));
       await client.sendMessage(sender, { message: fixedReply });
       await saveMessage(accountId, peerId, senderName, 'assistant', fixedReply);
       console.log(
@@ -1609,22 +1628,24 @@ async function processBufferedMessages(
       mediaType = null;
     }
 
-    // 5. Держим случайную паузу с индикатором «печатает...» — так ответ
-    // выглядит живым, а не мгновенным.
-    console.log(
-      `[Акка��нт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед ответом для ${senderName}.`,
-    );
-    await waitBeforeReply(client, sender, delayMs);
-
-    // 6. Отправляем текстовый ответ (если он есть — модель могла прислать
-    // только токен без текста) и сохраняем его в историю.
-    // Крайний случай: медиа подавили (см. выше), а текста модель не дала —
-    // тогда шлём короткую нейтральную фразу, чтобы не промолчать на вопрос.
+    // 6. Готовим текстовый ответ (если он есть — модель могла прислать
+    // только токен без текста). Крайний случай: медиа подавили (см. выше), а
+    // текста модель не дала — тогда шлём короткую нейтральную фразу, чтобы
+    // не промолчать на вопрос.
     let outText = reply;
     if (!outText && rawMediaType && !mediaType) {
       const fillers = ['да по делам)', 'та так, по своим)', 'ничего особенного)', 'да ничё такого)'];
       outText = fillers[Math.floor(Math.random() * fillers.length)];
     }
+
+    // 5. Держим случайную паузу с индикатором «печатает...» — так ответ
+    // выглядит живым, а не мгновенным. Длительность индикатора зависит от
+    // длины итогового текста, чтобы длинные сообщения «печатались» дольше.
+    console.log(
+      `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед ответом для ${senderName}.`,
+    );
+    await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
+
     if (outText) {
       await client.sendMessage(sender, { message: outText });
       await saveMessage(accountId, peerId, senderName, 'assistant', outText);
