@@ -233,22 +233,6 @@ const DEFER_MIN_HISTORY = 4;
 // ре-энгейджмент и отвечаем именно на его последнее сообщение через небольшую паузу.
 const DEFER_INTERRUPT_DELAY_MS = 2 * 60 * 1000;
 
-// Фразы-вопросы, которыми бот сам возобновляет диалог после паузы.
-const REENGAGE_PHRASES = [
-  'что делаешь?',
-  'ты тут?',
-  'как ты там?',
-  'чем занят?',
-  'эй, живой?)',
-  'ну чё, как ты?',
-  'скучаешь?)',
-  'чё делаешь то?',
-  'прив, ты как?',
-  'вернулась) ты чем занят?',
-  'о, я освободилась, ты тут?',
-  'как денёк проходит?',
-];
-
 // ---------------------------------------------------------------------------
 // РАБОЧИЕ ЧАСЫ (бот отвечает только днём/вечером, ночью молчит).
 // По умолчанию 09:00–23:00 по Москве. Можно переопределить в .env:
@@ -726,7 +710,7 @@ async function getDialogAgeHours(accountId, peerId) {
     return ms / (60 * 60 * 1000);
   } catch (err) {
     console.error(
-      `[Аккаунт ${accountId}] Не смог посчитать возраст диал��га (NFT-камп��ния выключена):`,
+      `[Аккаунт ${accountId}] Не смог посчитать возраст диал����га (NFT-камп��ния выключена):`,
       err.message,
     );
     return null;
@@ -860,7 +844,7 @@ function extractMediaRequest(reply) {
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 
-  // Подстраховка: если модель всё же прислала отказ ВМЕСТЕ с медиа-токеном
+  // Подстраховка: если модель всё же прислала отказ ВМЕСТЕ с меди��-токеном
   // (например «неа, пока рано)» + <<PHOTO>>), убираем противореч��вый текст —
   // раз медиа реально уходит, отказ выглядит абсурдно. Оставляем пусто:
   // фото уйдёт со своей случайной дружелюбной подписью.
@@ -1283,11 +1267,14 @@ async function flushMessageBuffer(accountId, peerId, senderName) {
 }
 
 /**
- * Планирует «ре-энгейджмент»: бот замолкает, а через случайные 10–60 минут
- * сам напишет собеседнику вопрос. Если пауза для этого диалога уже идёт —
- * второй раз не планируем.
+ * Планирует «занятость»: бот молчит случайные 10–60 минут, а потом всё равно
+ * ОТВЕЧАЕТ ПО СУЩЕСТВУ на то сообщение, из-за которого сработала пауза —
+ * просто с большой естественной задержкой, как будто был занят делами.
+ * Раньше здесь отправлялась шаблонная фраза («что делаешь?», «ты тут?») —
+ * это приводило к тому, что реальный вопрос собеседника оставался без ответа.
+ * Если пауза для этого диалога уже идёт — второй раз не планируем.
  */
-function scheduleReengage(accountId, sender, peerId, senderName) {
+function scheduleReengage(accountId, sender, peerId, senderName, history, text) {
   const key = bufferKey(accountId, peerId);
   if (deferredDialogs.has(key)) return;
 
@@ -1296,7 +1283,7 @@ function scheduleReengage(accountId, sender, peerId, senderName) {
   const timer = setTimeout(() => {
     fireReengage(accountId, peerId).catch((e) =>
       console.error(
-        `[Аккаунт ${accountId}] Ошибка ре-энгейджмента:`,
+        `[Аккаунт ${accountId}] Ошибка отложенного ответа:`,
         e.message,
       ),
     );
@@ -1304,23 +1291,27 @@ function scheduleReengage(accountId, sender, peerId, senderName) {
   // Не держим процесс живым только ради этого таймера.
   if (typeof timer.unref === 'function') timer.unref();
 
-  deferredDialogs.set(key, { timer, sender, senderName });
+  deferredDialogs.set(key, { timer, sender, senderName, history, text });
   console.log(
     `[Аккаунт ${accountId}] «Занята»: молчу ${Math.round(
       delay / 60000,
-    )} мин для ${senderName}, потом напишу сама.`,
+    )} мин для ${senderName}, потом отвечу на её сообщение.`,
   );
 }
 
 /**
- * Срабатывает по таймеру: бот сам пишет собеседнику вопрос-возобновление
- * («что делаешь?» и т.п.). Проверяет активность, автоответчик и рабочие часы.
+ * Срабатывает по таймеру паузы: бот генерирует и отправляет НАСТОЯЩИЙ AI-ответ
+ * на сообщение, которое ждало во время «занятости» — так со стороны выглядит
+ * будто человек отвлёкся, но всё равно ответил на заданный вопрос, а не забыл
+ * про него. Проверяет активность, автоответчик и рабочие часы перед отправкой.
  */
 async function fireReengage(accountId, peerId) {
   const key = bufferKey(accountId, peerId);
   const entry = deferredDialogs.get(key);
   deferredDialogs.delete(key);
   if (!entry) return;
+
+  const { sender, senderName, history, text } = entry;
 
   const client = getActiveClient(accountId);
   if (!client) return;
@@ -1329,17 +1320,109 @@ async function fireReengage(accountId, peerId) {
   // Ночью не пишем — непрочитанное подхватит утренний скан/приветствие.
   if (!isWithinWorkingHours()) return;
 
-  const phrase =
-    REENGAGE_PHRASES[Math.floor(Math.random() * REENGAGE_PHRASES.length)];
   try {
-    await client.sendMessage(entry.sender, { message: phrase });
-    await saveMessage(accountId, peerId, entry.senderName, 'assistant', phrase);
+    const mediaLink =
+      typeof settings.media_chat_link === 'string'
+        ? settings.media_chat_link.trim()
+        : '';
+    const mediaEnabled = !!mediaLink;
+    const nft = await getNftCampaignState(accountId, peerId, history.length);
+
+    const rawReply = await generateReply(settings.prompt, history, text, {
+      mediaEnabled,
+      campaignHint: nft.hint,
+    });
+    if (!rawReply) return;
+
+    const { text: reply, mediaType: rawMediaType } =
+      extractMediaRequest(rawReply);
+
+    // Та же защита от «медиа два хода подряд», что и в обычном ответе.
+    let mediaType = rawMediaType;
+    if (mediaType && lastAssistantWasMedia(history)) {
+      mediaType = null;
+    }
+
+    // Небольшая «естественная» пауза перед отправкой — как будто отвлеклась
+    // на пару минут, но всё-таки вернулась ответить на вопрос.
+    const delayMs = pickReplyDelayMs(settings);
     console.log(
-      `[Аккаунт ${accountId}] Ре-энгейджмент для ${entry.senderName}: "${phrase}"`,
+      `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
     );
+    await waitBeforeReply(client, sender, delayMs);
+
+    let outText = reply;
+    if (!outText && rawMediaType && !mediaType) {
+      const fillers = ['да по делам)', 'та так, по своим)', 'ничего особенного)', 'да ничё такого)'];
+      outText = fillers[Math.floor(Math.random() * fillers.length)];
+    }
+    if (outText) {
+      await client.sendMessage(sender, { message: outText });
+      await saveMessage(accountId, peerId, senderName, 'assistant', outText);
+      console.log(
+        `[Аккаунт ${accountId}] Отложенный ответ для ${senderName}: "${outText}"`,
+      );
+    }
+
+    let mediaSentThisTurn = false;
+    if (mediaType && mediaEnabled) {
+      try {
+        await client.invoke(
+          new Api.messages.SetTyping({
+            peer: sender,
+            action:
+              mediaType === 'photo'
+                ? new Api.SendMessageUploadPhotoAction({ progress: 0 })
+                : new Api.SendMessageUploadVideoAction({ progress: 0 }),
+          }),
+        );
+      } catch (_) {
+        // индикатор не критичен
+      }
+      await sleep(1500 + Math.random() * 1500);
+      mediaSentThisTurn = await trySendMedia(
+        client,
+        sender,
+        accountId,
+        peerId,
+        senderName,
+        mediaType,
+        mediaLink,
+      );
+    }
+
+    // Третий день знакомства — голосовое с просьбой помочь с NFT-токеном
+    // (не в тот же ход, когда уже ушло медиа).
+    if (nft.sendVoice && !mediaSentThisTurn) {
+      const nftPath = path.join(VOICES_DIR, NFT_VOICE_FILE);
+      if (fs.existsSync(nftPath) && !(await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE))) {
+        try {
+          await client.invoke(
+            new Api.messages.SetTyping({
+              peer: sender,
+              action: new Api.SendMessageRecordAudioAction(),
+            }),
+          );
+        } catch (_) {
+          // индикатор не критичен
+        }
+        await sleep(4000 + Math.random() * 3000);
+        await sendVoiceReply(client, sender, nftPath);
+        await saveMessage(
+          accountId,
+          peerId,
+          senderName,
+          'assistant',
+          voiceTag(NFT_VOICE_FILE),
+        );
+        console.log(
+          `[Аккаунт ${accountId}] Отправлено голосовое про NFT (3-й день) для ${senderName}.`,
+        );
+      }
+    }
   } catch (e) {
     console.error(
-      `[Аккаунт ${accountId}] Не удалось отправить ре-энгейджмент ${entry.senderName}:`,
+      `[Аккаунт ${accountId}] Не удалось отправить отложенный ответ ${senderName}:`,
       e.errorMessage || e.message,
     );
   }
@@ -1428,7 +1511,7 @@ async function processBufferedMessages(
     //
     // ВАРИАНТ Б: если человек ЯВНО просит фото/видео/кружок, а у аккаунта
     // задан медиа-чат — голосовые заготовки НЕ перехватывают запрос. Иначе
-    // «запиши кру��ок, что делаешь» ловилось бы триггером «что делаешь» и
+    // «запиши кру��ок, что делаешь» лови��ось бы триггером «что делаешь» и
     // уходило голосовое вместо кружка.
     let voice =
       explicitMediaRequest && mediaLinkEarly ? null : findVoiceForText(text);
@@ -1495,7 +1578,7 @@ async function processBufferedMessages(
       history.length >= DEFER_MIN_HISTORY &&
       Math.random() < DEFER_CHANCE
     ) {
-      scheduleReengage(accountId, sender, peerId, senderName);
+      scheduleReengage(accountId, sender, peerId, senderName, history, text);
       return;
     }
 
@@ -1780,7 +1863,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
       );
 
       // Переиспользуем основную логику ответа: она сама проверит архив,
-      // возьмёт историю, сгенерирует ответ, выдержи�� паузу и отправит.
+      // возьмёт историю, с��енерирует ответ, выдержи�� паузу и отправит.
       // Ждём з��вершения, чтобы отвечать по одн��му и не словить флуд.
       await processBufferedMessages(
         accountId,
