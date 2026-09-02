@@ -192,7 +192,7 @@ if (PROXY_POOL.length > 0) {
 // Клиенты ���������������� процессе входа. Ключ: `${userId}:${phone}`
 const pendingLogins = new Map();
 
-// Пул активных (рабочих) клиентов. Ключ: accountId, значение: TelegramClient
+// Пул активных (рабочих) ��лиентов. Ключ: accountId, значение: TelegramClient
 const activeClients = new Map();
 
 // Буфер склейки сообщений. Если собеседник шлёт несколько сообщений подряд,
@@ -599,9 +599,9 @@ async function waitBeforeReply(client, peer, delayMs, typingMs = 10000) {
 
   // 2. Фаза «печатает»: последние до 10 секунд с индикатором набора.
   let typingElapsed = 0;
-  const typingMs = Math.min(delayMs, TYPING_LEAD_MS);
+  const typingPhaseMs = Math.min(delayMs, TYPING_LEAD_MS);
 
-  while (typingElapsed < typingMs) {
+  while (typingElapsed < typingPhaseMs) {
     try {
       await client.invoke(
         new Api.messages.SetTyping({
@@ -1021,7 +1021,7 @@ function parseDurationOverTwoWeeks(text) {
 
   // Числ�� словами -> цифры.
   const wordNums = {
-    полтора: 1.5,
+    полтор��: 1.5,
     полторы: 1.5,
     один: 1,
     одна: 1,
@@ -1061,7 +1061,7 @@ function parseDurationOverTwoWeeks(text) {
   // Месяцы — тоже больше 2 недель.
   if (/(месяц|месяца|месяцев|мес\b)/.test(t)) return true;
 
-  // Недели: > 2 недель, либо «больше 2 недель».
+  // ��едели: > 2 недель, либо «больше 2 недель».
   if (/недел/.test(t)) {
     if (num !== null) {
       if (num > 2) return true;
@@ -1925,7 +1925,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 //   день -> ночь  (наступает WORK_END_HOUR):   «спокойной ночи»
 //   ночь -> день  (наступает WORK_START_HOUR):  «доброе утро»
 // Ночью пишем ТОЛЬКО тем, где последнее слово за нами (разговор на паузе);
-// непрочитанные вопросы ночью не трогаем.
+// непрочитанные вопросы ночью не ��рогаем.
 // Утром пишем «доброе утро» ВСЕМ недавним, и если человек написал ночью и
 // ждёт ответа — СЛЕДОМ (вторым сообщением) отвечаем ему по теме.
 // ---------------------------------------------------------------------------
