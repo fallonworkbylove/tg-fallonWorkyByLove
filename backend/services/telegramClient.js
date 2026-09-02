@@ -794,12 +794,6 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
 // Токены, которые модель вставляет в ответ, когда нужно прислать медиа.
 const MEDIA_TOKEN_RE = /<<\s*(?:PHOTO|VIDEO|CIRCLE)\s*>>/gi;
 
-// Шанс, что бот САМ (без просьбы) пришлёт кружок «занимаюсь делами».
-const SELF_CIRCLE_CHANCE = 0.08;
-// Не чаще одного «самокружка» в этот интервал на собеседника (in-memory).
-const SELF_CIRCLE_MIN_INTERVAL_MS = 2 * 60 * 60 * 1000;
-const lastSelfCircleAt = new Map(); // `${accountId}:${peerId}` -> timestamp
-
 /**
  * Вырезает из ответа модели медиа-токен и возвращает чистый текст и тип
  * запрошенного медиа ('photo' | 'video' | 'circle' | null).
@@ -1325,7 +1319,9 @@ async function fireReengage(accountId, peerId) {
       typeof settings.media_chat_link === 'string'
         ? settings.media_chat_link.trim()
         : '';
-    const mediaEnabled = !!mediaLink;
+    // Отложенный ответ — не прямая реакция на явную просьбу медиа, поэтому
+    // ИИ здесь никогда не решает сама прислать фото/видео/кружок.
+    const mediaEnabled = false;
     const nft = await getNftCampaignState(accountId, peerId, history.length);
 
     const rawReply = await generateReply(settings.prompt, history, text, {
@@ -1583,10 +1579,11 @@ async function processBufferedMessages(
     }
 
     // 4. Генерируем ответ через OpenAI.
-    // Медиа-протокол включаем, только если у аккаунта задан чат с медиа —
-    // тогда модель может вставить токен <<PHOTO>>/<<VIDEO>>/<<CIRCLE>>.
+    // Медиа-протокол включаем ТОЛЬКО когда собеседник ЯВНО попросил фото/видео/
+    // кружок — ИИ больше не решает сама «по желанию» прислать медиа. Так модель
+    // никогда не вставит токен <<PHOTO>>/<<VIDEO>>/<<CIRCLE>> без прямой просьбы.
     const mediaLink = mediaLinkEarly;
-    const mediaEnabled = !!mediaLink;
+    const mediaEnabled = !!mediaLink && explicitMediaRequest;
 
     // NFT-кампания: 1–2 день — мягкое упоминание темы, 3-й день — голосовое.
     const nft = await getNftCampaignState(accountId, peerId, history.length);
@@ -1615,7 +1612,7 @@ async function processBufferedMessages(
     // 5. Держим случайную паузу с индикатором «печатает...» — так ответ
     // выглядит живым, а не мгновенным.
     console.log(
-      `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед ответом для ${senderName}.`,
+      `[Акка��нт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед ответом для ${senderName}.`,
     );
     await waitBeforeReply(client, sender, delayMs);
 
@@ -1661,27 +1658,6 @@ async function processBufferedMessages(
         mediaType,
         mediaLink,
       );
-    }
-
-    // 6.6. Изредка бот САМ шлёт кружок «занимаюсь делами» — но не в тот же
-    // ход, когда уже отправили медиа, и не чаще раза в заданный интервал.
-    if (mediaEnabled && !mediaSentThisTurn) {
-      const key = `${accountId}:${peerId}`;
-      const last = lastSelfCircleAt.get(key) || 0;
-      const cooledDown = Date.now() - last > SELF_CIRCLE_MIN_INTERVAL_MS;
-      if (cooledDown && Math.random() < SELF_CIRCLE_CHANCE) {
-        await sleep(2000 + Math.random() * 2000);
-        const ok = await trySendMedia(
-          client,
-          sender,
-          accountId,
-          peerId,
-          senderName,
-          'circle',
-          mediaLink,
-        );
-        if (ok) lastSelfCircleAt.set(key, Date.now());
-      }
     }
 
     // 7. Если у сработавшего правила voiceOnly=false — следом за текстом
