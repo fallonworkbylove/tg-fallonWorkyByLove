@@ -11,6 +11,19 @@ const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 const WINDOW_START_HOUR = 13;
 const WINDOW_END_HOUR = 20;
 
+// Случайная подпись к фото — придаёт сообщению живой, неформальный тон.
+const CAPTIONS = [
+  'сегодня повезло 😊',
+  'вот так бы всегда 🥹',
+  'работает же, хаха',
+  'на ужин заработала 👍',
+  'неожиданно, приятно 🙃',
+];
+
+function pickRandomCaption() {
+  return CAPTIONS[Math.floor(Math.random() * CAPTIONS.length)];
+}
+
 let schemaReady = false;
 
 /**
@@ -158,7 +171,7 @@ async function sendDuePhotos() {
         continue;
       }
 
-      await client.sendFile(row.peer_id, { file: imagePath });
+      await client.sendFile(row.peer_id, { file: imagePath, caption: pickRandomCaption() });
 
       await db.execute(
         'UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?',
