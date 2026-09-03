@@ -130,6 +130,13 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     { role: 'system', content: roleReminder },
   ];
 
+  // Обучение на прошлом опыте (без fine-tuning): если telegramClient передал
+  // готовый текстовый блок с лучшими фразами из bot_patterns — подмешиваем
+  // его как ещё одну системную подсказку. См. services/learningDb.js.
+  if (options.learningSnippet) {
+    messages.push({ role: 'system', content: options.learningSnippet });
+  }
+
   // Медиа-протокол: включается ТОЛЬКО если у аккаунта задан чат с медиа.
   // Модель сама решает по смыслу, что человек просит фото/видео/кружок (или
   // что уместно показать что делаешь), и вставляет служебный токен. Реальную

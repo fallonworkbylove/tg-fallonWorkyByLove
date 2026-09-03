@@ -23,6 +23,7 @@ const {
   describeImage,
   transcribeAudio,
 } = require('./aiResponder');
+const learningDb = require('./learningDb');
 const {
   findVoiceForText,
   findTextReplyForText,
@@ -1352,9 +1353,16 @@ async function fireReengage(accountId, peerId) {
     const mediaEnabled = false;
     const nft = await getNftCampaignState(accountId, peerId, history.length);
 
+    // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на
+    // предыдущий ответ бота (если она ещё не оценена), затем достаём лучшие
+    // фразы для подмешивания в промпт текущего ответа.
+    await learningDb.scoreAndLearn(accountId, peerId, text);
+    const learningSnippet = await learningDb.buildLearningSnippet();
+
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
       campaignHint: nft.hint,
+      learningSnippet,
     });
     if (!rawReply) return;
 
@@ -1385,6 +1393,7 @@ async function fireReengage(accountId, peerId) {
     if (outText) {
       await client.sendMessage(sender, { message: outText });
       await saveMessage(accountId, peerId, senderName, 'assistant', outText);
+      await learningDb.recordBotReply(accountId, peerId, text, outText);
       console.log(
         `[Аккаунт ${accountId}] Отложенный ответ для ${senderName}: "${outText}"`,
       );
@@ -1457,7 +1466,7 @@ async function fireReengage(accountId, peerId) {
 /**
  * Основн��я логика ответа: фильтр архива, голосовые заготовки,
  * гене����ация AI-ответа с учётом истории и отправка собеседнику.
- * ��аботает уже со СКЛЕЕННЫМ текстом всех сообщений серии.
+ * ��аботает уже ��о СКЛЕЕННЫМ текстом всех сообщений серии.
  */
 async function processBufferedMessages(
   accountId,
@@ -1632,9 +1641,16 @@ async function processBufferedMessages(
     // NFT-кампания: 1–2 день — мягкое упоминание темы, 3-й день — голосовое.
     const nft = await getNftCampaignState(accountId, peerId, history.length);
 
+    // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на
+    // предыдущий ответ бота (если она ещё не оценена), затем достаём лучшие
+    // фразы для подмешивания в промпт текущего ответа. См. learningDb.js.
+    await learningDb.scoreAndLearn(accountId, peerId, text);
+    const learningSnippet = await learningDb.buildLearningSnippet();
+
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
       campaignHint: nft.hint,
+      learningSnippet,
     });
     if (!rawReply) return;
 
@@ -1674,6 +1690,7 @@ async function processBufferedMessages(
     if (outText) {
       await client.sendMessage(sender, { message: outText });
       await saveMessage(accountId, peerId, senderName, 'assistant', outText);
+      await learningDb.recordBotReply(accountId, peerId, text, outText);
       console.log(`[Аккаунт ${accountId}] Ответ для ${senderName}: "${outText}"`);
     }
 
