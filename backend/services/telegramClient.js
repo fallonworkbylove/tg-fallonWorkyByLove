@@ -573,7 +573,7 @@ function pickReplyDelayMs(settings) {
  * Оценивает, сколько времени должен «печатать» бот, чтобы длительность
  * индикатора «печатает...» соответствовала длине сообщения — короткое «ок)»
  * не должно печататься 10 секунд, а длинный абзац не должен вылетать мгновенно.
- * Скорость набора текста берётся случайно (14-22 символа/сек — обычный темп
+ * Скорость набора текста берётся случайно (14-22 символа/сек — ��бычный темп
  * набора на смартфоне), итог ограничивается разумными рамками 1.2-9 сек.
  */
 function computeTypingMs(text) {
@@ -720,6 +720,9 @@ async function wasVoiceSent(accountId, peerId, fileName) {
 // дней длится знакомство. День считаем от ПЕРВОГО сообщения в диалоге
 // (conversation_messages.created_at) и передаём модели готовую подсказку.
 // ---------------------------------------------------------------------------
+
+// Папка с готовыми голосовыми заготовками (poka.ogg, nft.ogg и т.д.).
+const VOICES_DIR = path.join(__dirname, '..', 'voices');
 
 // Имя файла голосового с просьбой помочь с NFT-токеном (кладётся в voices/).
 const NFT_VOICE_FILE = 'nft.ogg';
@@ -1144,7 +1147,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
 
   // 3. Фото — распознаём содержимое, кроме чатов из списка исключений
   // (распознавание для них отключено во всех сессиях пользователя) и кроме
-  // собеседников, спрятанных в АРХИВ (folder_id = 1) — им фото не разбираем.
+  // соб��седников, спрятанных в АРХИВ (folder_id = 1) — им фото не разбираем.
   if (message.photo) {
     if (peerId && (await isPhotoRecognitionDisabled(accountId, peerId, peerUsername))) {
       console.log(
@@ -1390,11 +1393,11 @@ async function fireReengage(accountId, peerId) {
     }
 
     // Небольшая «естественная» пауза перед отправкой — как будто отвлеклась
-    // на пару минут, но всё-таки вернулась ответить на вопрос. Длительность
+    // на пару мин��т, но всё-таки вернулась ответить на вопрос. Длительность
     // индикатора «печатает...» зависит от длины итогового текста.
     const delayMs = pickReplyDelayMs(settings);
     console.log(
-      `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
+      `[Аккаунт ${accountId}] Пауз�� ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
     );
     await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
 
@@ -1584,7 +1587,7 @@ async function processBufferedMessages(
       voice = null;
     }
 
-    // Случайная задержка перед ответом (диапазон задаётся в настройках).
+    // Случа��ная задержка перед ответом (диапазон задаётся в настройках).
     // Если бот «отвлёкся» во время паузы — используем короткую задержку ~2 мин.
     const delayMs =
       forcedDelayMs != null ? forcedDelayMs : pickReplyDelayMs(settings);
@@ -1900,7 +1903,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 
       // Если это сообщение сей��ас ��опит live-обработчик — не вмешиваемся.
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
-      // Если по диалогу идёт «пауза занятости» — не отвечаем, ждём таймер.
+      // Если по диалогу ��дёт «пауза занятости» — не отвечаем, ждём таймер.
       if (deferredDialogs.has(bufferKey(accountId, peerId))) continue;
       // Если диалог УЖЕ обрабатывается (live-обработчик внутри своей паузы
       // перед ответом) — не запускаем вторую генерацию ответа параллельно.
