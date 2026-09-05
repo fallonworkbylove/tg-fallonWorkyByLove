@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const db = require('../db');
 const OpenAI = require('openai');
+const { buildOpenAIOptions } = require('./aiResponder');
 
 // ---------------------------------------------------------------------------
 // ОБУЧЕНИЕ БЕЗ FINE-TUNING.
