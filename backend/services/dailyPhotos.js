@@ -209,8 +209,34 @@ async function sendDuePhotos() {
         `[Аккаунт ${row.account_id}] Ошибка отправки ежедневного фото ${row.peer_username || row.peer_id}:`,
         err.message,
       );
+
+      // Ошибки, из-за которых отправка никогда не сможет пройти в этот
+      // день (собеседник закрыл доступ к переписке, заблокировал аккаунт
+      // и т.п.), помечаем как отправленные — иначе планировщик будет
+      // безрезультатно повторять попытку каждую минуту до конца окна.
+      if (isPermanentSendError(err)) {
+        await db.execute(
+          'UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?',
+          [row.id],
+        );
+      }
     }
   }
+}
+
+// Коды ошибок Telegram, при которых повторная попытка в тот же день заведомо
+// не сработает (доступ к переписке закрыт, а не временный сетевой сбой).
+const PERMANENT_SEND_ERROR_CODES = [
+  'CHAT_WRITE_FORBIDDEN',
+  'USER_IS_BLOCKED',
+  'USER_BANNED_IN_CHANNEL',
+  'PEER_ID_INVALID',
+  'USER_PRIVACY_RESTRICTED',
+];
+
+function isPermanentSendError(err) {
+  const message = err && err.message ? err.message : '';
+  return PERMANENT_SEND_ERROR_CODES.some((code) => message.includes(code));
 }
 
 let schedulerStarted = false;
