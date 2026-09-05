@@ -52,33 +52,42 @@ async function ensureSchema() {
 }
 
 /**
- * Возвращает общую папку с готовыми фото (одна папка для всех аккаунтов).
+ * Возвращает все настроенные папки с готовыми фото. Все наборы аккаунтов
+ * синхронизированы — фото берутся из общего пула (IMAGES_FOLDER +
+ * IMAGES_FOLDER_2), независимо от того, к какому набору принадлежит аккаунт.
  */
-function getImagesFolder() {
-  const folder = process.env.IMAGES_FOLDER;
-  return folder && folder.trim() ? folder.trim() : null;
+function getImagesFolders() {
+  return [process.env.IMAGES_FOLDER, process.env.IMAGES_FOLDER_2]
+    .filter((folder) => folder && folder.trim())
+    .map((folder) => folder.trim());
 }
 
 /**
- * Выбирает случайное фото из папки. Возвращает полный путь или null,
- * если папка не существует / в ней нет подходящих файлов.
+ * Выбирает случайное фото из объединённого пула всех настроенных папок.
+ * Возвращает полный путь или null, если ни одна папка не существует / не
+ * содержит подходящих файлов.
  */
-function pickRandomImage(folder) {
-  try {
-    if (!fs.existsSync(folder)) return null;
+function pickRandomImage(folders) {
+  const allFiles = [];
 
-    const files = fs
-      .readdirSync(folder)
-      .filter((name) => IMAGE_EXTENSIONS.has(path.extname(name).toLowerCase()));
+  for (const folder of folders) {
+    try {
+      if (!fs.existsSync(folder)) continue;
 
-    if (files.length === 0) return null;
+      const files = fs
+        .readdirSync(folder)
+        .filter((name) => IMAGE_EXTENSIONS.has(path.extname(name).toLowerCase()))
+        .map((name) => path.join(folder, name));
 
-    const chosen = files[Math.floor(Math.random() * files.length)];
-    return path.join(folder, chosen);
-  } catch (err) {
-    console.error(`Не удалось прочитать папку с фото (${folder}):`, err.message);
-    return null;
+      allFiles.push(...files);
+    } catch (err) {
+      console.error(`Не удалось прочитать папку с фото (${folder}):`, err.message);
+    }
   }
+
+  if (allFiles.length === 0) return null;
+
+  return allFiles[Math.floor(Math.random() * allFiles.length)];
 }
 
 /**
@@ -159,13 +168,13 @@ async function sendDuePhotos() {
         continue;
       }
 
-      const folder = getImagesFolder();
-      if (!folder) {
-        console.error('Не настроена общая папка с готовыми фото (IMAGES_FOLDER).');
+      const folders = getImagesFolders();
+      if (folders.length === 0) {
+        console.error('Не настроена ни одна папка с готовыми фото (IMAGES_FOLDER / IMAGES_FOLDER_2).');
         continue;
       }
 
-      const imagePath = pickRandomImage(folder);
+      const imagePath = pickRandomImage(folders);
       if (!imagePath) {
         console.error(`[Аккаунт ${row.account_id}] В папке с фото нет доступных файлов.`);
         continue;
