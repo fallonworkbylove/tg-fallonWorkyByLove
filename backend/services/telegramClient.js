@@ -40,7 +40,10 @@ const {
 const { isPhotoRecognitionDisabled } = require('./photoRecognitionSettings');
 
 // Сколько последних сообщений диалога передавать модели как контекст.
-const HISTORY_LIMIT = 10;
+// Было 10 (всего 5 обменов) — бот забывал, о чём уже спрашивал, и мог
+// переспросить то же самое буквально через пару сообщений. Увеличили до 30,
+// чтобы модель видела заметно больше реальной истории разговора.
+const HISTORY_LIMIT = 30;
 
 const apiId = Number(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;
@@ -207,7 +210,7 @@ const messageBuffers = new Map();
 // заметное время), периодический скан непрочитанных и рассылка приветствий
 // не должны повторно брать тот же диалог в обработку. Без этой защиты диалог
 // успевал «протухнуть» из messageBuffers/deferredDialogs до отправки ответа,
-// и скан запускал вторую (а иногда и третью) параллельную генерацию ответа
+// и скан запускал вторую (а ин��гда и третью) параллельную генерацию ответа
 // на одно и то же сообщение — собеседник получал несколько разных по тексту,
 // но по сути повторяющих друг друга сообщений подряд.
 // Ключ: тот же bufferKey (`${accountId}:${peerId}`).
@@ -2043,7 +2046,7 @@ async function sendGreetings(accountId, kind) {
       const senderName = sender.username || sender.firstName || peerId;
       const phrase = pickRandom(phrases);
       try {
-        // Небольшая человеческая пауза между отправками (антифлуд).
+        // Небольшая человеческая пауза между от��равками (антифлуд).
         await sleep(2000 + Math.random() * 4000);
         await client.sendMessage(sender, { message: phrase });
         await saveMessage(accountId, peerId, senderName, 'assistant', phrase);
