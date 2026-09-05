@@ -9,19 +9,24 @@
  *    согласился ли он помочь. Проверка двойная: быстрые ключевые слова +
  *    лёгкий AI-запрос (gpt-4o-mini) для смысловой оценки, чтобы не полагаться
  *    только на совпадение слов.
- * 3. Если согласие обнаружено — отправляем карточку в отдельный
- *    Telegram-бот для уведомлений (BOT_TOKEN_2). Карточку получают все, кто
- *    хоть раз написал этому боту /start (таблица notification_subscribers).
+ * 3. Если согласие обнаружено — отправляем карточку в тот же
+ *    Telegram-бот, что используется для miniapp (BOT_TOKEN). Карточку
+ *    получают все, кто хоть раз написал этому боту /start (таблица
+ *    notification_subscribers).
  *
- * Отдельный бот-уведомитель реализован через простой long-polling
- * (getUpdates), без сторонних библиотек — только встроенный fetch.
+ * Обработка /start и /stop реализована через простой long-polling
+ * (getUpdates), без сторонних библиотек — только встроенный fetch. Это
+ * безопасно совмещать с miniapp: BOT_TOKEN в остальном проекте используется
+ * только для проверки подписи initData, никакой другой polling/webhook на
+ * этом токене не висит.
  */
 
 const db = require('../db');
 const { buildOpenAIOptions } = require('./aiResponder');
 const OpenAI = require('openai');
 
-const NOTIFY_BOT_TOKEN = process.env.BOT_TOKEN_2;
+const NOTIFY_BOT_TOKEN = process.env.BOT_TOKEN;
+const MINIAPP_URL = process.env.MINIAPP_URL || null;
 const TELEGRAM_API = NOTIFY_BOT_TOKEN
   ? `https://api.telegram.org/bot${NOTIFY_BOT_TOKEN}`
   : null;
@@ -204,7 +209,7 @@ function escapeHtml(value) {
 
 async function notifyOperators({ accountId, accountPhone, peerId, peerUsername, voiceFile, consentMessage }) {
   if (!TELEGRAM_API) {
-    console.error('[helpRequestNotifier] BOT_TOKEN_2 не задан — уведомление не отправлено.');
+    console.error('[helpRequestNotifier] BOT_TOKEN не задан — уведомление не отправлено.');
     return;
   }
 
@@ -220,7 +225,7 @@ async function notifyOperators({ accountId, accountPhone, peerId, peerUsername, 
   const peerLabel = peerUsername ? `@${peerUsername} (id ${peerId})` : `id ${peerId}`;
   const card =
     `<b>✅ Собеседник согласился помочь</b>\n\n` +
-    `<b>Аккаунт:</b> №${accountId} (${escapeHtml(accountPhone || '—')})\n` +
+    `<b>��ккаунт:</b> №${accountId} (${escapeHtml(accountPhone || '—')})\n` +
     `<b>Собеседник:</b> ${escapeHtml(peerLabel)}\n` +
     `<b>Голосовое:</b> ${escapeHtml(voiceFile)}\n` +
     `<b>Ответ собеседника:</b> «${escapeHtml(consentMessage.slice(0, 500))}»`;
@@ -264,15 +269,21 @@ async function handleUpdate(update) {
        ON DUPLICATE KEY UPDATE username = VALUES(username)`,
       [chatId, msg.chat.username || msg.from?.username || null],
     );
+    const payload = {
+      chat_id: chatId,
+      text:
+        'Готово! Теперь сюда будут приходить уведомления, когда собеседник соглашается ' +
+        'помочь после голосового сообщения.\n\nЧтобы отписаться — /stop',
+    };
+    if (MINIAPP_URL) {
+      payload.reply_markup = {
+        inline_keyboard: [[{ text: 'Открыть приложение', web_app: { url: MINIAPP_URL } }]],
+      };
+    }
     await fetch(`${TELEGRAM_API}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text:
-          'Готово! Теперь сюда будут приходить уведомления, когда собеседник соглашается ' +
-          'помочь после голосового сообщения.\n\nЧтобы отписаться — /stop',
-      }),
+      body: JSON.stringify(payload),
     });
   } else if (text === '/stop') {
     await db.execute('DELETE FROM notification_subscribers WHERE chat_id = ?', [chatId]);
