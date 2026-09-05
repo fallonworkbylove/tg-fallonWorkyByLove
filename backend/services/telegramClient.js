@@ -1,4 +1,5 @@
 const path = require('path');
+const fs = require('fs');
 const { TelegramClient, Api } = require('telegram');
 const { ConnectionTCPFull } = require('telegram/network');
 const { StringSession } = require('telegram/sessions');
@@ -207,7 +208,7 @@ const activeClients = new Map();
 const messageBuffers = new Map();
 
 // Защита от дублей: пока диалог УЖЕ находится внутри processBufferedMessages
-// (генерация ответа + человеческая пауза перед отправкой — это может занять
+// (генерация ответа + человеческая пауза перед отправкой — это может зан��ть
 // заметное время), периодический скан непрочитанных и рассылка приветствий
 // не должны повторно брать тот же диалог в обработку. Без этой защиты диалог
 // успевал «протухнуть» из messageBuffers/deferredDialogs до отправки ответа,
@@ -1687,7 +1688,7 @@ async function processBufferedMessages(
 
     // 6. Готовим текстовый ответ (если он есть — модель могла прислать
     // только токен без текста). Крайний случай: медиа подавили (см. выше), а
-    // текста модель не дала — тогда шлём короткую нейтральную фразу, чтобы
+    // текста модель не дала — тогд�� шлём короткую нейтральную фразу, чтобы
     // не промолчать на вопрос.
     let outText = reply;
     if (!outText && rawMediaType && !mediaType) {
