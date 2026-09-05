@@ -188,7 +188,13 @@ async function sendDuePhotos() {
         continue;
       }
 
-      await client.sendFile(row.peer_id, { file: imagePath, caption: pickRandomCaption() });
+      // Голый числовой peer_id резолвится GramJS только если сущность уже
+      // закэширована в сессии. Планировщик работает без входящего сообщения,
+      // поэтому кэша может не быть — резолвим явно, предпочитая username
+      // (он всегда доступен через API), с падением на числовой ID.
+      const entity = await client.getEntity(row.peer_username || row.peer_id);
+
+      await client.sendFile(entity, { file: imagePath, caption: pickRandomCaption() });
 
       await db.execute(
         'UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?',
