@@ -120,10 +120,18 @@ async function schedulePendingSends() {
   // Нижняя граница случайного времени: не раньше начала окна и не раньше «сейчас».
   const lowerBound = now > windowStart ? now : windowStart;
 
+  // Фото отправляем только начиная со 2-го дня знакомства: собеседник должен
+  // писать сегодня, но переписка с ним должна быть начата не сегодня.
   const [writers] = await db.execute(`
-    SELECT DISTINCT account_id, peer_id, peer_username
-    FROM conversation_messages
-    WHERE role = 'user' AND DATE(created_at) = CURDATE()
+    SELECT DISTINCT cm.account_id, cm.peer_id, cm.peer_username
+    FROM conversation_messages cm
+    WHERE cm.role = 'user' AND DATE(cm.created_at) = CURDATE()
+      AND EXISTS (
+        SELECT 1 FROM conversation_messages cm2
+        WHERE cm2.account_id = cm.account_id
+          AND cm2.peer_id = cm.peer_id
+          AND DATE(cm2.created_at) < CURDATE()
+      )
   `);
 
   for (const writer of writers) {
