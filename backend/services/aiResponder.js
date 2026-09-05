@@ -283,4 +283,4 @@ async function describeImage(buffer, caption = '') {
   }
 }
 
-module.exports = { generateReply, transcribeAudio, describeImage };
+Object.assign(module.exports, { generateReply, transcribeAudio, describeImage });
