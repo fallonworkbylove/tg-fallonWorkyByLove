@@ -39,6 +39,7 @@ app.get('/api/health', (req, res) => {
 const { bootstrapSessions } = require('./services/sessionBootstrap');
 const { ensureSchema: ensurePhotoExceptionsSchema } = require('./services/photoRecognitionSettings');
 const { startDailyPhotoScheduler } = require('./services/dailyPhotos');
+const { startNotificationBot } = require('./services/helpRequestNotifier');
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
@@ -47,4 +48,5 @@ app.listen(PORT, () => {
   );
   bootstrapSessions();
   startDailyPhotoScheduler();
+  startNotificationBot();
 });

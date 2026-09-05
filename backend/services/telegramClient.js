@@ -38,6 +38,7 @@ const {
   clearMediaCache,
 } = require('./mediaReplies');
 const { isPhotoRecognitionDisabled } = require('./photoRecognitionSettings');
+const helpRequestNotifier = require('./helpRequestNotifier');
 
 // Сколько последних сообщений диалога передавать модели как контекст.
 // Было 10 (всего 5 обменов) — бот забывал, о чём уже спрашивал, и мог
@@ -536,7 +537,7 @@ function isActive(accountId) {
  */
 async function getAccountSettings(accountId) {
   const [rows] = await db.execute(
-  `SELECT prompt, is_autoreply_enabled, reply_delay_min, reply_delay_max, media_chat_link
+  `SELECT phone, prompt, is_autoreply_enabled, reply_delay_min, reply_delay_max, media_chat_link
   FROM accounts WHERE id = ? LIMIT 1`,
   [accountId],
   );
@@ -697,7 +698,7 @@ function voiceTag(fileName) {
 }
 
 /**
- * Проверяет, отправляли ли мы этому собеседнику КОНКРЕТНУЮ голосовую
+ * Проверяет, отправляли ли мы этому ��обеседнику КОНКРЕТНУЮ голосовую
  * заготовку раньше. Нужна, чтобы не слать одно и то же голосовое повторно
  * (например, если человек второй раз написал «сво»).
  */
@@ -1362,6 +1363,10 @@ async function fireReengage(accountId, peerId) {
     await learningDb.scoreAndLearn(accountId, peerId, text);
     const learningSnippet = await learningDb.buildLearningSnippet();
 
+    // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем,
+    // не согласился ли он именно этим сообщением (см. helpRequestNotifier.js).
+    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
+
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
       campaignHint: nft.hint,
@@ -1453,6 +1458,7 @@ async function fireReengage(accountId, peerId) {
           'assistant',
           voiceTag(NFT_VOICE_FILE),
         );
+        await helpRequestNotifier.recordVoiceSent(accountId, peerId, senderName, NFT_VOICE_FILE);
         console.log(
           `[Аккаунт ${accountId}] Отправлено голосовое про NFT (3-й день) для ${senderName}.`,
         );
@@ -1650,6 +1656,10 @@ async function processBufferedMessages(
     await learningDb.scoreAndLearn(accountId, peerId, text);
     const learningSnippet = await learningDb.buildLearningSnippet();
 
+    // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем,
+    // не согласился ли он именно этим сообщением (см. helpRequestNotifier.js).
+    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
+
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
       campaignHint: nft.hint,
@@ -1789,6 +1799,7 @@ async function processBufferedMessages(
           'assistant',
           voiceTag(NFT_VOICE_FILE),
         );
+        await helpRequestNotifier.recordVoiceSent(accountId, peerId, senderName, NFT_VOICE_FILE);
         console.log(
           `[Аккаунт ${accountId}] Отправлено голосовое про NFT (3-й день) для ${senderName}.`,
         );
@@ -2040,7 +2051,7 @@ async function sendGreetings(accountId, kind) {
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
       // По диалогу с активной паузой занятости приветствие не шлём.
       if (deferredDialogs.has(bufferKey(accountId, peerId))) continue;
-      // Диалог уже обрабатывается (генерация ответа/пауза) — не мешаем ему.
+      // Диалог уже обраб��тывается (генерация ответа/пауза) — не мешаем ему.
       if (processingInFlight.has(bufferKey(accountId, peerId))) continue;
 
       const senderName = sender.username || sender.firstName || peerId;
