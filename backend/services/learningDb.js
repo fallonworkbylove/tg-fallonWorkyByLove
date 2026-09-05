@@ -30,9 +30,11 @@ const { buildOpenAIOptions } = require('./aiResponder');
 
 const LEARNING_ENABLED = process.env.LEARNING_ENABLED !== '0' && process.env.LEARNING_ENABLED !== 'false';
 
-// Отдельный лёгкий клиент для оценки реакции (та же авторизация, что и у
-// основного чата — прокси/ключ настраивать не нужно повторно).
-const scorerClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Отдельный лёгкий клиент для оценки реакции. Обязательно строим его через
+// buildOpenAIOptions() — так же, как основной клиент чата в aiResponder.js —
+// иначе запросы идут напрямую с сервера и получают 403 Country/region not
+// supported (api.openai.com блокирует российские IP).
+const scorerClient = new OpenAI(buildOpenAIOptions());
 
 async function ensureTables() {
   await db.execute(`
@@ -202,7 +204,7 @@ async function buildLearningSnippet() {
   for (const p of patterns) {
     const trigger = (p.trigger_msg || '').slice(0, 150);
     const reply = (p.bot_reply || '').slice(0, 200);
-    snippet += `— Если собеседник пишет что-то в духе «${trigger}», хорошо сработал ответ: «${reply}» (успех: ${Math.round(p.success_rate * 100)}%)\n`;
+    snippet += `— Если собеседник пишет что-то в духе «${trigger}», хорошо сработал ответ: «${reply}» (успе��: ${Math.round(p.success_rate * 100)}%)\n`;
   }
   snippet += 'Не копируй эти примеры дословно — адаптируй саму идею под текущий диалог и характер персонажа.\n';
   return snippet;
