@@ -208,7 +208,7 @@ const activeClients = new Map();
 const messageBuffers = new Map();
 
 // Защита от дублей: пока диалог УЖЕ находится внутри processBufferedMessages
-// (генерация ответа + человеческая пауза перед отправкой — это может зан��ть
+// (генерация ответа + человеческая пауза перед отправкой — это ��ожет зан��ть
 // заметное время), периодический скан непрочитанных и рассылка приветствий
 // не должны повторно брать тот же диалог в обработку. Без этой защиты диалог
 // успевал «протухнуть» из messageBuffers/deferredDialogs до отправки ответа,
@@ -695,7 +695,7 @@ async function saveMessage(accountId, peerId, peerUsername, role, content) {
  * По ней мы понимаем, какая именно заготовка уже отправлялась собеседнику.
  */
 function voiceTag(fileName) {
-  return `[гол��совое: ${fileName}]`;
+  return `[гол����совое: ${fileName}]`;
 }
 
 /**
@@ -1348,6 +1348,13 @@ async function fireReengage(accountId, peerId) {
   if (!client) return;
   const settings = await getAccountSettings(accountId);
   if (!settings || !settings.is_autoreply_enabled) return;
+  // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем
+  // согласие ДО отключения автоответа. Голосовые собеседника уже расшифрованы
+  // в текст на этапе extractIncomingText, так что распознаётся и голосовой,
+  // и текстовый ответ. Проверяем всегда, даже если автоответ уже отключён —
+  // иначе после первого отключения согласие на дальнейшие сообщения перестало
+  // бы детектироваться вовсе.
+  await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
   // После отправки голосового с просьбой о помощи автоответ для этого
   // конкретного собеседника отключён — дальше ведёт оператор вручную.
   if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) return;
@@ -1369,10 +1376,6 @@ async function fireReengage(accountId, peerId) {
     // фразы для подмешивания в промпт текущего ответа.
     await learningDb.scoreAndLearn(accountId, peerId, text);
     const learningSnippet = await learningDb.buildLearningSnippet();
-
-    // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем,
-    // не согласился ли он именно этим сообщением (см. helpRequestNotifier.js).
-    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
 
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
@@ -1515,6 +1518,14 @@ async function processBufferedMessages(
       );
       return;
     }
+    // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем
+    // согласие ДО отключения автоответа. Голосовые собеседника уже расшифрованы
+    // в текст на этапе extractIncomingText, так что распознаётся и голосовой,
+    // и текстовый ответ. Проверяем всегда, даже если автоответ уже отключён —
+    // иначе после первого отключения согласие на дальнейшие сообщения перестало
+    // бы детектироваться вовсе.
+    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
+
     // После отправки голосового с просьбой о помощи автоответ для этого
     // конкретного собеседника отключён — дальше ведёт оператор вручную.
     if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) {
@@ -1686,7 +1697,7 @@ async function processBufferedMessages(
     const { text: reply, mediaType: rawMediaType } = extractMediaRequest(rawReply);
 
     // Защита от «медиа два хода подряд»: если модель снова захотела прислать
-    // медиа, но прошлый ответ уже был медиа И человек НЕ просил новое явно —
+    // медиа, но прошлый ответ уже был медиа И че��овек НЕ просил новое явно —
     // подавляем. Так на вопрос «а куда едешь на кружочке?» бот ответит
     // текстом, а не пришлёт ещё один кружок.
     let mediaType = rawMediaType;
@@ -1782,7 +1793,7 @@ async function processBufferedMessages(
 
     // 8. Третий день знакомства — голосовое с просьбой помочь с NFT-токеном.
     // Отправляем ОДИН раз за весь диалог (метка в истории) и не в тот же ход,
-    // когда уже ушло другое голосовое или медиа — иначе выглядит как спам.
+    // когда уже ушло другое голосовое или медиа — иначе выглядит ��ак спам.
     if (nft.sendVoice && !voice && !mediaSentThisTurn) {
       const nftPath = path.join(VOICES_DIR, NFT_VOICE_FILE);
 
