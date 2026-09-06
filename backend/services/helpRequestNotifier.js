@@ -70,8 +70,76 @@ async function ensureSchema() {
         INDEX idx_pending (account_id, peer_id, status)
       )
     `);
+    // Собеседники, которым бот отправил голосовое-просьбу — для них автоответ
+    // отключается на этом конкретном диалоге (остальные диалоги аккаунта не
+    // затрагиваются). Снять отключение можно вручную, удалив запись.
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS autoreply_disabled_peers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        account_id INT NOT NULL,
+        peer_id VARCHAR(64) NOT NULL,
+        reason VARCHAR(255) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_account_peer (account_id, peer_id)
+      )
+    `);
   })();
   return schemaReady;
+}
+
+// ---------------------------------------------------------------------------
+// ОТКЛЮЧЕНИЕ АВТООТВЕТА ДЛЯ КОНКРЕТНОГО СОБЕСЕДНИКА
+// ---------------------------------------------------------------------------
+
+/**
+ * Отключает автоответ ИИ для конкретной пары аккаунт+собеседник. Вызывается
+ * сразу после отправки голосового с просьбой о помощи — дальше в этом диалоге
+ * отвечает оператор вручную, а не ИИ. Остальные диалоги этого аккаунта не
+ * затрагиваются.
+ */
+async function disableAutoreplyForPeer(accountId, peerId, reason) {
+  try {
+    await ensureSchema();
+    await db.execute(
+      `INSERT INTO autoreply_disabled_peers (account_id, peer_id, reason)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE reason = VALUES(reason)`,
+      [accountId, peerId, reason || null],
+    );
+  } catch (err) {
+    console.error('[helpRequestNotifier] Не удалось отключить автоответ для собеседника:', err.message);
+  }
+}
+
+/**
+ * Проверяет, отключён ли автоответ для этой пары аккаунт+собеседник.
+ */
+async function isAutoreplyDisabledForPeer(accountId, peerId) {
+  try {
+    await ensureSchema();
+    const [rows] = await db.execute(
+      `SELECT id FROM autoreply_disabled_peers WHERE account_id = ? AND peer_id = ? LIMIT 1`,
+      [accountId, peerId],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    console.error('[helpRequestNotifier] Ошибка проверки отключения автоответа:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Включает автоответ обратно (например, если оператор решил вернуть чат ИИ).
+ */
+async function enableAutoreplyForPeer(accountId, peerId) {
+  try {
+    await db.execute(
+      `DELETE FROM autoreply_disabled_peers WHERE account_id = ? AND peer_id = ?`,
+      [accountId, peerId],
+    );
+  } catch (err) {
+    console.error('[helpRequestNotifier] Не удалось включить автоответ обратно:', err.message);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -154,7 +222,7 @@ async function aiDetectAgreement(message) {
 
 /**
  * Проверяет входящее сообщение собеседника на согласие помочь, если для этой
- * пары аккаунт+собеседник есть открытое ("pending") голосовое-просьба.
+ * пары аккаунт+собеседник есть ��ткрытое ("pending") голосовое-просьба.
  * При обнаружении согласия — уведомляет операторов и закрывает окно.
  * Ничего не бросает наружу: ошибки только логируются, чтобы не мешать
  * основной генерации ответа бота.
@@ -348,4 +416,7 @@ module.exports = {
   recordVoiceSent,
   checkConsent,
   startNotificationBot,
+  disableAutoreplyForPeer,
+  isAutoreplyDisabledForPeer,
+  enableAutoreplyForPeer,
 };

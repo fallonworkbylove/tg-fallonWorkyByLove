@@ -695,7 +695,7 @@ async function saveMessage(accountId, peerId, peerUsername, role, content) {
  * По ней мы понимаем, какая именно заготовка уже отправлялась собеседнику.
  */
 function voiceTag(fileName) {
-  return `[голосовое: ${fileName}]`;
+  return `[гол��совое: ${fileName}]`;
 }
 
 /**
@@ -717,7 +717,7 @@ async function wasVoiceSent(accountId, peerId, fileName) {
 // NFT-КАМПАНИЯ (3 дня): мягкие напоминания про заработок на NFT, а на 3-й день —
 // голосовое nft.ogg с просьбой помочь с токеном.
 //
-// Почему это в коде, а не только в промпте: промпт статичен и не знает, сколько
+// Почему это в коде, а не только в промпте: промпт ста��ичен и не знает, сколько
 // дней длится знакомство. День считаем от ПЕРВОГО сообщения в диалоге
 // (conversation_messages.created_at) и передаём модели готовую подсказку.
 // ---------------------------------------------------------------------------
@@ -1146,7 +1146,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
     return rawText;
   }
 
-  // 3. Фото — распознаём содержимое, кроме чатов из списка исключений
+  // 3. Фото — распознаём содержимое, кр��ме чатов из списка исключений
   // (распознавание для них отключено во всех сессиях пользователя) и кроме
   // соб��седников, спрятанных в АРХИВ (folder_id = 1) — им фото не разбираем.
   if (message.photo) {
@@ -1348,6 +1348,9 @@ async function fireReengage(accountId, peerId) {
   if (!client) return;
   const settings = await getAccountSettings(accountId);
   if (!settings || !settings.is_autoreply_enabled) return;
+  // После отправки голосового с просьбой о помощи автоответ для этого
+  // конкретного собеседника отключён — дальше ведёт оператор вручную.
+  if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) return;
   // Ночью не пишем — непрочитанное подхватит утренний скан/приветствие.
   if (!isWithinWorkingHours()) return;
 
@@ -1509,6 +1512,14 @@ async function processBufferedMessages(
     if (!settings || !settings.is_autoreply_enabled) {
       console.log(
         `[Аккаунт ${accountId}] Сообщение от ${senderName} получено, но ав��оответчик выключен.`,
+      );
+      return;
+    }
+    // После отправки голосового с просьбой о помощи автоответ для этого
+    // конкретного собеседника отключён — дальше ведёт оператор вручную.
+    if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) {
+      console.log(
+        `[Аккаунт ${accountId}] Автоответ отключён для ${senderName} после голосового с просьбой — пропускаю.`,
       );
       return;
     }
@@ -1688,7 +1699,7 @@ async function processBufferedMessages(
 
     // 6. Готовим текстовый ответ (если он есть — модель могла прислать
     // только токен без текста). Крайний случай: медиа подавили (см. выше), а
-    // текста модель не дала — тогд�� шлём короткую нейтральную фразу, чтобы
+    // текста моде��ь не дала — тогд�� шлём короткую нейтральную фразу, чтобы
     // не промолчать на вопрос.
     let outText = reply;
     if (!outText && rawMediaType && !mediaType) {
@@ -1741,7 +1752,7 @@ async function processBufferedMessages(
     }
 
     // 7. Если у сработавшего правила voiceOnly=false — следом за текстом
-    // отправляем голосовую заготовку (например, voprosy.ogg с вопросами).
+    // отправляем голо��овую заготовку (например, voprosy.ogg с вопросами).
     if (voice) {
       // Пауза 3-4 сек между текстом и голосовым + индикатор «записывает».
       try {
@@ -1804,6 +1815,9 @@ async function processBufferedMessages(
           voiceTag(NFT_VOICE_FILE),
         );
         await helpRequestNotifier.recordVoiceSent(accountId, peerId, senderName, NFT_VOICE_FILE);
+        // Дальше с этим собеседником ведёт оператор вручную — ИИ замолкает
+        // именно в этом диалоге, остальные диалоги аккаунта не затрагиваются.
+        await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, 'nft_voice_sent');
         console.log(
           `[Аккаунт ${accountId}] Отправлено голосовое про NFT (3-й день) для ${senderName}.`,
         );
@@ -1910,7 +1924,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
       // перед ответом) — не запускаем вторую генерацию ответа параллельно.
       if (processingInFlight.has(bufferKey(accountId, peerId))) continue;
 
-      // Извлекаем текст последнего входящего (голос -> Whisper, фото -> vision).
+      // Из��лекаем текст последнего входящего (голос -> Whisper, фото -> vision).
       let text;
       try {
         text = await extractIncomingText(accountId, message);
