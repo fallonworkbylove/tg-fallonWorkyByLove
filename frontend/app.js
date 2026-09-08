@@ -697,7 +697,20 @@ function renderAccounts() {
   const accountsLimit = state.dashboard.accountsLimit;
   const availableAccounts = Math.max(accountsLimit - usedAccounts, 0);
 
-  elements.accountsList.innerHTML = state.accounts.length
+  const bulkActions = state.accounts.length
+    ? `
+      <div class="action-row account-bulk-actions" style="margin-bottom: 14px;">
+        <button class="btn btn-primary" data-action="bulk-start" type="button">
+          Включить все аккаунты
+        </button>
+        <button class="btn btn-secondary" data-action="bulk-stop" type="button">
+          Выключить все аккаунты
+        </button>
+      </div>
+    `
+    : '';
+
+  elements.accountsList.innerHTML = bulkActions + (state.accounts.length
     ? state.accounts
         .map((account) => {
           const aiEnabled = isAiEnabled(account);
@@ -765,7 +778,7 @@ function renderAccounts() {
         <h3>Аккаунтов пока нет</h3>
         <p>Добавьте первый Telegram-аккаунт, чтобы начать работу.</p>
       </div>
-    `;
+    `);
 
   elements.exampleAccount.innerHTML = state.accounts.length
     ? state.accounts
@@ -1720,7 +1733,7 @@ function handleDetails(accountId) {
   overlay.className = 'modal-overlay';
 
   overlay.innerHTML = `
-    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Детали аккаунта">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Детали акка��нта">
       <div class="modal-card__header">
         <div>
           <p class="modal-card__eyebrow">Аккаунт</p>
