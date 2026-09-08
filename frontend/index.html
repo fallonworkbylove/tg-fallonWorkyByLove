@@ -46,6 +46,8 @@
 
           <div class="action-row">
             <button class="btn btn-primary" data-action="refresh" type="button">Обновить</button>
+            <button class="btn btn-primary" data-action="bulk-start" type="button">Включить все аккаунты</button>
+            <button class="btn btn-secondary" data-action="bulk-stop" type="button">Выключить все аккаунты</button>
             <button class="btn btn-secondary" data-action="open-accounts" type="button">Добавить аккаунт</button>
             <button class="btn btn-secondary" data-action="topup" type="button">Пополнить</button>
             <button class="btn btn-danger" data-action="logout" type="button">Выйти</button>
@@ -107,10 +109,6 @@
               <h3>Список аккаунтов</h3>
               <button class="btn btn-secondary small" type="button">Обновить</button>
             </div>
-            <div class="action-row account-bulk-actions">
-              <button class="btn btn-primary" data-action="bulk-start" type="button">Включить все аккаунты</button>
-              <button class="btn btn-secondary" data-action="bulk-stop" type="button">Выключить все аккаунты</button>
-            </div>
             <div id="accounts-list" class="stack"></div>
           </div>
         </section>
@@ -153,7 +151,7 @@
             <h2>О сервисе</h2>
             <p>Это Telegram Mini App для управления AI-ассистентами и обучением сценариев ответов для аккаунтов.</p>
             <h3>Blacklist</h3>
-            <p>Blacklist — это список Telegram User ID, которым AI-автоответчик не будет отвечать. Если человек находится в blacklist, система увидит входящее сообщение, но не отправит его в AI и не будет писать ответ. Это удобно для блокировки нежелательных пользователей, спама или людей, которым должен отвечать только человек.</p>
+            <p>Blacklist — это список Telegram User ID, которым AI-автоответчик не будет отвечать. Если человек находится в blacklist, система увидит входящее со��бщение, но не отправит его в AI и не будет писать ответ. Это удобно для блокировки нежелательных пользователей, спама или людей, которым должен отвечать только человек.</p>
             <h3>Инструкция</h3>
             <ul class="list">
               <li>Добавляйте аккаунты с промптом и проверяйте лимиты.</li>
@@ -226,6 +224,6 @@
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=5"></script>
+    <script src="app.js?v=6"></script>
     </body>
     </html>
