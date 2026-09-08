@@ -695,7 +695,7 @@ async function saveMessage(accountId, peerId, peerUsername, role, content) {
 }
 
 /**
- * Формирует метку голосового сообщения д��я хранения в истории.
+ * Формирует метку голосового сообщения д����я хранения в истории.
  * По ней мы понимаем, какая именно заготовка уже отправлялась собеседнику.
  */
 function voiceTag(fileName) {
@@ -994,7 +994,7 @@ const HOWLONG_AFTER_MESSAGES = 3;
 
 /**
  * Проверяет по истории, задавали ли мы уже вопрос «ск��л��ко сидишь»
- * (любой из вариантов — ищем по устой��ивой части фразы).
+ * (любой из вариантов — ищем по уст��й��ивой части фразы).
  */
 async function wasHowLongAsked(accountId, peerId) {
   const [rows] = await db.execute(
@@ -1314,7 +1314,7 @@ async function flushMessageBuffer(accountId, peerId, senderName) {
 /**
  * Планирует «занятость»: бот молчит случайные 10–60 минут, а потом всё равно
  * ОТВЕЧАЕТ ПО СУЩЕСТВУ на то сообщение, из-за которого сработала пауза —
- * прост�� с большой естественной задержкой, как будто был занят делами.
+ * прост�� с большой естественной за��ержкой, как будто был занят делами.
  * Раньше здесь отправлялась шаблонная фраза («что делаешь?», «ты тут?») —
  * это приводило к тому, что реальный вопрос собеседника оставался без ответа.
  * Если пауза для этого диалога уже идёт — второй раз не планируем.
@@ -1500,7 +1500,18 @@ async function fireReengage(accountId, peerId) {
           'assistant',
           voiceTag(NFT_VOICE_FILE),
         );
-        await helpRequestNotifier.recordVoiceSent(accountId, peerId, senderName, NFT_VOICE_FILE);
+        const accountProfile = await client.getMe();
+        const accountName = [accountProfile.firstName, accountProfile.lastName]
+          .filter(Boolean)
+          .join(' ') || (accountProfile.username ? `@${accountProfile.username}` : '');
+        await helpRequestNotifier.recordVoiceSent(
+          accountId,
+          peerId,
+          senderName,
+          NFT_VOICE_FILE,
+          settings.phone,
+          accountName,
+        );
         await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, 'nft_voice_sent');
         console.log(
           `[Аккаунт ${accountId}] Отправлено голосовое про NFT (3-й день) для ${senderName}.`,
@@ -1876,7 +1887,18 @@ async function processBufferedMessages(
           'assistant',
           voiceTag(NFT_VOICE_FILE),
         );
-        await helpRequestNotifier.recordVoiceSent(accountId, peerId, senderName, NFT_VOICE_FILE);
+        const accountProfile = await client.getMe();
+        const accountName = [accountProfile.firstName, accountProfile.lastName]
+          .filter(Boolean)
+          .join(' ') || (accountProfile.username ? `@${accountProfile.username}` : '');
+        await helpRequestNotifier.recordVoiceSent(
+          accountId,
+          peerId,
+          senderName,
+          NFT_VOICE_FILE,
+          settings.phone,
+          accountName,
+        );
         // Дальше с этим собеседником ведёт оператор вручную — ИИ замолкает
         // именно в этом диалоге, остальные диалоги аккаунта не затрагиваются.
         await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, 'nft_voice_sent');

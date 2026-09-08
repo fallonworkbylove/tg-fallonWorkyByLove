@@ -151,7 +151,7 @@ async function enableAutoreplyForPeer(accountId, peerId) {
  * просьбой о помощи. Открывает "окно ожидания согласия" для этой пары
  * аккаунт+собеседник.
  */
-async function recordVoiceSent(accountId, peerId, peerUsername, voiceFile) {
+async function recordVoiceSent(accountId, peerId, peerUsername, voiceFile, accountPhone, accountName) {
   try {
     await ensureSchema();
     // Не открываем второе окно ожидания, если предыдущее по этому же файлу
@@ -173,6 +173,8 @@ async function recordVoiceSent(accountId, peerId, peerUsername, voiceFile) {
 
     await notifyVoiceSent({
       accountId,
+      accountPhone,
+      accountName,
       peerId,
       peerUsername,
       voiceFile,
@@ -182,7 +184,7 @@ async function recordVoiceSent(accountId, peerId, peerUsername, voiceFile) {
   }
 }
 
-async function notifyVoiceSent({ accountId, peerId, peerUsername, voiceFile }) {
+async function notifyVoiceSent({ accountId, accountPhone, accountName, peerId, peerUsername, voiceFile }) {
   if (!TELEGRAM_API) {
     console.error('[helpRequestNotifier] BOT_TOKEN не задан — уведомление об отправке не отправлено.');
     return;
@@ -206,13 +208,16 @@ async function notifyVoiceSent({ accountId, peerId, peerUsername, voiceFile }) {
   }
 
   const normalizedUsername = String(peerUsername || '').trim().replace(/^@/, '');
-  const peerLabel =
-    normalizedUsername && normalizedUsername.toLowerCase() !== 'telegram'
-      ? `@${normalizedUsername} (id ${peerId})`
-      : `id ${peerId}`;
+  const peerLabel = normalizedUsername
+    ? `@${normalizedUsername} (id ${peerId})`
+    : `id ${peerId}`;
+  const normalizedAccountName = String(accountName || '').trim();
+  const accountLabel = normalizedAccountName
+    ? `№${accountId} — ${normalizedAccountName}${accountPhone ? ` (${accountPhone})` : ''}`
+    : `№${accountId}${accountPhone ? ` (${accountPhone})` : ''}`;
   const text =
     '<b>ИИ отправила NFT-голосовое</b>\n\n' +
-    `<b>Аккаунт:</b> №${accountId}\n` +
+    `<b>Аккаунт:</b> ${escapeHtml(accountLabel)}\n` +
     `<b>Собеседник:</b> ${escapeHtml(peerLabel)}\n` +
     `<b>Голосовое:</b> ${escapeHtml(voiceFile)}\n\n` +
     'ИИ больше не отвечает в этом диалоге — дальше переписку ведёт оператор';
