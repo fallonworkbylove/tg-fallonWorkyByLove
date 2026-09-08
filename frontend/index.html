@@ -10,7 +10,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Telegram Mini App</title>
-    <link rel="stylesheet" href="styles.css?v=4" />
+    <link rel="stylesheet" href="styles.css?v=5" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -206,6 +206,10 @@
           <div id="stats-cards" class="stats-grid"></div>
           <div class="section-card card">
             <h3>Сообщения по аккаунтам</h3>
+            <div class="action-row account-bulk-actions">
+              <button class="btn btn-primary" data-action="bulk-start" type="button">Включить все аккаунты</button>
+              <button class="btn btn-secondary" data-action="bulk-stop" type="button">Выключить все аккаунты</button>
+            </div>
             <div id="stats-accounts" class="stack"></div>
           </div>
         </section>
@@ -222,6 +226,6 @@
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=4"></script>
+    <script src="app.js?v=5"></script>
     </body>
     </html>
