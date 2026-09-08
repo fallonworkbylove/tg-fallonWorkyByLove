@@ -188,11 +188,9 @@ async function sendDuePhotos() {
         continue;
       }
 
-      // Голый числовой peer_id резолвится GramJS только если сущность уже
-      // закэширована в сессии. Планировщик работает без входящего сообщения,
-      // поэтому кэша может не быть — резолвим явно, предпочитая username
-      // (он всегда доступен через API), с падением на числовой ID.
-      const entity = await client.getEntity(row.peer_username || row.peer_id);
+      // Собеседник выбирается по сохранённому Telegram ID. Имя контакта не
+      // является идентификатором и может совпадать у нескольких пользователей.
+      const entity = await resolvePeerEntity(client, row.peer_id, row.peer_username);
 
       await client.sendFile(entity, { file: imagePath, caption: pickRandomCaption() });
 
@@ -202,7 +200,7 @@ async function sendDuePhotos() {
       );
 
       console.log(
-        `[Аккаунт ${row.account_id}] Отправлено ежедневное фото ${row.peer_username || row.peer_id}.`,
+        `[Аккаунт ${row.account_id}] Отправлено ежедневное фото пользователю с ID ${row.peer_id}${row.peer_username ? ` (@${row.peer_username})` : ''}.`,
       );
     } catch (err) {
       console.error(
@@ -226,6 +224,22 @@ async function sendDuePhotos() {
 
 // Коды ошибок Telegram, при которых повторная попытка в тот же день заведомо
 // не сработает (доступ к переписке закрыт, а не временный сетевой сбой).
+async function resolvePeerEntity(client, peerId, peerUsername) {
+  const normalizedId = String(peerId || '').trim();
+  if (normalizedId && /^-?\d+$/.test(normalizedId)) {
+    try {
+      return await client.getEntity(Number(normalizedId));
+    } catch (idError) {
+      if (!peerUsername) throw idError;
+    }
+  }
+
+  const normalizedUsername = String(peerUsername || '').trim().replace(/^@/, '');
+  if (normalizedUsername) return client.getEntity(normalizedUsername);
+
+  throw new Error(`Не удалось найти Telegram-сущность по ID ${normalizedId || 'не указан'}`);
+}
+
 const PERMANENT_SEND_ERROR_CODES = [
   'CHAT_WRITE_FORBIDDEN',
   'USER_IS_BLOCKED',
