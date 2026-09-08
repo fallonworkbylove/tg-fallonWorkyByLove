@@ -275,17 +275,45 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;');
 }
 
+/**
+ * Находит Telegram ID владельца аккаунта (того, кому в нашем проекте привязан
+ * этот номер) — это и есть users.telegram_user_id для accounts.user_id.
+ * В приватном чате с ботом chat_id всегда равен Telegram ID пользователя,
+ * поэтому это же значение сравнивается с notification_subscribers.chat_id.
+ */
+async function getAccountOwnerTelegramId(accountId) {
+  const [[row]] = await db.execute(
+    `SELECT u.telegram_user_id AS telegram_user_id
+     FROM accounts a
+     JOIN users u ON u.id = a.user_id
+     WHERE a.id = ?
+     LIMIT 1`,
+    [accountId],
+  );
+  return row ? String(row.telegram_user_id) : null;
+}
+
 async function notifyOperators({ accountId, accountPhone, peerId, peerUsername, voiceFile, consentMessage }) {
   if (!TELEGRAM_API) {
     console.error('[helpRequestNotifier] BOT_TOKEN не задан — уведомление не отправлено.');
     return;
   }
 
-  const [subscribers] = await db.execute('SELECT chat_id FROM notification_subscribers');
+  const ownerTelegramId = await getAccountOwnerTelegramId(accountId);
+  if (!ownerTelegramId) {
+    console.error(
+      `[helpRequestNotifier] Не удалось определить владельца аккаунта №${accountId} — уведомление не отправлено.`,
+    );
+    return;
+  }
+
+  const [allSubscribers] = await db.execute('SELECT chat_id FROM notification_subscribers');
+  const subscribers = allSubscribers.filter((s) => String(s.chat_id) === ownerTelegramId);
+
   if (subscribers.length === 0) {
     console.log(
-      '[helpRequestNotifier] Собеседник согласился помочь, но нет подписчиков на уведомления ' +
-        '(никто не написал /start уведомляющему боту).',
+      `[helpRequestNotifier] Собеседник согласился помочь (аккаунт №${accountId}), но владелец ` +
+        'этого номера (телеграм ID ' + ownerTelegramId + ') не написал /start уведомляющему боту.',
     );
     return;
   }
@@ -345,7 +373,7 @@ async function handleUpdate(update) {
     };
     if (MINIAPP_URL) {
       payload.reply_markup = {
-        inline_keyboard: [[{ text: 'Открыть приложение', web_app: { url: MINIAPP_URL } }]],
+        inline_keyboard: [[{ text: 'Откры��ь приложение', web_app: { url: MINIAPP_URL } }]],
       };
     }
     await fetch(`${TELEGRAM_API}/sendMessage`, {
