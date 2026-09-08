@@ -732,9 +732,8 @@ const VOICES_DIR = path.join(__dirname, '..', 'voices');
 // Имя файла голосового с просьбой помочь с NFT-токеном (кладётся в voices/).
 const NFT_VOICE_FILE = 'nft.ogg';
 // Голосовое уходит, когда диалогу столько часов (3-й день знакомства).
+// После отправки бот полностью замолкает на этом собеседнике.
 const NFT_VOICE_AFTER_HOURS = 48;
-// Мягкое предложение-продолжение после голосового (4-й день знакомства).
-const NFT_DAY4_AFTER_HOURS = 72;
 
 /**
  * Возвращает, сколько часов прошло с первого сообщения диалога.
@@ -799,25 +798,17 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
   // сначала обычное знакомство.
   if (ageHours == null || historyLength < 6) return { hint: null, sendVoice: false };
 
-  // 4-й день: голосовое (3-й день) уже отправлено — предлагаем мягкое
-  // продолжение, без нажима, решение оставляем собеседнику. Срабатывает
-  // только если голосовое реально было отправлено этому собеседнику ранее.
-  if (ageHours >= NFT_DAY4_AFTER_HOURS && ageHours < NFT_VOICE_AFTER_HOURS + 48) {
-    const voiceAlreadySent = await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE);
-    if (voiceAlreadySent && !(await nftMentionedRecently(accountId, peerId))) {
-      return {
-        hint:
-          'Идёт четвёртый день знакомства, ты уже присылала голосовое про помощь с NFT-токеном. ' +
-          'Если это уместно по контексту — можешь вскользь, БЕЗ нажима предложить: «если хочешь ' +
-          'покажу где смотреть, решай сам» — и на этом остановиться, не уговаривай и не повторяй ' +
-          'предложение, если человек уже никак не отреагировал ранее.',
-        sendVoice: false,
-      };
-    }
-  }
-
-  // 3-й день: пора просить помощи с токеном голосовым.
+  // 3-й день: пора просить помощи с токеном голосовым. После отправки
+  // голосового бот полностью замолкает на этом собеседнике (автоответ
+  // отключается через disableAutoreplyForPeer) и оператору приходит
+  // уведомление о том, что голосовое отправлено — дальше ведёт живой человек.
   if (ageHours >= NFT_VOICE_AFTER_HOURS) {
+    const voiceAlreadySent = await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE);
+    if (voiceAlreadySent) {
+      // Голосовое уже отправлено ранее — больше ничего не говорим и не
+      // предлагаем, автоответ для этого собеседника отключён.
+      return { hint: null, sendVoice: false };
+    }
     return {
       hint:
         'Идёт третий день знакомства. Ты уже рассказывала, что зарабатываешь на NFT. ' +
@@ -841,7 +832,7 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
       'вскользь упомяни, что зарабатываешь на NFT (перепродаёшь токены): например пожалуйся, ' +
       'что залипла в графики, или порадуйся, что сделка вышла удачной. Это фон, а не главная тема: ' +
       'сначала ответь на то, что человек написал. Не объясняй, что такое NFT, если не спрашивают, ' +
-      'не уговаривай, не предлагай заработать вместе и не проси ничего. Если по контексту ' +
+      'не уговаривай, не ��редлагай заработать вместе и не проси ничего. Если по контексту ' +
       'упоминание будет неуместным — просто пропусти его.',
     sendVoice: false,
   };
@@ -1672,7 +1663,7 @@ async function processBufferedMessages(
     }
 
     // 3.5. Фиксированные текстовые ответы по триггеру (��ез обращения к AI).
-    // Например, на «что ищешь здесь?» отвечаем заранее заданным текстом.
+    // Например, на «что ищ��шь здесь?» отвечаем заранее заданным текстом.
     const fixedReply = findTextReplyForText(text);
     if (fixedReply) {
       console.log(
@@ -1850,7 +1841,7 @@ async function processBufferedMessages(
 
       if (!fs.existsSync(nftPath)) {
         console.error(
-          `[Аккаунт ${accountId}] Файл ${NFT_VOICE_FILE} не найден в voices/ — голосовое про NFT не отправлено.`,
+          `[А��каунт ${accountId}] Файл ${NFT_VOICE_FILE} не найден в voices/ — голосовое про NFT не отправлено.`,
         );
       } else if (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE)) {
         // Уже просили помощи у этого человека — повторно не шлём.
@@ -2195,7 +2186,7 @@ async function sendGreetings(accountId, kind) {
 
 /**
  * Проверяет переход через границу рабочих часов и шлёт приветствие.
- * Вызывается по таймеру раз в минуту.
+ * Вызыва��тся по таймеру раз в минуту.
  */
 function checkWorkBoundary(accountId) {
   const nowWorking = isWithinWorkingHours();
