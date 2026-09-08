@@ -697,20 +697,7 @@ function renderAccounts() {
   const accountsLimit = state.dashboard.accountsLimit;
   const availableAccounts = Math.max(accountsLimit - usedAccounts, 0);
 
-  const bulkActions = state.accounts.length
-    ? `
-      <div class="action-row account-bulk-actions" style="margin-bottom: 14px;">
-        <button class="btn btn-primary" data-action="bulk-start" type="button">
-          Включить все аккаунты
-        </button>
-        <button class="btn btn-secondary" data-action="bulk-stop" type="button">
-          Выключить все аккаунты
-        </button>
-      </div>
-    `
-    : '';
-
-  elements.accountsList.innerHTML = bulkActions + (state.accounts.length
+  elements.accountsList.innerHTML = state.accounts.length
     ? state.accounts
         .map((account) => {
           const aiEnabled = isAiEnabled(account);
@@ -778,7 +765,7 @@ function renderAccounts() {
         <h3>Аккаунтов пока нет</h3>
         <p>Добавьте первый Telegram-аккаунт, чтобы начать работу.</p>
       </div>
-    `);
+    `;
 
   elements.exampleAccount.innerHTML = state.accounts.length
     ? state.accounts
@@ -1059,20 +1046,7 @@ function renderStats() {
     </div>
   `;
 
-  const bulkActions = state.accounts.length
-    ? `
-      <div class="action-row account-bulk-actions" style="margin-bottom: 14px;">
-        <button class="btn btn-primary" data-action="bulk-start" type="button">
-          Включить все аккаунты
-        </button>
-        <button class="btn btn-secondary" data-action="bulk-stop" type="button">
-          Выключить все аккаунты
-        </button>
-      </div>
-    `
-    : '';
-
-  elements.statsAccounts.innerHTML = bulkActions + (state.accounts.length
+  elements.statsAccounts.innerHTML = state.accounts.length
     ? state.accounts
         .map((account) => {
           const aiEnabled = isAiEnabled(account);
@@ -1094,7 +1068,7 @@ function renderStats() {
         <h3>Статистика появится после первых сообщений</h3>
         <p>Как только аккаунты начнут работать, здесь появятся данные.</p>
       </div>
-    `);
+    `;
 }
 
 function render() {
