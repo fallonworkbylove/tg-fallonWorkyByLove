@@ -165,13 +165,65 @@ async function recordVoiceSent(accountId, peerId, peerUsername, voiceFile) {
     );
     if (existing) return;
 
-    await db.execute(
+      await db.execute(
       `INSERT INTO help_requests (account_id, peer_id, peer_username, voice_file, status)
        VALUES (?, ?, ?, ?, 'pending')`,
       [accountId, peerId, peerUsername || null, voiceFile],
     );
+
+    await notifyVoiceSent({
+      accountId,
+      peerId,
+      peerUsername,
+      voiceFile,
+    });
   } catch (err) {
     console.error('[helpRequestNotifier] Не удалось зафиксировать отправку голосового:', err.message);
+  }
+}
+
+async function notifyVoiceSent({ accountId, peerId, peerUsername, voiceFile }) {
+  if (!TELEGRAM_API) {
+    console.error('[helpRequestNotifier] BOT_TOKEN не задан — уведомление об отправке не отправлено.');
+    return;
+  }
+
+  const ownerTelegramId = await getAccountOwnerTelegramId(accountId);
+  if (!ownerTelegramId) {
+    console.error(`[helpRequestNotifier] Не найден владелец аккаунта №${accountId}.`);
+    return;
+  }
+
+  const [subscribers] = await db.execute(
+    'SELECT chat_id FROM notification_subscribers WHERE chat_id = ?',
+    [ownerTelegramId],
+  );
+  if (subscribers.length === 0) {
+    console.error(
+      `[helpRequestNotifier] Владелец аккаунта №${accountId} не подписан на уведомления: ${ownerTelegramId}`,
+    );
+    return;
+  }
+
+  const peerLabel = peerUsername ? `@${peerUsername} (id ${peerId})` : `id ${peerId}`;
+  const text =
+    '<b>🎙️ ИИ отправила NFT-голосовое</b>\\n\\n' +
+    `<b>Аккаунт:</b> №${accountId}\\n` +
+    `<b>Собеседник:</b> ${escapeHtml(peerLabel)}\\n` +
+    `<b>Голосовое:</b> ${escapeHtml(voiceFile)}\\n\\n` +
+    'ИИ больше не отвечает в этом диалоге — дальше переписку ведёт оператор';
+
+  try {
+    const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: ownerTelegramId, text, parse_mode: 'HTML' }),
+    });
+    if (!response.ok) {
+      console.error('[helpRequestNotifier] Ошибка отправки уведомления о голосовом:', await response.text());
+    }
+  } catch (err) {
+    console.error('[helpRequestNotifier] Не удалось отправить уведомление о голосовом:', err.message);
   }
 }
 
