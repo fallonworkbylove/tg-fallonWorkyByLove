@@ -128,7 +128,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'что-то спросить, выбери новую тему, которой в истории выше ещё не было, ' +
     'или продолжи уже начатую тему, а не начинай её с начала.';
 
-  // Определение настроения: перед ответом модель сама (без отдельного
+  // Определени�� настроения: перед ответом модель сама (без отдельного
   // запроса к API) считывает эмоциональный тон последнего сообщения
   // собеседника и мягко подстраивает стиль ответа — без явного
   // проговаривания анал��за в самом тексте ответа.
@@ -197,6 +197,31 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     });
   }
 
+  // Динамический тайм-менеджмент: стиль ответа подстраивается под текущее
+  // время суток (сонная/рабочая/общительная и т.д.). Подсказку считает
+  // services/timeStyle.js, сюда приходит уже готовый текст.
+  if (options.timeHint) {
+    messages.push({ role: 'system', content: options.timeHint });
+  }
+
+  // Mood Engine: текущее настроение бота (energetic/neutral/tired/excited),
+  // меняется раз в 2-4ч случайно, см. services/moodEngine.js.
+  if (options.moodHint) {
+    messages.push({ role: 'system', content: options.moodHint });
+  }
+
+  // Memory Triggers: бот сам возвращается к факту, упомянутому собеседником
+  // 1-3 дня назад (питомец, работа, здоровье, город), см. services/memoryTriggers.js.
+  if (options.memoryHint) {
+    messages.push({ role: 'system', content: options.memoryHint });
+  }
+
+  // Обработка возражений / анти-детект (обвинение в боте, запрос контактов,
+  // "скам", "нет денег", "не шарю", "потом") — см. services/objectionHandler.js.
+  if (options.objectionHint) {
+    messages.push({ role: 'system', content: options.objectionHint });
+  }
+
   // lengthReminder идёт последним перед сообщением пользователя — самая
   // "сильная" позиция в контексте для модели.
   messages.push({ role: 'system', content: lengthReminder });
@@ -218,7 +243,24 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     temperature: 0.7,
   });
 
-  return completion.choices[0]?.message?.content?.trim() || '';
+  const rawText = completion.choices[0]?.message?.content?.trim() || '';
+  return applyAntiDetectStyle(rawText);
+}
+
+/**
+ * Анти-детект стиль: убирает восклицательные знаки и точки в конце сообщения
+ * (живая переписка в мессенджере обычно без них — точка в конце фразы часто
+ * читается как «сухо/раздражённо», а обилие «!» типично для ИИ-генерации).
+ * Применяется всегда, независимо от настроения/времени суток/промпта.
+ */
+function applyAntiDetectStyle(text) {
+  if (!text) return text;
+  let result = text.replace(/!+/g, '');
+  result = result.trimEnd();
+  while (result.endsWith('.') && !result.endsWith('..')) {
+    result = result.slice(0, -1).trimEnd();
+  }
+  return result;
 }
 
 /**

@@ -39,7 +39,11 @@ const {
   clearMediaCache,
 } = require('./mediaReplies');
 const { isPhotoRecognitionDisabled } = require('./photoRecognitionSettings');
-const helpRequestNotifier = require('./helpRequestNotifier');
+ const helpRequestNotifier = require('./helpRequestNotifier');
+ const timeStyle = require('./timeStyle');
+ const moodEngine = require('./moodEngine');
+ const memoryTriggers = require('./memoryTriggers');
+ const objectionHandler = require('./objectionHandler');
 
 // Сколько последних сообщений диалога передавать модели как контекст.
 // Было 10 (всего 5 обменов) — бот забывал, о чём уже спрашивал, и мог
@@ -695,7 +699,7 @@ async function saveMessage(accountId, peerId, peerUsername, role, content) {
  * По ней мы понимаем, какая именно заготовка уже отправлялась собеседнику.
  */
 function voiceTag(fileName) {
-  return `[гол����совое: ${fileName}]`;
+  return `[г��л����совое: ${fileName}]`;
 }
 
 /**
@@ -729,6 +733,8 @@ const VOICES_DIR = path.join(__dirname, '..', 'voices');
 const NFT_VOICE_FILE = 'nft.ogg';
 // Голосовое уходит, когда диалогу столько часов (3-й день знакомства).
 const NFT_VOICE_AFTER_HOURS = 48;
+// Мягкое предложение-продолжение после голосового (4-й день знакомства).
+const NFT_DAY4_AFTER_HOURS = 72;
 
 /**
  * Возвращает, сколько часов прошло с первого сообщения диалога.
@@ -792,6 +798,23 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
   // Нет истории/даты — кампанию не ведём. И не начинаем с первых же реплик:
   // сначала обычное знакомство.
   if (ageHours == null || historyLength < 6) return { hint: null, sendVoice: false };
+
+  // 4-й день: голосовое (3-й день) уже отправлено — предлагаем мягкое
+  // продолжение, без нажима, решение оставляем собеседнику. Срабатывает
+  // только если голосовое реально было отправлено этому собеседнику ранее.
+  if (ageHours >= NFT_DAY4_AFTER_HOURS && ageHours < NFT_VOICE_AFTER_HOURS + 48) {
+    const voiceAlreadySent = await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE);
+    if (voiceAlreadySent && !(await nftMentionedRecently(accountId, peerId))) {
+      return {
+        hint:
+          'Идёт четвёртый день знакомства, ты уже присылала голосовое про помощь с NFT-токеном. ' +
+          'Если это уместно по контексту — можешь вскользь, БЕЗ нажима предложить: «если хочешь ' +
+          'покажу где смотреть, решай сам» — и на этом остановиться, не уговаривай и не повторяй ' +
+          'предложение, если человек уже никак не отреагировал ранее.',
+        sendVoice: false,
+      };
+    }
+  }
 
   // 3-й день: пора просить помощи с токеном голосовым.
   if (ageHours >= NFT_VOICE_AFTER_HOURS) {
@@ -1021,7 +1044,7 @@ async function historyHasContent(accountId, peerId, content) {
 
 /**
  * Разбирает ответ собеседника про срок и определяет, БОЛЬШЕ ли это 2 недель
- * (строго > 14 дней). Возвращает true, если срок явно больше двух недель.
+ * (строго > 14 дней). Возвращает true, есл�� срок явно больше двух недель.
  *
  * Понимает годы, месяцы, полгода, недели и дни, числа цифрами и словами.
  */
@@ -1146,7 +1169,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
     return rawText;
   }
 
-  // 3. Фото — распознаём содержимое, кр��ме чатов из списка исключений
+  // 3. Фото — распознаём соде��жимое, кр��ме чатов из списка исключений
   // (распознавание для них отключено во всех сессиях пользователя) и кроме
   // соб��седников, спрятанных в АРХИВ (folder_id = 1) — им фото не разбираем.
   if (message.photo) {
@@ -1377,12 +1400,26 @@ async function fireReengage(accountId, peerId) {
     await learningDb.scoreAndLearn(accountId, peerId, text);
     const learningSnippet = await learningDb.buildLearningSnippet();
 
+    // Динамический тайм-менеджмент + Mood Engine + Memory Triggers +
+    // обработка возражений/анти-детект — см. соответствующие модули.
+    const timeInfo = timeStyle.getTimeStyle();
+    const moodInfo = await moodEngine.getMood(accountId);
+    const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
+    const objectionHint = objectionHandler.detectHint(text);
+    // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
+    memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
+
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
       campaignHint: nft.hint,
       learningSnippet,
+      timeHint: timeInfo.hint,
+      moodHint: moodInfo.hint,
+      memoryHint: dueMemory?.hint,
+      objectionHint,
     });
     if (!rawReply) return;
+    if (dueMemory) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     const { text: reply, mediaType: rawMediaType } =
       extractMediaRequest(rawReply);
@@ -1549,7 +1586,7 @@ async function processBufferedMessages(
     }
 
     // Фильтр 5: рабочие часы. Вне рабочего времени НЕ отвечаем и НЕ сохраняем —
-    // сообщение остаётся непрочитанным и будет дочитано утром скан-функцией.
+    // сообщение остаётся непрочитанным и будет дочитано утром скан-ф��нкцией.
     if (!isWithinWorkingHours()) {
       console.log(
         `[Аккаунт ${accountId}] Сообщение от ${senderName} получено ночью (вне ${WORK_START_HOUR}:00–${WORK_END_HOUR}:00) — отвечу утром.`,
@@ -1686,12 +1723,26 @@ async function processBufferedMessages(
     // не согласился ли он именно этим сообщением (см. helpRequestNotifier.js).
     await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
 
+    // Динамический тайм-менеджмент + Mood Engine + Memory Triggers +
+    // обработка возражений/анти-детект — см. соответствующие модули.
+    const timeInfo = timeStyle.getTimeStyle();
+    const moodInfo = await moodEngine.getMood(accountId);
+    const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
+    const objectionHint = objectionHandler.detectHint(text);
+    // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
+    memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
+
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
       campaignHint: nft.hint,
       learningSnippet,
+      timeHint: timeInfo.hint,
+      moodHint: moodInfo.hint,
+      memoryHint: dueMemory?.hint,
+      objectionHint,
     });
     if (!rawReply) return;
+    if (dueMemory) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     // Отделяем текст от запрошенного типа медиа (токен вырезаем из текста).
     const { text: reply, mediaType: rawMediaType } = extractMediaRequest(rawReply);
@@ -1845,7 +1896,7 @@ async function processBufferedMessages(
 }
 
 // ---------------------------------------------------------------------------
-// ДОЧИТЫВАНИЕ НЕПРОЧИТАННЫХ ДИАЛОГОВ (scan)
+// ДОЧ��ТЫВАНИЕ НЕПРОЧИТАННЫХ ДИАЛОГОВ (scan)
 // Бот проходит по НЕархивным личным диалогам и отвечает тем, чьё последнее
 // сообщение осталось без ответа (входящее). Так он «дочитывает» переписки,
 // которые пришли, пока аккаунт был offline, и может ответить в любое время.
@@ -2176,4 +2227,7 @@ module.exports = {
   getActiveClient,
   isActive,
   scanUnansweredDialogs,
+  getAccountSettings,
+  isWithinWorkingHours,
+  saveMessage,
 };
