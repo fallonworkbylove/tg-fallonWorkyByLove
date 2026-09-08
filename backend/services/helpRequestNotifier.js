@@ -205,12 +205,16 @@ async function notifyVoiceSent({ accountId, peerId, peerUsername, voiceFile }) {
     return;
   }
 
-  const peerLabel = peerUsername ? `@${peerUsername} (id ${peerId})` : `id ${peerId}`;
+  const normalizedUsername = String(peerUsername || '').trim().replace(/^@/, '');
+  const peerLabel =
+    normalizedUsername && normalizedUsername.toLowerCase() !== 'telegram'
+      ? `@${normalizedUsername} (id ${peerId})`
+      : `id ${peerId}`;
   const text =
-    '<b>🎙️ ИИ отправила NFT-голосовое</b>\\n\\n' +
-    `<b>Аккаунт:</b> №${accountId}\\n` +
-    `<b>Собеседник:</b> ${escapeHtml(peerLabel)}\\n` +
-    `<b>Голосовое:</b> ${escapeHtml(voiceFile)}\\n\\n` +
+    '<b>ИИ отправила NFT-голосовое</b>\n\n' +
+    `<b>Аккаунт:</b> №${accountId}\n` +
+    `<b>Собеседник:</b> ${escapeHtml(peerLabel)}\n` +
+    `<b>Голосовое:</b> ${escapeHtml(voiceFile)}\n\n` +
     'ИИ больше не отвечает в этом диалоге — дальше переписку ведёт оператор';
 
   try {
