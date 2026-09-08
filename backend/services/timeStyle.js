@@ -1,32 +1,68 @@
 /**
  * ДИНАМИЧЕСКИЙ ТАЙМ-МЕНЕДЖМЕНТ.
- *
- * Стиль ответа бота подстраивается под текущее время суток (по таймзоне
- * рабочих часов бота, см. WORK_TIMEZONE в telegramClient.js). Здесь — только
- * чистая функция, которая возвращает текстовую подсказку для промпта и
- * множитель к обычной паузе перед ответом. Реального решения «отвечать или
- * не отвечать ночью» этот модуль не принимает — это делает существующая
- * логика рабочих часов (WORK_START_HOUR/WORK_END_HOUR) в telegramClient.js.
+ * Периоды и часы можно переопределить через .env.
  */
+
+const CONFIG = {
+  wakeUpStart: Number(process.env.WAKE_UP_START) || 6,
+  wakeUpEnd: Number(process.env.WAKE_UP_END) || 10,
+  goingToBedStart: Number(process.env.GOING_TO_BED_START) || 23,
+  goingToBedEnd: Number(process.env.GOING_TO_BED_END) || 6,
+};
+
+function normalizeHour(hour) {
+  const value = Number(hour);
+  return Number.isFinite(value) ? ((value % 24) + 24) % 24 : new Date().getHours();
+}
+
+function toPeriodHour(hour, start) {
+  const h = normalizeHour(hour);
+  return start > 12 && h < start - 12 ? h + 24 : h;
+}
+
+function bedDelayMultiplier(hour) {
+  const start = CONFIG.goingToBedStart;
+  const end = CONFIG.goingToBedEnd < start ? CONFIG.goingToBedEnd + 24 : CONFIG.goingToBedEnd;
+  const h = toPeriodHour(hour, start);
+  const peak = start + (end - start) * 0.4;
+
+  let depth;
+  if (h <= peak) {
+    depth = (h - start) / (peak - start);
+  } else {
+    depth = 1 - ((h - peak) / (end - peak)) * 0.7;
+  }
+
+  depth = Math.max(0, Math.min(1, depth));
+  return +(1.2 + depth * 2.8).toFixed(2);
+}
+
+function wakeDelayMultiplier(hour) {
+  const depth = Math.max(
+    0,
+    Math.min(1, (normalizeHour(hour) - CONFIG.wakeUpStart) / (CONFIG.wakeUpEnd - CONFIG.wakeUpStart)),
+  );
+  return +(2.5 - depth * 1.7).toFixed(2);
+}
 
 const PERIODS = [
   {
     id: 'wake_up',
-    from: 6,
-    to: 10,
-    delayMultiplier: 1.6,
+    from: CONFIG.wakeUpStart,
+    to: CONFIG.wakeUpEnd,
+    delayMultiplier: null,
     hint:
-      'Сейчас раннее утро (6:00-10:00). Ты только встала, сонная, пьёшь кофе. ' +
-      'Отвечай чуть медленнее и вяло, короткими фразами, можно упомянуть, что только ' +
-      'проснулась или пьёшь кофе — но не в каждом сообщении, только если естественно.',
+      `Сейчас раннее утро (${CONFIG.wakeUpStart}:00-${CONFIG.wakeUpEnd}:00). ` +
+      'Ты только встала, сонная, пьёшь кофе. Отвечай чуть медленнее и вяло, короткими фразами, ' +
+      'можно упомянуть, что только проснулась или пьёшь кофе — но не в каждом сообщении.',
   },
   {
     id: 'work',
-    from: 10,
+    from: CONFIG.wakeUpEnd,
     to: 14,
     delayMultiplier: 0.6,
     hint:
-      'Сейчас рабочее время (10:00-14:00). Отвечай быстро и по делу, короткими фразами, ' +
+      `Сейчас рабочее время (${CONFIG.wakeUpEnd}:00-14:00). Отвечай быстро и по делу, короткими фразами, ` +
       'как будто пишешь урывками между делами на работе.',
   },
   {
@@ -34,59 +70,51 @@ const PERIODS = [
     from: 14,
     to: 18,
     delayMultiplier: 1,
-    hint:
-      'Сейчас дневное время (14:00-18:00), обычная средняя активность. Отвечай в среднем ' +
-      'темпе, без спешки и без сонливости.',
+    hint: 'Сейчас дневное время (14:00-18:00), обычная средняя активность. Отвечай в среднем темпе.',
   },
   {
     id: 'social_evening',
     from: 18,
-    to: 23,
+    to: CONFIG.goingToBedStart,
     delayMultiplier: 0.5,
     hint:
-      'Сейчас вечер (18:00-23:00) — самое общительное время суток. Отвечай быстро и живее, ' +
-      'можно чуть больше эмодзи и инициативы в разговоре.',
+      `Сейчас вечер (18:00-${CONFIG.goingToBedStart}:00) — самое общительное время суток. ` +
+      'Отвечай быстро и живее, можно чуть больше эмодзи и инициативы в разговоре.',
   },
   {
     id: 'going_to_bed',
-    from: 23,
-    to: 6,
-    delayMultiplier: 3,
+    from: CONFIG.goingToBedStart,
+    to: CONFIG.goingToBedEnd,
+    delayMultiplier: null,
     nightDelayRangeMs: [10 * 60 * 1000, 30 * 60 * 1000],
     hint:
-      'Сейчас глубокая ночь (23:00-6:00). Ты спишь. Если всё же отвечаешь — отвечай явно ' +
-      'сонным, вялым тоном, очень коротко, можно упомянуть, что разбудили или что засыпаешь.',
+      `Сейчас ночь (${CONFIG.goingToBedStart}:00-${CONFIG.goingToBedEnd}:00). ` +
+      'Ты спишь. Если всё же отвечаешь — отвечай явно сонным, вялым тоном, очень коротко.',
   },
 ];
 
-/**
- * Возвращает описание стиля для текущего часа (или переданного объекта Date).
- * @returns {{id: string, hint: string, delayMultiplier: number, isNight: boolean, nightDelayRangeMs?: [number, number]}}
- */
 function getTimeStyle(hour) {
-  const h = typeof hour === 'number' ? hour : new Date().getHours();
+  const h = normalizeHour(hour);
   for (const period of PERIODS) {
-    const inRange =
-      period.from <= period.to
-        ? h >= period.from && h < period.to
-        : h >= period.from || h < period.to; // диапазон через полночь (ночь)
+    const inRange = period.from <= period.to
+      ? h >= period.from && h < period.to
+      : h >= period.from || h < period.to;
     if (inRange) {
+      const delayMultiplier = period.id === 'going_to_bed'
+        ? bedDelayMultiplier(h)
+        : period.id === 'wake_up'
+          ? wakeDelayMultiplier(h)
+          : period.delayMultiplier;
       return {
         ...period,
+        delayMultiplier,
         isNight: period.id === 'going_to_bed',
         isSleep: period.id === 'going_to_bed',
         isWakeUp: period.id === 'wake_up',
       };
     }
   }
-  return {
-    id: 'mid_day',
-    hint: '',
-    delayMultiplier: 1,
-    isNight: false,
-    isSleep: false,
-    isWakeUp: false,
-  };
+  return { id: 'mid_day', hint: '', delayMultiplier: 1, isNight: false, isSleep: false, isWakeUp: false };
 }
 
-module.exports = { getTimeStyle };
+module.exports = { getTimeStyle, CONFIG };
