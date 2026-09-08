@@ -98,6 +98,22 @@ async function ensureSchema() {
 
 const SILENCE_PINGS = ['привет, чё молчиш)', 'ау, ты живой?)', 'привет) ты пропал'];
 
+async function resolveArchiveEntity(client, peerId, peerUsername) {
+  const normalizedId = String(peerId || '').trim();
+  if (normalizedId && /^-?\d+$/.test(normalizedId)) {
+    try {
+      return await client.getEntity(Number(normalizedId));
+    } catch (idError) {
+      if (!peerUsername) throw idError;
+    }
+  }
+
+  const normalizedUsername = String(peerUsername || '').trim().replace(/^@/, '');
+  if (normalizedUsername) return client.getEntity(normalizedUsername);
+
+  throw new Error(`Не удалось найти Telegram-сущность по ID ${normalizedId || 'не указан'}`);
+}
+
 async function archiveSilentDialogs() {
   try {
     const { getActiveClient, archivePeer } = require('./telegramClient');
@@ -116,11 +132,10 @@ async function archiveSilentDialogs() {
 
     for (const row of rows) {
       try {
-        const { getActiveClient } = require('./telegramClient');
         const client = getActiveClient(row.account_id);
         if (!client) continue;
 
-        const entity = await client.getEntity(row.peer_username || row.peer_id);
+        const entity = await resolveArchiveEntity(client, row.peer_id, row.peer_username);
         if (await archivePeer(client, entity)) {
           console.log(
             `[Аккаунт ${row.account_id}] Диалог ${row.peer_username || row.peer_id} ` +
