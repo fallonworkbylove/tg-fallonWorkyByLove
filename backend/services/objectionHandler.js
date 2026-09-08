@@ -98,6 +98,47 @@ async function ensureSchema() {
 
 const SILENCE_PINGS = ['привет, чё молчиш)', 'ау, ты живой?)', 'привет) ты пропал'];
 
+async function archiveSilentDialogs() {
+  try {
+    const { getActiveClient, archivePeer } = require('./telegramClient');
+    const [rows] = await db.execute(`
+      SELECT
+        cm.account_id,
+        cm.peer_id,
+        cm.peer_username,
+        MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END) AS last_incoming_at,
+        MAX(cm.created_at) AS last_message_at
+      FROM conversation_messages cm
+      GROUP BY cm.account_id, cm.peer_id, cm.peer_username
+      HAVING last_incoming_at <= (NOW() - INTERVAL 2 DAY)
+        AND last_message_at > last_incoming_at
+    `);
+
+    for (const row of rows) {
+      try {
+        const { getActiveClient } = require('./telegramClient');
+        const client = getActiveClient(row.account_id);
+        if (!client) continue;
+
+        const entity = await client.getEntity(row.peer_username || row.peer_id);
+        if (await archivePeer(client, entity)) {
+          console.log(
+            `[Аккаунт ${row.account_id}] Диалог ${row.peer_username || row.peer_id} ` +
+              'перемещён в архив после 2 дней без ответа.',
+          );
+        }
+      } catch (err) {
+        console.error(
+          `[Аккаунт ${row.account_id}] Не удалось архивировать ${row.peer_username || row.peer_id}:`,
+          err.message,
+        );
+      }
+    }
+  } catch (err) {
+    console.error('[objectionHandler] Ошибка архивирования молчащих диалогов:', err.message);
+  }
+}
+
 async function sendSilencePings({ getAccountSettings, isWithinWorkingHours, isAutoreplyDisabledForPeer, saveMessage }) {
   const { getActiveClient } = require('./telegramClient');
   try {
@@ -158,7 +199,10 @@ function startSilenceScheduler(deps) {
   if (schedulerStarted) return;
   schedulerStarted = true;
 
-  const tick = () => sendSilencePings(deps).catch((err) => console.error('[objectionHandler] tick error:', err.message));
+  const tick = () => {
+    sendSilencePings(deps).catch((err) => console.error('[objectionHandler] silence tick error:', err.message));
+    archiveSilentDialogs(deps).catch((err) => console.error('[objectionHandler] archive tick error:', err.message));
+  };
   tick();
   setInterval(tick, 30 * 60 * 1000);
 }

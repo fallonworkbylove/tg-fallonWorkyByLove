@@ -519,7 +519,7 @@ async function deactivateAccount(accountId) {
 }
 
 /**
- * Возвращает живой к��иент по accountId (или undefined).
+ * Возвра��ает живой к��иент по accountId (или undefined).
  */
 function getActiveClient(accountId) {
   return activeClients.get(accountId);
@@ -695,7 +695,7 @@ async function saveMessage(accountId, peerId, peerUsername, role, content) {
 }
 
 /**
- * Формирует метку голосового сообщения д����я хранения в истории.
+ * Формирует метку голосового сообщения д������я хранения в истории.
  * По ней мы понимаем, какая именно заготовка уже отправлялась собеседнику.
  */
 function voiceTag(fileName) {
@@ -703,7 +703,7 @@ function voiceTag(fileName) {
 }
 
 /**
- * Проверяет, отправляли ли мы этому ��обеседнику ��ОНКРЕТНУЮ голосовую
+ * Проверяет, отправляли ли мы э��ому ��обеседнику ��ОНКРЕТНУЮ голосовую
  * заготовку раньше. Нужна, чтобы не слать одно и то же голосовое повторно
  * (например, если человек второй раз написал «сво»).
  */
@@ -842,7 +842,7 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
 // МЕДИА (фото/видео/кружки из чата по ссылке)
 // ---------------------------------------------------------------------------
 
-// Токены, которые модель вставляет в ответ, когда нужно прислать медиа.
+// Токены, которые модель вставля��т в ответ, когда нужно прислать медиа.
 const MEDIA_TOKEN_RE = /<<\s*(?:PHOTO|VIDEO|CIRCLE)\s*>>/gi;
 
 /**
@@ -994,7 +994,7 @@ const HOWLONG_AFTER_MESSAGES = 3;
 
 /**
  * Проверяет по истории, задавали ли мы уже вопрос «ск��л��ко сидишь»
- * (любой из вариантов — ищем по уст��й��ивой части фразы).
+ * (любой из вариантов — ищем по ��ст��й��ивой части фразы).
  */
 async function wasHowLongAsked(accountId, peerId) {
   const [rows] = await db.execute(
@@ -1114,6 +1114,7 @@ async function archivePeer(client, inputPeer) {
       ],
     }),
   );
+  return true;
 }
 
 /**
@@ -1571,7 +1572,7 @@ async function processBufferedMessages(
     await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
 
     // После отправки голосового с просьбой о помощи автоответ для этого
-    // конкретного собеседника отключён — дальше ведёт оператор вручную.
+    // конкретного собеседника отключён — дальше в��дёт оператор вручную.
     if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) {
       console.log(
         `[Аккаунт ${accountId}] Автоответ отключён для ${senderName} после голосового с просьбой — пропускаю.`,
@@ -2022,7 +2023,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
         `[Аккаунт ${accountId}] Скан: дочитываю непрочитанный диалог с ${senderName}.`,
       );
 
-      // Переиспользуе�� основную логику ответа: она сама проверит архив,
+      // Переиспол��зуе�� основную логику ответа: она сама проверит архив,
       // возьмёт историю, с��енерирует ответ, выдержи�� паузу и отправит.
       // Ждём з��вершения, чтобы отвечать по одн��му и не словить флуд.
       await processBufferedMessages(
@@ -2249,4 +2250,5 @@ module.exports = {
   getAccountSettings,
   isWithinWorkingHours,
   saveMessage,
+  archivePeer,
 };
