@@ -219,6 +219,37 @@ router.post('/connect/password', async (req, res) => {
   }
 });
 
+// Массовое управление автоответами для всех аккаунтов текущего пользователя.
+router.post('/bulk/start-ai', async (req, res) => {
+  try {
+    const [result] = await db.execute(
+      `UPDATE accounts
+       SET status = 'AI включен', is_autoreply_enabled = TRUE
+       WHERE user_id = ?`,
+      [getUserId(req)],
+    );
+    return res.json({ success: true, affectedRows: result.affectedRows, is_autoreply_enabled: true });
+  } catch (error) {
+    console.error('Bulk start AI error:', error);
+    return res.status(500).json({ success: false, error: 'Не удалось включить AI на аккаунтах' });
+  }
+});
+
+router.post('/bulk/stop-ai', async (req, res) => {
+  try {
+    const [result] = await db.execute(
+      `UPDATE accounts
+       SET status = 'Остановлен', is_autoreply_enabled = FALSE
+       WHERE user_id = ?`,
+      [getUserId(req)],
+    );
+    return res.json({ success: true, affectedRows: result.affectedRows, is_autoreply_enabled: false });
+  } catch (error) {
+    console.error('Bulk stop AI error:', error);
+    return res.status(500).json({ success: false, error: 'Не удалось выключить AI на аккаунтах' });
+  }
+});
+
 // Временно только обновляем состояние аккаунта, без запуска настоящего AI.
 router.post('/:id/start-ai', async (req, res) => {
   try {

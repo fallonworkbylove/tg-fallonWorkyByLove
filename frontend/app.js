@@ -123,6 +123,16 @@ const api = {
       method: 'POST',
     }),
 
+  bulkStartAi: () =>
+    request('/accounts/bulk/start-ai', {
+      method: 'POST',
+    }),
+
+  bulkStopAi: () =>
+    request('/accounts/bulk/stop-ai', {
+      method: 'POST',
+    }),
+
   getOptions: () => request('/options'),
 
   saveDelay: (delayMin, delayMax) =>
@@ -1299,6 +1309,25 @@ async function handleStop(accountId) {
   }
 }
 
+async function handleBulkAiToggle(enabled) {
+  const actionLabel = enabled ? 'включить AI на всех аккаунтах' : 'выключить AI на всех аккаунтах';
+  if (!window.confirm(`Точно ${actionLabel}?`)) return;
+
+  try {
+    if (enabled) {
+      await api.bulkStartAi();
+    } else {
+      await api.bulkStopAi();
+    }
+
+    await Promise.all([loadAccounts(), loadDashboard(), loadStats()]);
+    render();
+    notify(enabled ? 'AI включен на всех аккаунтах' : 'AI выключен на всех аккаунтах');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
 /**
  * Сохранение обучающего примера.
  */
@@ -1909,6 +1938,16 @@ function bindEvents() {
 
     if (action === 'ai') {
       handleAiToggle(id);
+      return;
+    }
+
+    if (action === 'bulk-start') {
+      handleBulkAiToggle(true);
+      return;
+    }
+
+    if (action === 'bulk-stop') {
+      handleBulkAiToggle(false);
       return;
     }
 
