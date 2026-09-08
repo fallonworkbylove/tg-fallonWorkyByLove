@@ -1059,7 +1059,20 @@ function renderStats() {
     </div>
   `;
 
-  elements.statsAccounts.innerHTML = state.accounts.length
+  const bulkActions = state.accounts.length
+    ? `
+      <div class="action-row account-bulk-actions" style="margin-bottom: 14px;">
+        <button class="btn btn-primary" data-action="bulk-start" type="button">
+          Включить все аккаунты
+        </button>
+        <button class="btn btn-secondary" data-action="bulk-stop" type="button">
+          Выключить все аккаунты
+        </button>
+      </div>
+    `
+    : '';
+
+  elements.statsAccounts.innerHTML = bulkActions + (state.accounts.length
     ? state.accounts
         .map((account) => {
           const aiEnabled = isAiEnabled(account);
@@ -1081,7 +1094,7 @@ function renderStats() {
         <h3>Статистика появится после первых сообщений</h3>
         <p>Как только аккаунты начнут работать, здесь появятся данные.</p>
       </div>
-    `;
+    `);
 }
 
 function render() {
