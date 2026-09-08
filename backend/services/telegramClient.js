@@ -452,7 +452,7 @@ async function activateAccount(accountId, sessionString) {
       // ночью и ��доброе утро» утром. Первый тик просто запомнит текущее
       // состояние (без рассылки при рестарте среди дня/ночи).
       if (!boundaryTimers.has(accountId)) {
-        workStateByAccount.set(accountId, isWithinWorkingHours());
+        workStateByAccount.set(accountId, timeStyle.getTimeStyle(getWorkZoneHour()).id);
         const bTimer = setInterval(
           () => checkWorkBoundary(accountId),
           BOUNDARY_CHECK_MS,
@@ -519,7 +519,7 @@ async function deactivateAccount(accountId) {
 }
 
 /**
- * Возвращает живой клиент по accountId (или undefined).
+ * Возвращает живой к��иент по accountId (или undefined).
  */
 function getActiveClient(accountId) {
   return activeClients.get(accountId);
@@ -703,7 +703,7 @@ function voiceTag(fileName) {
 }
 
 /**
- * Проверяет, отправляли ли мы этому ��обеседнику КОНКРЕТНУЮ голосовую
+ * Проверяет, отправляли ли мы этому ��обеседнику ��ОНКРЕТНУЮ голосовую
  * заготовку раньше. Нужна, чтобы не слать одно и то же голосовое повторно
  * (например, если человек второй раз написал «сво»).
  */
@@ -901,7 +901,7 @@ function extractMediaRequest(reply) {
 }
 
 /**
- * Возвращает множество id медиа, которые уже отправлялись этому собеседнику
+ * Возвращает множество id медиа, которые уже отправлялись этом�� собеседнику
  * (для дедупа — не шлём одно и то же дважды).
  */
 async function getSentMediaSet(accountId, peerId) {
@@ -1380,7 +1380,7 @@ async function fireReengage(accountId, peerId) {
       typeof settings.media_chat_link === 'string'
         ? settings.media_chat_link.trim()
         : '';
-    // Отложенный ответ — не прямая реакция на явную просьбу медиа, поэтому
+    // Отлож��нный ответ — не прямая реакция на явную просьбу медиа, поэтому
     // ИИ здесь никогда не решает сама прислать фото/видео/кружок.
     const mediaEnabled = false;
     const nft = await getNftCampaignState(accountId, peerId, history.length);
@@ -1394,6 +1394,10 @@ async function fireReengage(accountId, peerId) {
     // Динамический тайм-менеджмент + Mood Engine + Memory Triggers +
     // обработка возражений/анти-детект — см. соответствующие модули.
     const timeInfo = timeStyle.getTimeStyle();
+    if (timeInfo.isSleep) {
+      console.log(`[Аккаунт ${accountId}] Ночь — пропускаем ответ ${senderName}`);
+      return;
+    }
     const moodInfo = await moodEngine.getMood(accountId);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const objectionHint = objectionHandler.detectHint(text);
@@ -1717,6 +1721,10 @@ async function processBufferedMessages(
     // Динамический тайм-менеджмент + Mood Engine + Memory Triggers +
     // обработка возражений/анти-детект — см. соответствующие модули.
     const timeInfo = timeStyle.getTimeStyle();
+    if (timeInfo.isSleep) {
+      console.log(`[Аккаунт ${accountId}] Ночь — пропускаем ответ ${senderName}`);
+      return;
+    }
     const moodInfo = await moodEngine.getMood(accountId);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const objectionHint = objectionHandler.detectHint(text);
@@ -2022,7 +2030,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 
 // ---------------------------------------------------------------------------
 // ПОЖЕЛАНИЯ «СПОКОЙНОЙ НОЧИ» / «ДОБРОЕ УТРО»
-// На ГРАНИЦЕ рабочих часов бот пишет НЕархивным личным диалогам, с кем
+// На ГРАНИЦЕ рабочих часов бот пишет НЕар��ивным личным диалогам, с кем
 // недавно общался (активность за GREETING_RECENT_DAYS дней):
 //   день -> ночь  (наступает WORK_END_HOUR):   «спокойной ночи»
 //   ночь -> день  (наступает WORK_START_HOUR):  «доброе утро»
@@ -2188,27 +2196,24 @@ async function sendGreetings(accountId, kind) {
  * Проверяет переход через границу рабочих часов и шлёт приветствие.
  * Вызыва��тся по таймеру раз в минуту.
  */
-function checkWorkBoundary(accountId) {
-  const nowWorking = isWithinWorkingHours();
-  const prev = workStateByAccount.get(accountId);
-  // П��рвый вызов (после активации) — только запоминаем, без приветствия,
-  // чтобы рестарт среди дня/ночи не ра��сылал сообщения зря.
-  if (prev === undefined) {
-    workStateByAccount.set(accountId, nowWorking);
-    return;
-  }
-  if (prev === nowWorking) return;
+  function checkWorkBoundary(accountId) {
+    const currentPeriod = timeStyle.getTimeStyle(getWorkZoneHour());
+    const currentPeriodId = currentPeriod.id;
+    const previousPeriodId = workStateByAccount.get(accountId);
+    // Первый вызов после активации — только запоминаем период, без рассылки.
+    if (previousPeriodId === undefined) {
+      workStateByAccount.set(accountId, currentPeriodId);
+      return;
+    }
+    if (previousPeriodId === currentPeriodId) return;
 
-  workStateByAccount.set(accountId, nowWorking);
-  if (nowWorking) {
-    // ночь -> день: доброе утро (потом скан ответит на ночные вопросы).
-    sendGreetings(accountId, 'morning').catch(() => {});
-  } else {
-    // день -> ночь: спокойной ночи.
-    sendGreetings(accountId, 'night').catch(() => {});
+    workStateByAccount.set(accountId, currentPeriodId);
+    if (currentPeriod.isSleep && previousPeriodId !== 'going_to_bed') {
+      sendGreetings(accountId, 'night').catch(() => {});
+    } else if (currentPeriod.isWakeUp && previousPeriodId !== 'wake_up') {
+      sendGreetings(accountId, 'morning').catch(() => {});
+    }
   }
-}
-
 module.exports = {
   startLogin,
   confirmCode,

@@ -11,7 +11,7 @@
 
 const PERIODS = [
   {
-    id: 'sleepy_morning',
+    id: 'wake_up',
     from: 6,
     to: 10,
     delayMultiplier: 1.6,
@@ -48,7 +48,7 @@ const PERIODS = [
       'можно чуть больше эмодзи и инициативы в разговоре.',
   },
   {
-    id: 'night',
+    id: 'going_to_bed',
     from: 23,
     to: 6,
     delayMultiplier: 3,
@@ -71,10 +71,22 @@ function getTimeStyle(hour) {
         ? h >= period.from && h < period.to
         : h >= period.from || h < period.to; // диапазон через полночь (ночь)
     if (inRange) {
-      return { ...period, isNight: period.id === 'night' };
+      return {
+        ...period,
+        isNight: period.id === 'going_to_bed',
+        isSleep: period.id === 'going_to_bed',
+        isWakeUp: period.id === 'wake_up',
+      };
     }
   }
-  return { id: 'mid_day', hint: '', delayMultiplier: 1, isNight: false };
+  return {
+    id: 'mid_day',
+    hint: '',
+    delayMultiplier: 1,
+    isNight: false,
+    isSleep: false,
+    isWakeUp: false,
+  };
 }
 
 module.exports = { getTimeStyle };
