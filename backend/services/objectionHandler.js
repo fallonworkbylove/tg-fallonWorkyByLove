@@ -8,7 +8,9 @@
  */
 
 const db = require('../db');
-const { getActiveClient } = require('./telegramClient');
+// require отложенный (внутри функции), а не на верхнем уровне: telegramClient.js
+// сам подключает objectionHandler.js при загрузке, поэтому обратный require здесь
+// в начале файла привёл бы к undefined из-за циклической зависимости модулей.
 
 const OBJECTION_PATTERNS = [
   {
@@ -97,6 +99,7 @@ async function ensureSchema() {
 const SILENCE_PINGS = ['привет, чё молчиш)', 'ау, ты живой?)', 'привет) ты пропал'];
 
 async function sendSilencePings({ getAccountSettings, isWithinWorkingHours, isAutoreplyDisabledForPeer, saveMessage }) {
+  const { getActiveClient } = require('./telegramClient');
   try {
     await ensureSchema();
     if (!isWithinWorkingHours()) return;

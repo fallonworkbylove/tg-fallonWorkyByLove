@@ -40,6 +40,7 @@ const { bootstrapSessions } = require('./services/sessionBootstrap');
 const { ensureSchema: ensurePhotoExceptionsSchema } = require('./services/photoRecognitionSettings');
 const { startDailyPhotoScheduler } = require('./services/dailyPhotos');
 const { startNotificationBot } = require('./services/helpRequestNotifier');
+const { startSilenceScheduler } = require('./services/objectionHandler');
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
@@ -49,4 +50,15 @@ app.listen(PORT, () => {
   bootstrapSessions();
   startDailyPhotoScheduler();
   startNotificationBot();
+
+  // Напоминание «привет, чё молчиш)» при 2-3 днях молчания собеседника.
+  // Зависимости берутся из telegramClient.js лениво (require внутри), чтобы
+  // избежать циклической загрузки модулей при старте сервера.
+  const {
+    getAccountSettings,
+    isWithinWorkingHours,
+    saveMessage,
+  } = require('./services/telegramClient');
+  const { isAutoreplyDisabledForPeer } = require('./services/helpRequestNotifier');
+  startSilenceScheduler({ getAccountSettings, isWithinWorkingHours, isAutoreplyDisabledForPeer, saveMessage });
 });
