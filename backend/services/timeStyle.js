@@ -123,9 +123,12 @@ function getTimeStyle(hour) {
         : period.id === 'wake_up'
           ? wakeDelayMultiplier(h)
           : period.delayMultiplier;
+      const eveningGuard = period.id === 'social_evening' || period.id === 'going_to_bed'
+        ? ' Сейчас вечер или ночь: не говори, что только проснулась, пьёшь кофе или начинаешь утро.'
+        : '';
       return {
         ...period,
-        hint: `${exactTimeHint} ${period.hint}`,
+        hint: `${exactTimeHint} ${period.hint}${eveningGuard}`,
         delayMultiplier,
         isNight: period.id === 'going_to_bed',
         isSleep: period.id === 'going_to_bed',
