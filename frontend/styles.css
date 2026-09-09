@@ -439,16 +439,24 @@ textarea {
   }
 
   .panel-actions {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .bulk-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
   }
 
   .panel-actions .btn,
   .bulk-action {
-  display: block;
-  width: 100%;
-  min-height: 44px;
+    display: block;
+    width: 100%;
+    min-height: 52px;
+    white-space: normal;
   }
   }
 
