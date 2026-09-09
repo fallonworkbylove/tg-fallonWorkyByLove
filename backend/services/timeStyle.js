@@ -10,9 +10,23 @@ const CONFIG = {
   goingToBedEnd: Number(process.env.GOING_TO_BED_END) || 6,
 };
 
+const WORK_TIMEZONE = process.env.WORK_TIMEZONE || 'Europe/Moscow';
+
+function getMoscowTimeParts() {
+  const parts = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: WORK_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value || 0);
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value || 0);
+  return { hour: hour % 24, minute };
+}
+
 function normalizeHour(hour) {
   const value = Number(hour);
-  return Number.isFinite(value) ? ((value % 24) + 24) % 24 : new Date().getHours();
+  return Number.isFinite(value) ? ((value % 24) + 24) % 24 : getMoscowTimeParts().hour;
 }
 
 function toPeriodHour(hour, start) {
@@ -94,7 +108,9 @@ const PERIODS = [
 ];
 
 function getTimeStyle(hour) {
+  const currentTime = getMoscowTimeParts();
   const h = normalizeHour(hour);
+  const exactTimeHint = `Текущее время по Москве: ${String(currentTime.hour).padStart(2, '0')}:${String(currentTime.minute).padStart(2, '0')}. Если спрашивают время или ты сама его упоминаешь, используй именно это время.`;
   for (const period of PERIODS) {
     const inRange = period.from <= period.to
       ? h >= period.from && h < period.to
@@ -107,6 +123,7 @@ function getTimeStyle(hour) {
           : period.delayMultiplier;
       return {
         ...period,
+        hint: `${exactTimeHint} ${period.hint}`,
         delayMultiplier,
         isNight: period.id === 'going_to_bed',
         isSleep: period.id === 'going_to_bed',
@@ -114,7 +131,14 @@ function getTimeStyle(hour) {
       };
     }
   }
-  return { id: 'mid_day', hint: '', delayMultiplier: 1, isNight: false, isSleep: false, isWakeUp: false };
+  return {
+    id: 'mid_day',
+    hint: exactTimeHint,
+    delayMultiplier: 1,
+    isNight: false,
+    isSleep: false,
+    isWakeUp: false,
+  };
 }
 
 module.exports = { getTimeStyle, CONFIG };
