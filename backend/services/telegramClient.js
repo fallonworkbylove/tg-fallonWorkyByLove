@@ -713,7 +713,7 @@ function voiceTag(fileName) {
 /**
  * Проверяет, отправляли ли мы э��ому ��обеседнику ��ОНКРЕТНУЮ голосовую
  * заготовку раньше. Нужна, чтобы не слать одно и то же голосовое повторно
- * (например, если человек второй раз написал «сво»).
+ * (например, если человек второй раз нап��сал «сво»).
  */
   async function wasVoiceSent(accountId, peerId, fileName) {
     const [rows] = await db.execute(
@@ -940,7 +940,7 @@ async function getSentMediaSet(accountId, peerId) {
 }
 
 /**
- * Выбирает и отправляет случайное неотправленное медиа нужного типа из
+ * В��бирает и отправляет случайное неотправленное медиа нужного типа из
  * медиа-чата аккаунта. Возвращает true, если медиа реально ушло.
  */
 async function trySendMedia(
@@ -1419,7 +1419,7 @@ async function fireReengage(accountId, peerId) {
       console.log(`[Аккаунт ${accountId}] Ночь — пропускаем ответ ${senderName}`);
       return;
     }
-    const moodInfo = await moodEngine.getMood(accountId);
+    const moodInfo = await moodEngine.getConversationMood(accountId, peerId, text);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const objectionHint = objectionHandler.detectHint(text);
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
@@ -1758,7 +1758,7 @@ async function processBufferedMessages(
       console.log(`[Аккаунт ${accountId}] Ночь — пропускаем ответ ${senderName}`);
       return;
     }
-    const moodInfo = await moodEngine.getMood(accountId);
+    const moodInfo = await moodEngine.getConversationMood(accountId, peerId, text);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const objectionHint = objectionHandler.detectHint(text);
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
@@ -1819,7 +1819,7 @@ async function processBufferedMessages(
     // 6.5. Медиа по запросу модели (фото/видео/кружок из чата по ссылке).
     let mediaSentThisTurn = false;
     if (mediaType && mediaEnabled) {
-      // Небольшая пауза + индикатор, чтобы медиа не «прилипало» к тексту.
+      // Небольшая ��ауза + индикатор, чтобы медиа не «прилипало» к тексту.
       try {
         await client.invoke(
           new Api.messages.SetTyping({

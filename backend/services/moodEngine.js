@@ -23,6 +23,57 @@ const MOOD_HINTS = {
 };
 
 let schemaReady = null;
+let peerSchemaReady = null;
+
+async function ensurePeerSchema() {
+  if (peerSchemaReady) return peerSchemaReady;
+  peerSchemaReady = db.execute(`
+    CREATE TABLE IF NOT EXISTS bot_peer_mood (
+      account_id INT NOT NULL,
+      peer_id VARCHAR(128) NOT NULL,
+      score TINYINT NOT NULL DEFAULT 50,
+      updated_at DATETIME NOT NULL,
+      PRIMARY KEY (account_id, peer_id)
+    )
+  `);
+  return peerSchemaReady;
+}
+
+function moodDelta(text) {
+  const value = String(text || '').toLowerCase();
+  if (/[!]{2,}|\b(класс|супер|спасибо|молодец|нравишься|люблю|интересно)\b/.test(value)) return 10;
+  if (/\b(дура|бред|врань|скам|мошенн|заткнись|ненавижу)\b/.test(value)) return -15;
+  return 2;
+}
+
+function styleHint(text, score) {
+  const value = String(text || '');
+  const words = value.trim().split(/\s+/).filter(Boolean).length;
+  const emotional = /[!?]{2,}|[😂🤣❤️😍🔥😡🤬]/u.test(value);
+  const tone = score < 30 ? 'сдержанно и коротко, не проявляй инициативу' : score > 70 ? 'тепло, живо, с лёгкой инициативой' : 'спокойно и естественно';
+  const mirror = words <= 5 && !emotional ? 'Собеседник пишет сухо и коротко — отвечай так же, без лишних эмодзи.' : emotional ? 'Собеседник эмоционален — можно мягко отразить его тон и эмоции.' : 'Поддерживай естественный тон собеседника.';
+  return `Настроение именно этого диалога: ${score}/100. Отвечай ${tone}. ${mirror} Можно иногда естественно упомянуть бытовую деталь текущего времени суток (утром — дела/кофе, днём — работа, вечером — отдых), но не придумывай её в каждом сообщении, не повторяй одну деталь подряд и не перечисляй свою жизнь без связи с темой. Если собеседник грубит или холоден — будь сдержаннее и реже проявляй инициативу. Не объясняй этот анализ.`;
+}
+
+async function getConversationMood(accountId, peerId, text) {
+  try {
+    await ensurePeerSchema();
+    const delta = moodDelta(text);
+    await db.execute(
+      `INSERT INTO bot_peer_mood (account_id, peer_id, score, updated_at) VALUES (?, ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE score = LEAST(100, GREATEST(0, score + ?)), updated_at = NOW()`,
+      [accountId, String(peerId), Math.max(0, Math.min(100, 50 + delta)), delta],
+    );
+    const [[row]] = await db.execute(
+      `SELECT score FROM bot_peer_mood WHERE account_id = ? AND peer_id = ?`,
+      [accountId, String(peerId)],
+    );
+    return { score: row?.score ?? 50, hint: styleHint(text, row?.score ?? 50) };
+  } catch (err) {
+    console.error(`[moodEngine] Не удалось обновить настроение диалога ${accountId}/${peerId}:`, err.message);
+    return { score: 50, hint: styleHint(text, 50) };
+  }
+}
 
 async function ensureSchema() {
   if (schemaReady) return schemaReady;
@@ -108,4 +159,4 @@ async function triggerExcitedMood(accountId) {
   }
 }
 
-module.exports = { getMood, triggerExcitedMood };
+module.exports = { getMood, getConversationMood, triggerExcitedMood };
