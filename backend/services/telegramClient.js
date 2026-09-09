@@ -692,7 +692,7 @@ async function getHistory(accountId, peerId) {
 }
 
 /**
- * Сохраняет одно сообщение диалога в историю.
+ * Сох��аняет одно сообщение диалога в историю.
  */
 async function saveMessage(accountId, peerId, peerUsername, role, content) {
   await db.execute(
@@ -715,15 +715,27 @@ function voiceTag(fileName) {
  * заготовку раньше. Нужна, чтобы не слать одно и то же голосовое повторно
  * (например, если человек второй раз написал «сво»).
  */
-async function wasVoiceSent(accountId, peerId, fileName) {
-  const [rows] = await db.execute(
-    `SELECT id FROM conversation_messages
-     WHERE account_id = ? AND peer_id = ? AND content = ?
-     LIMIT 1`,
-    [accountId, peerId, voiceTag(fileName)],
-  );
-  return rows.length > 0;
-}
+  async function wasVoiceSent(accountId, peerId, fileName) {
+    const [rows] = await db.execute(
+      `SELECT id FROM conversation_messages
+       WHERE account_id = ? AND peer_id = ? AND content = ?
+       LIMIT 1`,
+      [accountId, peerId, voiceTag(fileName)],
+    );
+    return rows.length > 0;
+  }
+
+  async function wasAnyVoiceSent(accountId, peerId) {
+    const [rows] = await db.execute(
+      `SELECT id FROM conversation_messages
+       WHERE account_id = ? AND peer_id = ? AND role = 'assistant'
+       AND content LIKE '[голосовое:%'
+       LIMIT 1`,
+      [accountId, peerId],
+    );
+    return rows.length > 0;
+  }
+
 
 // ---------------------------------------------------------------------------
 // NFT-КАМПАНИЯ (3 дня): мягкие напоминания про заработок на NFT, а на 3-й день —
@@ -840,7 +852,7 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
       'вскользь упомяни, что зарабатываешь на NFT (перепродаёшь токены): например пожалуйся, ' +
       'что залипла в графики, или порадуйся, что сделка вышла удачной. Это фон, а не главная тема: ' +
       'сначала ответь на то, что человек написал. Не объясняй, что такое NFT, если не спрашивают, ' +
-      'не уговаривай, не ��редлагай заработать вместе и не проси ничего. Если по контексту ' +
+      'не уговаривай, не ��редлагай заработать вместе и не проси ничего. Если по кон��ексту ' +
       'упоминание будет неуместным — просто пропусти его.',
     sendVoice: false,
   };
@@ -1001,7 +1013,7 @@ function buildHowLongQuestion() {
 const HOWLONG_AFTER_MESSAGES = 3;
 
 /**
- * Проверяет по истории, задавали ли мы уже вопрос «ск��л��ко сидишь»
+ * Проверяет по истории, задавали ли мы уже ��опрос «ск��л��ко сидишь»
  * (любой из вариантов ��� ищем по ��ст��й��ивой части фразы).
  */
 async function wasHowLongAsked(accountId, peerId) {
@@ -1213,7 +1225,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
     return rawText;
   }
 
-  // 4. Прочее — возвращаем текст как есть.
+  // 4. Прочее — возвращае�� текст как есть.
   return rawText;
 }
 
@@ -1375,7 +1387,7 @@ async function fireReengage(accountId, peerId) {
   // согласие ДО отключения автоответа. Голосовые собеседника уже расшифрованы
   // в текст на этапе extractIncomingText, так что распознаётся и голосовой,
   // и текстовый ответ. Проверяем всегда, даже если автоответ уже отключён —
-  // иначе после первого отключения согласие на дальнейшие сообщения перестало
+  // иначе после первого отключения согласие на ��альнейшие сообщения перестало
   // бы детектироваться вовсе.
   await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
   // После отправки голосового с просьбой о помощи автоответ для этого
@@ -1400,7 +1412,7 @@ async function fireReengage(accountId, peerId) {
     await learningDb.scoreAndLearn(accountId, peerId, text);
     const learningSnippet = await learningDb.buildLearningSnippet();
 
-    // Динамический тайм-менеджмент + Mood Engine + Memory Triggers +
+    // Динамический тайм-менеджм��нт + Mood Engine + Memory Triggers +
     // обработка возражений/анти-детект — см. соответствующие модули.
     const timeInfo = timeStyle.getTimeStyle();
     if (timeInfo.isSleep) {
@@ -1652,9 +1664,9 @@ async function processBufferedMessages(
     // уходило голосовое вместо кружка.
     let voice =
       explicitMediaRequest && mediaLinkEarly ? null : findVoiceForText(text);
-    if (voice && (await wasVoiceSent(accountId, peerId, voice.fileName))) {
+    if (voice && (await wasAnyVoiceSent(accountId, peerId))) {
       console.log(
-        `[Аккаунт ${accountId}] Голосовое "${voice.fileName}" уже отправлялось ${senderName} �� пропус��аю.`,
+        `[Аккаунт ${accountId}] Голосовое уже отправлялось ${senderName} — повторно не отправляю.`,
       );
       // Раньше на voiceOnly-правиле здесь стоял return — и бот молчал совсем:
       // голосовое пропускал, а текст не генерировал (человек оставался без
