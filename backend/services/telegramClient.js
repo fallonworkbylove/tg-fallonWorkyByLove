@@ -51,6 +51,14 @@ const { isPhotoRecognitionDisabled } = require('./photoRecognitionSettings');
 // чтобы модель видела заметно больше реальной истории разговора.
 const HISTORY_LIMIT = 30;
 
+// Защита от параллельных обработчиков: пока первое голосовое отправляется,
+// повторное сообщение из того же диалога не должно запустить вторую отправку.
+const voiceSendInFlight = new Set();
+
+function voiceSendKey(accountId, peerId, fileName) {
+  return `${accountId}:${String(peerId)}:${fileName}`;
+}
+
 const apiId = Number(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;
 
@@ -519,7 +527,7 @@ async function deactivateAccount(accountId) {
 }
 
 /**
- * Возвра��ает живой к��иент по accountId (или undefined).
+ * Возвра����ает живой к��иент по accountId (или undefined).
  */
 function getActiveClient(accountId) {
   return activeClients.get(accountId);
@@ -994,7 +1002,7 @@ const HOWLONG_AFTER_MESSAGES = 3;
 
 /**
  * Проверяет по истории, задавали ли мы уже вопрос «ск��л��ко сидишь»
- * (любой из вариантов — ищем по ��ст��й��ивой части фразы).
+ * (любой из вариантов ��� ищем по ��ст��й��ивой части фразы).
  */
 async function wasHowLongAsked(accountId, peerId) {
   const [rows] = await db.execute(
@@ -1212,7 +1220,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
 /**
  * Приём входящего сообщения. Не отвечает сразу, а кладёт сообщение в буфер
  * и запускает таймер ожидания. Если собеседник за это время пишет ещё —
- * таймер сбрасывается, а тексты копятся, чтобы ответить один раз на все.
+ * таймер сбрасывается, а тексты копятся, чтобы ответить од��н раз на все.
  */
 async function handleIncomingMessage(accountId, event) {
   try {
@@ -1371,7 +1379,7 @@ async function fireReengage(accountId, peerId) {
   // бы детектироваться вовсе.
   await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
   // После отправки голосового с просьбой о помощи автоответ для этого
-  // конкретного собеседника отключён — дальше ведёт оператор вручную.
+  // конкретного собеседника отключён — дальше ведёт оператор вр��чную.
   if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) return;
   // Ночью не пишем — непрочитанное подхватит утренний скан/приветствие.
   if (!isWithinWorkingHours()) return;
@@ -1679,7 +1687,7 @@ async function processBufferedMessages(
       return;
     }
 
-    // 3.5. Фиксированные текстовые ответы по триггеру (��ез обращения к AI).
+    // 3.5. Фиксированные текст��вые ответы по триггеру (��ез обращения к AI).
     // Например, на «что ищ��шь здесь?» отвечаем заранее заданным текстом.
     const fixedReply = findTextReplyForText(text);
     if (fixedReply) {
@@ -1856,7 +1864,7 @@ async function processBufferedMessages(
 
     // 8. Третий день знакомства — голосовое с просьбой помочь с NFT-токеном.
     // Отправляем ОДИН раз за весь диалог (метка в истории) и не в тот же ход,
-    // когда уже ушло другое голосовое или медиа — иначе выглядит ��ак спам.
+    // когда уже ушло друг��е голосовое или медиа — иначе выглядит ��ак спам.
     if (nft.sendVoice && !voice && !mediaSentThisTurn) {
       const nftPath = path.join(VOICES_DIR, NFT_VOICE_FILE);
 
@@ -1864,9 +1872,14 @@ async function processBufferedMessages(
         console.error(
           `[А��каунт ${accountId}] Файл ${NFT_VOICE_FILE} не найден в voices/ — голосовое про NFT не отправлено.`,
         );
-      } else if (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE)) {
-        // Уже просили помощи у этого человека — повторно не шлём.
+      } else if (
+        voiceSendInFlight.has(voiceSendKey(accountId, peerId, NFT_VOICE_FILE)) ||
+        (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE))
+      ) {
+        // Уже отправляется или отправлялось этому человеку — повторно не шлём.
       } else {
+        const sendKey = voiceSendKey(accountId, peerId, NFT_VOICE_FILE);
+        voiceSendInFlight.add(sendKey);
         try {
           await client.invoke(
             new Api.messages.SetTyping({
@@ -1903,8 +1916,9 @@ async function processBufferedMessages(
         // Дальше с этим собеседником ведёт оператор вручную — ИИ замолкает
         // именно в этом диалоге, остальные диалоги аккаунта не затрагиваются.
         await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, 'nft_voice_sent');
+        voiceSendInFlight.delete(sendKey);
         console.log(
-          `[Аккаунт ${accountId}] Отправлено голосовое про NFT (3-й день) для ${senderName}.`,
+          `[Аккаунт ${accountId}] Отп��авлено голосовое про NFT (3-й день) для ${senderName}.`,
         );
       }
     }
@@ -1989,7 +2003,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 
       const message = dialog.message;
       if (!message) continue;
-      // Последнее сообщение НАШЕ -> мы уже ответили -> пропуска��м.
+      // Последнее сообщ��ние НАШЕ -> мы уже ответили -> пропуска��м.
       if (message.out) continue;
       // Слишком свежие сообщения обрабатывает live-обработчик — не мешаем ему.
       if (minAgeSec > 0 && message.date && nowSec - message.date < minAgeSec) {
