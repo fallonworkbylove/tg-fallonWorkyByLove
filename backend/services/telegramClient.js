@@ -54,6 +54,21 @@ const HISTORY_LIMIT = 30;
 // Защита от параллельных обработчиков: пока первое голосовое отправляется,
 // повторное сообщение из того же диалога не должно запустить вторую отправку.
 const voiceSendInFlight = new Set();
+const accountLabels = new Map();
+
+function accountLabel(accountId) {
+  return accountLabels.get(String(accountId)) || `ID ${accountId}`;
+}
+
+async function cacheAccountLabel(client, accountId) {
+  try {
+    const me = await client.getMe();
+    const name = [me.firstName, me.lastName].filter(Boolean).join(' ') || (me.username ? `@${me.username}` : '');
+    accountLabels.set(String(accountId), [me.phone, name].filter(Boolean).join(' — ') || `ID ${accountId}`);
+  } catch {
+    accountLabels.set(String(accountId), `ID ${accountId}`);
+  }
+}
 
 function voiceSendKey(accountId, peerId, fileName) {
   return `${accountId}:${String(peerId)}:${fileName}`;
@@ -417,6 +432,7 @@ async function activateAccount(accountId, sessionString) {
 
       // Проверяем, что сессия ещё жива
       const authorized = await client.isUserAuthorized();
+      if (authorized) await cacheAccountLabel(client, accountId);
       if (!authorized) {
         await client.disconnect();
         // Сессия мертва — перебор прокси не поможет, выходим сразу.
@@ -440,7 +456,7 @@ async function activateAccount(accountId, sessionString) {
       // offline (minAgeSec=0 — live-обработчик их всё равно не видел).
       scanUnansweredDialogs(accountId, 0).catch((e) =>
         console.error(
-          `[Аккаунт ${accountId}] Скан при активации не удался:`,
+          `[${accountLabel(accountId)}] Скан при активации не удался:`,
           e.message,
         ),
       );
@@ -692,7 +708,7 @@ async function getHistory(accountId, peerId) {
 }
 
 /**
- * Сох����аняет одно сообщение диалога в историю.
+ * Сох������аняет одно сообщение диалога в историю.
  */
 async function saveMessage(accountId, peerId, peerUsername, role, content) {
   await db.execute(
@@ -772,7 +788,7 @@ async function getDialogAgeHours(accountId, peerId) {
     return ms / (60 * 60 * 1000);
   } catch (err) {
     console.error(
-      `[Аккаунт ${accountId}] Не смог посчитать возраст диал����га (NFT-камп��ния выключена):`,
+      `[${accountLabel(accountId)}] Не смог посчитать возраст диал����га (NFT-камп��ния выключена):`,
       err.message,
     );
     return null;
@@ -797,7 +813,7 @@ async function nftMentionedRecently(accountId, peerId) {
     return rows.length > 0;
   } catch (err) {
     console.error(
-      `[Аккаунт ${accountId}] Не смог проверить упоминания NFT:`,
+      `[${accountLabel(accountId)}] Не смог проверить упоминания NFT:`,
       err.message,
     );
     // Ошибку трактуем как «уже упоминала» — лучше промолчать, чем спамить.
@@ -958,7 +974,7 @@ async function trySendMedia(
     let item = pickUnsentMedia(record.items, mediaType, sentIds);
     if (!item) {
       console.log(
-        `[Аккаунт ${accountId}] В медиа-чате нет медиа типа "${mediaType}" для ${senderName}.`,
+        `[${accountLabel(accountId)}] В медиа-чате нет медиа типа "${mediaType}" для ${senderName}.`,
       );
       return false;
     }
@@ -979,12 +995,12 @@ async function trySendMedia(
 
     await saveMessage(accountId, peerId, senderName, 'assistant', mediaTag(item.id));
     console.log(
-      `[Аккаунт ${accountId}] Отправлено медиа (${mediaType}) #${item.id} для ${senderName}.`,
+      `[${accountLabel(accountId)}] Отправлено медиа (${mediaType}) #${item.id} для ${senderName}.`,
     );
     return true;
   } catch (err) {
     console.error(
-      `[Аккаунт ${accountId}] Ошибка о��правки медиа (${mediaType}): ${err.message}`,
+      `[${accountLabel(accountId)}] Ошибка о��правки медиа (${mediaType}): ${err.message}`,
     );
     return false;
   }
@@ -999,7 +1015,7 @@ async function trySendMedia(
 // сообщение не должно отправить тот же вопрос повторно.
 const howLongInFlight = new Set();
 
-// Названия платформы — в вопросе используется ОДНО случайное, а не все сразу.
+// Названия платформы — в вопросе используется О��НО случайное, а не все сразу.
 const HOWLONG_PLATFORMS = ['дс', 'сз', 'дайвинчике'];
 
 // Собирает текст вопроса «сколько сидишь» с одним случайным названием.
@@ -1139,7 +1155,7 @@ async function archivePeer(client, inputPeer) {
 
 /**
  * Проверяет, ��ора ли «невзначай» задать вопрос «сколько сидишь»:
- *   - его ещё не задавали этому собеседнику;
+ *   - его ещё не задавали это��у собеседнику;
  *   - собеседник написал уже достаточно сообщений (HOWLONG_AFTER_MESSAGES).
  * Возвращает true, если вопрос нужно задать в этот ход (вместо AI-ответа).
  */
@@ -1175,7 +1191,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
         }
       }
     } catch (e) {
-      console.error(`[Аккаунт ${accountId}] Не удалось расшифровать голосовое:`, e.message);
+      console.error(`[${accountLabel(accountId)}] Не удалось расшифровать голосовое:`, e.message);
     }
 
     return rawText;
@@ -1187,7 +1203,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
   if (message.photo) {
     if (peerId && (await isPhotoRecognitionDisabled(accountId, peerId, peerUsername))) {
       console.log(
-        `[Аккаунт ${accountId}] Распознавание фото отключено для этого чата — пропускаю.`,
+        `[${accountLabel(accountId)}] Распознавание фото отключено для этого чата — пропускаю.`,
       );
       return rawText;
     }
@@ -1199,7 +1215,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
       const inputPeer = await message.getInputSender();
       if (inputPeer && (await isPeerArchived(client, inputPeer))) {
         console.log(
-          `[Аккаунт ${accountId}] Собеседник в архиве — не распознаю фото.`,
+          `[${accountLabel(accountId)}] Собеседник в архиве — не распознаю фото.`,
         );
         return rawText;
       }
@@ -1213,7 +1229,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
         const description = await describeImage(buffer, rawText);
         if (description) {
           console.log(
-            `[Аккаунт ${accountId}] Фото распознано: "${description}"`,
+            `[${accountLabel(accountId)}] Фото распознано: "${description}"`,
           );
           const caption = rawText ? ` Подпись: "${rawText}".` : '';
           return `[фото от собеседника]: ${description}.${caption}`;
@@ -1283,7 +1299,7 @@ async function handleIncomingMessage(accountId, event) {
         wait,
       );
       console.log(
-        `[Аккаунт ${accountId}] +сообщение от ${senderName}, жду паузу (${existing.texts.length} в очереди).`,
+        `[${accountLabel(accountId)}] +сообщение от ${senderName}, жду паузу (${existing.texts.length} в очереди).`,
       );
       return;
     }
@@ -1349,7 +1365,7 @@ function scheduleReengage(accountId, sender, peerId, senderName, history, text) 
   const timer = setTimeout(() => {
     fireReengage(accountId, peerId).catch((e) =>
       console.error(
-        `[Аккаунт ${accountId}] Ошибка отложенного ответа:`,
+        `[${accountLabel(accountId)}] Ошибка отложенного ответа:`,
         e.message,
       ),
     );
@@ -1359,7 +1375,7 @@ function scheduleReengage(accountId, sender, peerId, senderName, history, text) 
 
   deferredDialogs.set(key, { timer, sender, senderName, history, text });
   console.log(
-    `[Аккаунт ${accountId}] «Занята»: молчу ${Math.round(
+    `[${accountLabel(accountId)}] «Занята»: молчу ${Math.round(
       delay / 60000,
     )} мин для ${senderName}, потом отвечу на её сообщение.`,
   );
@@ -1387,7 +1403,7 @@ async function fireReengage(accountId, peerId) {
   // согласие ДО отключения автоответа. Голосовые собеседника уже расшифрованы
   // в текст на этапе extractIncomingText, так что распознаётся и голосовой,
   // и текстовый ответ. Проверяем всегда, даже если автоответ уже отключён —
-  // иначе после пер��ого отключения согласие на ��альнейшие сообщения перестало
+  // иначе после ��ер��ого отключения согласие на ��альнейшие сообщения перестало
   // бы детектироваться вовсе.
   await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
   // После отправки голосового с просьбой о помощи автоответ для этого
@@ -1407,7 +1423,7 @@ async function fireReengage(accountId, peerId) {
     const nft = await getNftCampaignState(accountId, peerId, history.length);
 
     // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на
-    // предыдущий ответ бота (если она ещё не оценена), затем достаём лучшие
+    // предыдущи�� ответ бота (если она ещё не оценена), затем достаём лучшие
     // фразы для подмешивания в промпт текущего ответа.
     await learningDb.scoreAndLearn(accountId, peerId, text);
     const learningSnippet = await learningDb.buildLearningSnippet();
@@ -1416,7 +1432,7 @@ async function fireReengage(accountId, peerId) {
     // обработка возражений/анти-детект — см. соответствующие модули.
     const timeInfo = timeStyle.getTimeStyle();
     if (timeInfo.isSleep) {
-      console.log(`[Аккаунт ${accountId}] Ночь — пропускаем ответ ${senderName}`);
+      console.log(`[${accountLabel(accountId)}] Ночь — пропускаем ответ ${senderName}`);
       return;
     }
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, text);
@@ -1457,7 +1473,7 @@ async function fireReengage(accountId, peerId) {
     // индикатора «печатает...» зависит от длины итогового текста.
     const delayMs = pickReplyDelayMs(settings);
     console.log(
-      `[Аккаунт ${accountId}] Пауз�� ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
+      `[${accountLabel(accountId)}] Пауз�� ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
     );
     await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
 
@@ -1466,7 +1482,7 @@ async function fireReengage(accountId, peerId) {
       await saveMessage(accountId, peerId, senderName, 'assistant', outText);
       await learningDb.recordBotReply(accountId, peerId, text, outText);
       console.log(
-        `[Аккаунт ${accountId}] Отложенный ответ для ${senderName}: "${outText}"`,
+        `[${accountLabel(accountId)}] Отложенный ответ для ${senderName}: "${outText}"`,
       );
     }
 
@@ -1535,13 +1551,13 @@ async function fireReengage(accountId, peerId) {
         );
         await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, 'nft_voice_sent');
         console.log(
-          `[Аккаунт ${accountId}] Отправлено голосовое про NFT (3-й день) для ${senderName}.`,
+          `[${accountLabel(accountId)}] Отправлено голосовое про NFT (3-й день) для ${senderName}.`,
         );
       }
     }
   } catch (e) {
     console.error(
-      `[Аккаунт ${accountId}] Не удалось отправить отложенный ответ ${senderName}:`,
+      `[${accountLabel(accountId)}] Не удалось отправить отложенный ответ ${senderName}:`,
       e.errorMessage || e.message,
     );
   }
@@ -1568,7 +1584,7 @@ async function processBufferedMessages(
   const inFlightKey = bufferKey(accountId, peerId);
   if (processingInFlight.has(inFlightKey)) {
     console.log(
-      `[Аккаунт ${accountId}] ${senderName} уже обрабатывается — пропускаю повторный вызов, чтобы не отправить дублирующий ответ.`,
+      `[${accountLabel(accountId)}] ${senderName} уже обрабатывается — пропускаю повторный вызов, чтобы не отправить дублирующий ответ.`,
     );
     return;
   }
@@ -1579,7 +1595,7 @@ async function processBufferedMessages(
     const settings = await getAccountSettings(accountId);
     if (!settings || !settings.is_autoreply_enabled) {
       console.log(
-        `[Аккаунт ${accountId}] Сообщение от ${senderName} получено, но ав��оответчик выключен.`,
+        `[${accountLabel(accountId)}] Сообщение от ${senderName} получено, но ав��оответчик выключен.`,
       );
       return;
     }
@@ -1595,7 +1611,7 @@ async function processBufferedMessages(
     // конкретного собеседника отключён — дальше в��дёт оператор вручную.
     if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) {
       console.log(
-        `[Аккаунт ${accountId}] Автоответ отключён для ${senderName} после голосового с просьбой — пропускаю.`,
+        `[${accountLabel(accountId)}] Автоответ отключён для ${senderName} после голосового с просьбой — пропускаю.`,
       );
       return;
     }
@@ -1608,7 +1624,7 @@ async function processBufferedMessages(
     const inputPeer = await message.getInputSender();
     if (inputPeer && (await isPeerArchived(client, inputPeer))) {
       console.log(
-        `[Аккаунт ${accountId}] Сообщение от ${senderName} получено, но диалог в архиве — не отвечаю.`,
+        `[${accountLabel(accountId)}] Сообщение от ${senderName} получено, но диалог в архиве — не отвечаю.`,
       );
       return;
     }
@@ -1617,12 +1633,12 @@ async function processBufferedMessages(
     // сообщение остаётся непрочитанным и будет дочитано утром скан-ф��нкцией.
     if (!isWithinWorkingHours()) {
       console.log(
-        `[Аккаунт ${accountId}] Сообщение от ${senderName} получено ночью (вне ${WORK_START_HOUR}:00–${WORK_END_HOUR}:00) — отвечу утром.`,
+        `[${accountLabel(accountId)}] Сообщение от ${senderName} получено ночью (вне ${WORK_START_HOUR}:00–${WORK_END_HOUR}:00) — отвечу утром.`,
       );
       return;
     }
 
-    console.log(`[Аккаунт ${accountId}] ${senderName}: "${text}"`);
+    console.log(`[${accountLabel(accountId)}] ${senderName}: "${text}"`);
 
     // 1. Берём историю диалога (до текущего сообщения).
     const history = await getHistory(accountId, peerId);
@@ -1640,7 +1656,7 @@ async function processBufferedMessages(
       deferredDialogs.delete(bufferKey(accountId, peerId));
       forcedDelayMs = DEFER_INTERRUPT_DELAY_MS;
       console.log(
-        `[Аккаунт ${accountId}] ${senderName} написал во время паузы — отменяю свой вопрос, отвечу на последнее сообщение через ~2 мин.`,
+        `[${accountLabel(accountId)}] ${senderName} написал во время паузы — отменяю свой вопрос, отвечу на последнее сообщение через ~2 мин.`,
       );
     }
 
@@ -1666,7 +1682,7 @@ async function processBufferedMessages(
       explicitMediaRequest && mediaLinkEarly ? null : findVoiceForText(text);
     if (voice && (await wasAnyVoiceSent(accountId, peerId))) {
       console.log(
-        `[Аккаунт ${accountId}] Голосовое уже отправлялось ${senderName} — повторно не отправляю.`,
+        `[${accountLabel(accountId)}] Голосовое уже отправлялось ${senderName} — повторно не отправляю.`,
       );
       // Раньше на voiceOnly-правиле здесь стоял return — и бот молчал совсем:
       // голосовое пропускал, а текст не генерировал (человек оставался без
@@ -1676,7 +1692,7 @@ async function processBufferedMessages(
     }
 
     // Случа��ная задержка перед ответом (диапазон задаётся в настройках).
-    // Если бот «отвлёкся» во время паузы — используем короткую задержку ~2 мин.
+    // Если бот «отвлёкся» во время паузы — исп��льзуем короткую задержку ~2 мин.
     const delayMs =
       forcedDelayMs != null ? forcedDelayMs : pickReplyDelayMs(settings);
 
@@ -1694,7 +1710,7 @@ async function processBufferedMessages(
         voiceTag(voice.fileName),
       );
       console.log(
-        `[Аккаунт ${accountId}] Отправлено только голосовое (без текста) для ${senderName}.`,
+        `[${accountLabel(accountId)}] Отправлено только голосовое (без текста) для ${senderName}.`,
       );
       return;
     }
@@ -1704,13 +1720,13 @@ async function processBufferedMessages(
     const fixedReply = findTextReplyForText(text);
     if (fixedReply) {
       console.log(
-        `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед фиксированным ответом для ${senderName}.`,
+        `[${accountLabel(accountId)}] Пауза ${Math.round(delayMs / 1000)}с перед фиксированным ответом для ${senderName}.`,
       );
       await waitBeforeReply(client, sender, delayMs, computeTypingMs(fixedReply));
       await client.sendMessage(sender, { message: fixedReply });
       await saveMessage(accountId, peerId, senderName, 'assistant', fixedReply);
       console.log(
-        `[Аккаунт ${accountId}] Фиксированный ответ для ${senderName}: "${fixedReply}"`,
+        `[${accountLabel(accountId)}] Фиксированный ответ для ${senderName}: "${fixedReply}"`,
       );
       return;
     }
@@ -1755,7 +1771,7 @@ async function processBufferedMessages(
     // обработка возражений/анти-детект — см. соответствующие модули.
     const timeInfo = timeStyle.getTimeStyle();
     if (timeInfo.isSleep) {
-      console.log(`[Аккаунт ${accountId}] Ночь — пропускаем ответ ${senderName}`);
+      console.log(`[${accountLabel(accountId)}] Ночь — пропускаем ответ ${senderName}`);
       return;
     }
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, text);
@@ -1786,7 +1802,7 @@ async function processBufferedMessages(
     let mediaType = rawMediaType;
     if (mediaType && !explicitMediaRequest && lastAssistantWasMedia(history)) {
       console.log(
-        `[Аккаунт ${accountId}] Подавил повторное медиа (${mediaType}) для ${senderName}: прошлый ответ уже был медиа, явной просьбы нет.`,
+        `[${accountLabel(accountId)}] Подавил повторное медиа (${mediaType}) для ${senderName}: прошлый ответ уже был медиа, явной просьбы нет.`,
       );
       mediaType = null;
     }
@@ -1805,7 +1821,7 @@ async function processBufferedMessages(
     // выглядит живым, а не мгновенным. Длительность индикатора зависит от
     // длины итогового текста, чтобы длинные сообщения «печатались» дольше.
     console.log(
-      `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед ответом для ${senderName}.`,
+      `[${accountLabel(accountId)}] Пауза ${Math.round(delayMs / 1000)}с перед ответом для ${senderName}.`,
     );
     await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
 
@@ -1813,7 +1829,7 @@ async function processBufferedMessages(
       await client.sendMessage(sender, { message: outText });
       await saveMessage(accountId, peerId, senderName, 'assistant', outText);
       await learningDb.recordBotReply(accountId, peerId, text, outText);
-      console.log(`[Аккаунт ${accountId}] Ответ для ${senderName}: "${outText}"`);
+      console.log(`[${accountLabel(accountId)}] Ответ для ${senderName}: "${outText}"`);
     }
 
     // 6.5. Медиа по запросу модели (фото/видео/кружок из чата по ссылке).
@@ -1870,7 +1886,7 @@ async function processBufferedMessages(
         voiceTag(voice.fileName),
       );
       console.log(
-        `[Аккаунт ${accountId}] Вслед за ответом отправлена голосовая заготовка для ${senderName}.`,
+        `[${accountLabel(accountId)}] Вслед за ответом отправлена голосовая заготовка для ${senderName}.`,
       );
     }
 
@@ -1930,7 +1946,7 @@ async function processBufferedMessages(
         await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, 'nft_voice_sent');
         voiceSendInFlight.delete(sendKey);
         console.log(
-          `[Аккаунт ${accountId}] Отп��авлено голосовое про NFT (3-й день) для ${senderName}.`,
+          `[${accountLabel(accountId)}] Отп��авлено голосовое про NFT (3-й день) для ${senderName}.`,
         );
       }
     }
@@ -1984,7 +2000,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
     const client = getActiveClient(accountId);
     if (!client) return;
 
-    // Вне рабочих часов не сканируем — дочитаем утром.
+    // ��не рабочих часов не сканируем — дочитаем утром.
     if (!isWithinWorkingHours()) return;
 
     // Автоответчик должен быть включён.
@@ -1996,7 +2012,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
       dialogs = await client.getDialogs({ limit: SCAN_DIALOGS_LIMIT });
     } catch (e) {
       console.error(
-        `[Аккаунт ${accountId}] Скан: не удалось получить диалоги:`,
+        `[${accountLabel(accountId)}] Скан: не удалось получить диалоги:`,
         e.errorMessage || e.message,
       );
       return;
@@ -2046,7 +2062,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 
       const senderName = sender.username || sender.firstName || peerId;
       console.log(
-        `[Аккаунт ${accountId}] Скан: дочитываю непрочитанный диалог с ${senderName}.`,
+        `[${accountLabel(accountId)}] Скан: дочитываю непрочитанный диалог с ${senderName}.`,
       );
 
       // Переиспол��зуе�� основную логику ответа: она сама проверит архив,
@@ -2065,12 +2081,12 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 
     if (replied > 0) {
       console.log(
-        `[Аккаунт ${accountId}] Скан завершён: отвечено диалогам — ${replied}.`,
+        `[${accountLabel(accountId)}] Скан завершён: отвечено диалогам — ${replied}.`,
       );
     }
   } catch (err) {
     console.error(
-      `[Аккаунт ${accountId}] Ошибка скана диалогов:`,
+      `[${accountLabel(accountId)}] Ошибка скана диалогов:`,
       err.message,
     );
   } finally {
@@ -2142,7 +2158,7 @@ async function sendGreetings(accountId, kind) {
       dialogs = await client.getDialogs({ limit: SCAN_DIALOGS_LIMIT });
     } catch (e) {
       console.error(
-        `[Аккаунт ${accountId}] Приветствия: не удалось получить диалоги:`,
+        `[${accountLabel(accountId)}] Приветствия: не удалось получить диалоги:`,
         e.errorMessage || e.message,
       );
       return;
@@ -2193,7 +2209,7 @@ async function sendGreetings(accountId, kind) {
         sent += 1;
       } catch (e) {
         console.error(
-          `[Аккаунт ${accountId}] Не удалось отправить приветствие ${senderName}:`,
+          `[${accountLabel(accountId)}] Не удалось отправить приветствие ${senderName}:`,
           e.errorMessage || e.message,
         );
         continue;
@@ -2211,7 +2227,7 @@ async function sendGreetings(accountId, kind) {
         }
         if (text && text.trim()) {
           console.log(
-            `[Аккаунт ${accountId}] Утро: отвечаю на ночное сообщение ${senderName}.`,
+            `[${accountLabel(accountId)}] Утро: отвечаю на ночное сообщение ${senderName}.`,
           );
           await sleep(1500 + Math.random() * 2500);
           await processBufferedMessages(
@@ -2229,12 +2245,12 @@ async function sendGreetings(accountId, kind) {
     if (sent > 0) {
       const label = kind === 'night' ? 'спокойной ночи' : 'доброе утро';
       console.log(
-        `[Аккаунт ${accountId}] Разослано «${label}» диалогам — ${sent}.`,
+        `[${accountLabel(accountId)}] Разослано «${label}» диалогам — ${sent}.`,
       );
     }
   } catch (err) {
     console.error(
-      `[Аккаунт ${accountId}] Ошибка рассылки приветствий:`,
+      `[${accountLabel(accountId)}] Ошибка рассылки приветствий:`,
       err.message,
     );
   } finally {
