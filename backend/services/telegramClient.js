@@ -692,7 +692,7 @@ async function getHistory(accountId, peerId) {
 }
 
 /**
- * Сох��аняет одно сообщение диалога в историю.
+ * Сох����аняет одно сообщение диалога в историю.
  */
 async function saveMessage(accountId, peerId, peerUsername, role, content) {
   await db.execute(
@@ -1387,7 +1387,7 @@ async function fireReengage(accountId, peerId) {
   // согласие ДО отключения автоответа. Голосовые собеседника уже расшифрованы
   // в текст на этапе extractIncomingText, так что распознаётся и голосовой,
   // и текстовый ответ. Проверяем всегда, даже если автоответ уже отключён —
-  // иначе после первого отключения согласие на ��альнейшие сообщения перестало
+  // иначе после пер��ого отключения согласие на ��альнейшие сообщения перестало
   // бы детектироваться вовсе.
   await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
   // После отправки голосового с просьбой о помощи автоответ для этого
@@ -2275,6 +2275,7 @@ module.exports = {
   scanUnansweredDialogs,
   getAccountSettings,
   isWithinWorkingHours,
+  isPeerArchived,
   saveMessage,
   archivePeer,
 };

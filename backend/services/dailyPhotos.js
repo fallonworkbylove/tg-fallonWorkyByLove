@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../db');
-const { getActiveClient } = require('./telegramClient');
+const { getActiveClient, isPeerArchived } = require('./telegramClient');
 
 // Разрешённые расширения для готовых фото.
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
@@ -182,15 +182,27 @@ async function sendDuePhotos() {
         continue;
       }
 
+      // Собеседник выбирается по сохранённому Telegram ID. Имя контакта не
+      // является идентификатором и может совпадать у нескольких пользователей.
+      const entity = await resolvePeerEntity(client, row.peer_id, row.peer_username);
+
+      // Архивные диалоги не получают готовые ежедневные фотографии.
+      if (await isPeerArchived(client, entity)) {
+        await db.execute(
+          'UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?',
+          [row.id],
+        );
+        console.log(
+          `[Аккаунт ${row.account_id}] Фото пропущено: диалог ${row.peer_id} находится в архиве.`,
+        );
+        continue;
+      }
+
       const imagePath = pickRandomImage(folders);
       if (!imagePath) {
         console.error(`[Аккаунт ${row.account_id}] В папке с фото нет доступных файлов.`);
         continue;
       }
-
-      // Собеседник выбирается по сохранённому Telegram ID. Имя контакта не
-      // является идентификатором и может совпадать у нескольких пользователей.
-      const entity = await resolvePeerEntity(client, row.peer_id, row.peer_username);
 
       await client.sendFile(entity, { file: imagePath, caption: pickRandomCaption() });
 
