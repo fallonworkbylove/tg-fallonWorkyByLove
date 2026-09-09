@@ -435,9 +435,22 @@ textarea {
   }
 
   .action-row {
-    grid-template-columns: 1fr;
+  grid-template-columns: 1fr;
   }
-}
+
+  .panel-actions {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  }
+
+  .panel-actions .btn,
+  .bulk-action {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  }
+  }
 
 /* --- Модальное окно деталей аккаунта --- */
 .modal-overlay {

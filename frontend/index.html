@@ -10,7 +10,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Telegram Mini App</title>
-    <link rel="stylesheet" href="styles.css?v=5" />
+    <link rel="stylesheet" href="styles.css?v=7" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -44,10 +44,10 @@
             </div>
           </div>
 
-          <div class="action-row">
+          <div class="action-row panel-actions">
             <button class="btn btn-primary" data-action="refresh" type="button">Обновить</button>
-            <button class="btn btn-primary" data-action="bulk-start" type="button">Включить все аккаунты</button>
-            <button class="btn btn-secondary" data-action="bulk-stop" type="button">Выключить все аккаунты</button>
+            <button class="btn btn-primary bulk-action" data-action="bulk-start" type="button">Включить все аккаунты</button>
+            <button class="btn btn-secondary bulk-action" data-action="bulk-stop" type="button">Выключить все аккаунты</button>
             <button class="btn btn-secondary" data-action="open-accounts" type="button">Добавить аккаунт</button>
             <button class="btn btn-secondary" data-action="topup" type="button">Пополнить</button>
             <button class="btn btn-danger" data-action="logout" type="button">Выйти</button>
@@ -224,6 +224,6 @@
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=6"></script>
+    <script src="app.js?v=7"></script>
     </body>
     </html>
