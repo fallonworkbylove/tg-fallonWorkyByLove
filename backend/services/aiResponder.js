@@ -132,6 +132,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // запроса к API) считывает эмоциональный тон последнего сообщения
   // собеседника и мягко подстраивает стиль ответа — без явного
   // проговаривания анал��за в самом тексте ответа.
+  const voiceIntentReminder =
+    'Для голосового o sebe.ogg подходят только вопросы о жизненных увлечениях, хобби и занятиях в целом. ' +
+    'Вопросы «что делаешь сейчас?» и «чем занята прямо сейчас?» не считай вопросами о себе — на них отвечай текстом. ';
+
   const moodReminder =
     'Перед тем как ответить, определи эмоциональный настрой последнего сообщения ' +
     'собеседника (грустит, злится, радуется, шутит, устал, нейтрален и т.п.) и слегка ' +
@@ -160,6 +164,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const messages = [
     { role: 'system', content: finalPrompt },
     { role: 'system', content: roleReminder },
+    { role: 'system', content: voiceIntentReminder },
     ...history.map((h) => ({ role: h.role, content: h.content })),
   ];
 
