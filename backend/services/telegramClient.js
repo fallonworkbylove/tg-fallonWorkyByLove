@@ -693,7 +693,7 @@ async function isPeerArchived(client, inputPeer) {
 async function getHistory(accountId, peerId) {
   // ВНИМАНИЕ: mysql2 не умеет подставлять число в `LIMIT ?` через
   // prepared statement (ошибка "Incorrect arguments to mysqld_stmt_execute").
-  // HISTORY_LIMIT — наш�� собственная числовая константа, не пользовательский
+  // HISTORY_LIMIT ��� наш�� собственная числовая константа, не пользовательский
   // ввод, поэтому её безопасно встроить в текст запроса напрямую.
   const limit = Number(HISTORY_LIMIT) || 20;
   const [rows] = await db.execute(
@@ -1291,7 +1291,7 @@ async function handleIncomingMessage(accountId, event) {
       existing.message = message;
       clearTimeout(existing.timer);
 
-      // Не даём серии тянуться бесконечно: ограничиваем таймер так, чтобы
+      // Не даём серии тяну��ься бесконечно: ограничиваем таймер так, чтобы
       // общее ожидание не превысило AGGREGATE_MAX_WAIT_MS.
       const elapsed = Date.now() - existing.startedAt;
       const remaining = Math.max(0, AGGREGATE_MAX_WAIT_MS - elapsed);
@@ -1683,15 +1683,23 @@ async function processBufferedMessages(
     // уходило голосовое вместо кружка.
     let voice =
       explicitMediaRequest && mediaLinkEarly ? null : findVoiceForText(text);
-    if (voice && (await wasAnyVoiceSent(accountId, peerId))) {
+    const voiceDialogKey = voice ? `${accountId}:${String(peerId)}` : null;
+    if (
+      voice &&
+      (voiceSendInFlight.has(voiceDialogKey) || (await wasAnyVoiceSent(accountId, peerId)))
+    ) {
       console.log(
-        `[${accountLabel(accountId)}] Голосовое уже отправлялось ${senderName} — повторно не отправляю.`,
+        `[${accountLabel(accountId)}] Голосовое уже отправлялось или отправляется ${senderName} — повторно не отправляю.`,
       );
       // Раньше на voiceOnly-правиле здесь стоял return — и бот молчал совсем:
       // голосовое пропускал, а текст не генерировал (человек оставался без
       // ответа). Теперь в любом случае продолжаем обычный AI-ответ текстом,
       // прос��о уже без голосового.
       voice = null;
+    } else if (voiceDialogKey) {
+      // Резервируем диалог до фактической отправки: задержка ответа может быть
+      // длинной, и второе входящее сообщение иначе успеет пройти ту же проверку.
+      voiceSendInFlight.add(voiceDialogKey);
     }
 
     // Случа��ная задержка перед ответом (диапазон задаётся в настройках).
@@ -1712,6 +1720,7 @@ async function processBufferedMessages(
         'assistant',
         voiceTag(voice.fileName),
       );
+      voiceSendInFlight.delete(voiceDialogKey);
       console.log(
         `[${accountLabel(accountId)}] Отправлено только голосовое (без текста) для ${senderName}.`,
       );
