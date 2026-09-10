@@ -674,16 +674,18 @@ async function isPeerArchived(client, inputPeer) {
     );
 
     const dialog = result && result.dialogs && result.dialogs[0];
-    if (!dialog) return false;
+    // Если Telegram не вернул диалог, безопаснее не отвечать, чем случайно
+    // написать пользователю из архива.
+    if (!dialog) return true;
 
     // folderId === 1 -> архив. undefined/0 -> основной список.
     return dialog.folderId === 1;
   } catch (err) {
     console.error(
-      'Не удалось определить папку диалога (пропускаю проверку архива):',
+      'Не удалось определить папку диалога — ответ заблокирован для безопасности:',
       err.errorMessage || err.message,
     );
-    return false;
+    return true;
   }
 }
 
@@ -693,7 +695,7 @@ async function isPeerArchived(client, inputPeer) {
 async function getHistory(accountId, peerId) {
   // ВНИМАНИЕ: mysql2 не умеет подставлять число в `LIMIT ?` через
   // prepared statement (ошибка "Incorrect arguments to mysqld_stmt_execute").
-  // HISTORY_LIMIT ��� наш�� собственная числовая константа, не пользовательский
+  // HISTORY_LIMIT ����� наш�� собственная числовая константа, не пользовательский
   // ввод, поэтому её безопасно встроить в текст запроса напрямую.
   const limit = Number(HISTORY_LIMIT) || 20;
   const [rows] = await db.execute(
@@ -1386,7 +1388,7 @@ function scheduleReengage(accountId, sender, peerId, senderName, history, text) 
 
 /**
  * Срабатывает по таймеру паузы: бот генерирует и отправляет НАСТОЯЩИЙ AI-ответ
- * на сообщение, которое ждало во время «занятости» — так со стороны выгля��ит
+ * на сообщение, которо�� ждало во время «занятости» — так со стороны выгля��ит
  * будто человек отвлёкся, но всё равно ответил на заданный вопрос, а не забыл
  * про него. Проверяет активность, автоответчик и рабочие часы перед отправкой.
  */
@@ -1409,7 +1411,7 @@ async function fireReengage(accountId, peerId) {
   // иначе после ��ер��ого отключения согласие на ��альнейшие сообщения перестало
   // бы детектироваться вовсе.
   await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
-  // После отправки голосового с просьбой о помощи автоответ для этого
+  // После отправки голосового с просьбой о помощи автоответ для э��ого
   // конкретного собеседника отключён — дальше ве��ёт оператор вр��чную.
   if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) return;
   // Ночью не пишем — непрочитанное подхватит утренний скан/приветствие.
@@ -1680,7 +1682,7 @@ async function processBufferedMessages(
     // ВАРИАНТ Б: если человек ЯВНО просит фото/видео/кружок, а у аккаунта
     // задан медиа-чат — голосовые заготовки НЕ перехватывают запрос. Иначе
     // «запиши кру��ок, что делаешь» лови��ось бы триггером «что делаешь» и
-    // уходило голосовое вместо кружка.
+    // уходило гол��совое вместо кружка.
     let voice =
       explicitMediaRequest && mediaLinkEarly ? null : findVoiceForText(text);
     const voiceDialogKey = voice ? `${accountId}:${String(peerId)}` : null;
