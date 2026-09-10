@@ -49,7 +49,7 @@ const { isPhotoRecognitionDisabled } = require('./photoRecognitionSettings');
 // Было 10 (всего 5 обменов) — бот забывал, о чём уже спрашивал, и мог
 // переспросить то же самое буквально через пару сообщений. Увеличили до 30,
 // чтобы модель видела заметно больше реальной истории разговора.
-const HISTORY_LIMIT = 30;
+const HISTORY_LIMIT = 60;
 
 // Защита от параллельных обработчиков: пока первое голосовое отправляется,
 // повторное сообщение из того же диалога не должно запустить вторую отправку.
@@ -179,7 +179,7 @@ function buildProxyPool() {
 
 const PROXY_POOL = buildProxyPool();
 
-// Индекс текущего рабочег���� прокси. Начинаем с найденного при старте.
+// Индекс текущего рабочег������ прокси. Начинаем с найденного при старте.
 let currentProxyIndex = 0;
 
 function proxyLabel(p) {
@@ -299,7 +299,7 @@ function getWorkZoneHour() {
     const hourPart = parts.find((p) => p.type === 'hour');
     if (hourPart) return Number.parseInt(hourPart.value, 10) % 24;
   } catch (_) {
-    // Некорректный часовой пояс — запасной вариа��т: М��К = UTC+3.
+    // Некорректный часовой пояс — запасной ва��иа��т: М��К = UTC+3.
   }
   return (new Date().getUTCHours() + 3) % 24;
 }
@@ -1204,7 +1204,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
 
   // 3. Фото — распознаём соде��жимое, кр��ме чатов из списка исключений
   // (распознавание для них отключено во всех сессиях пользователя) и кроме
-  // соб��седников, спрятанных в АРХИВ (folder_id = 1) — им фото не разбираем.
+  // соб��седников, спрятанн��х в АРХИВ (folder_id = 1) — им фото не разбираем.
   if (message.photo) {
     if (peerId && (await isPhotoRecognitionDisabled(accountId, peerId, peerUsername))) {
       console.log(
@@ -1583,7 +1583,7 @@ async function processBufferedMessages(
 ) {
   // Защита от дублей (см. комментарий у объявления processingInFlight выше):
   // если этот диалог УЖЕ обрабатывается (например, живой обработчик уже
-  // внутри своей человеческой паузы перед ответом), второй параллельный
+  // внутри своей человеческой паузы перед ��тветом), второй параллельный
   // вызов (из скана непрочитанных или рассылки приветствий) пропускаем,
   // а не запускаем вторую генерацию ответа на то же сообщение.
   const inFlightKey = bufferKey(accountId, peerId);
@@ -1705,7 +1705,7 @@ async function processBufferedMessages(
     }
 
     // Случа��ная задержка перед ответом (диапазон задаётся в настройках).
-    // Если бот «отвлёкся» во время паузы — исп��льзуем короткую задержку ~2 мин.
+    // Если бот «отвлёкся» во время п��узы — исп��льзуем короткую задержку ~2 мин.
     const delayMs =
       forcedDelayMs != null ? forcedDelayMs : pickReplyDelayMs(settings);
 
@@ -2191,7 +2191,7 @@ async function sendGreetings(accountId, kind) {
 
       const message = dialog.message;
       if (!message) continue;
-      // Только недавняя активность (мы правда общались).
+      // Только недавняя активность (мы правда общалис��).
       if (!message.date || message.date < recentThreshold) continue;
 
       // Есть ли непрочитанный вопрос (последнее сообщение — ИХ, входящее).
