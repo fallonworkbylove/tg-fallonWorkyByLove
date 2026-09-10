@@ -179,7 +179,7 @@ function buildProxyPool() {
 
 const PROXY_POOL = buildProxyPool();
 
-// Индекс текущего рабочег������ прокси. Начинаем с найденного при старте.
+// Индекс текущего рабочег�������� прокси. Начинаем с найденного при старте.
 let currentProxyIndex = 0;
 
 function proxyLabel(p) {
@@ -243,7 +243,12 @@ const messageBuffers = new Map();
 // на одно и то же сообщение — собеседник получал несколько разных по тексту,
 // но по сути повторяющих друг друга сообщений подряд.
 // Ключ: тот же bufferKey (`${accountId}:${peerId}`).
-const processingInFlight = new Set();
+  const processingInFlight = new Set();
+
+  // Не отправляем несколько самостоятельных ответов подряд в одном диалоге.
+  // Это также защищает от повторного запуска сканером сразу после live-события.
+  const lastReplyAt = new Map();
+  const MIN_REPLY_GAP_MS = 25000;
 
 // Сколько ждать следующего сообщения перед тем, как ответить (мс).
 // Человек часто пишет мысль несколькими сообщениями с паузами — даём ему
@@ -1204,7 +1209,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
 
   // 3. Фото — распознаём соде��жимое, кр��ме чатов из списка исключений
   // (распознавание для них отключено во всех сессиях пользователя) и кроме
-  // соб��седников, спрятанн��х в АРХИВ (folder_id = 1) — им фото не разбираем.
+  // соб��седников, спр��танн��х в АРХИВ (folder_id = 1) — им фото не разбираем.
   if (message.photo) {
     if (peerId && (await isPhotoRecognitionDisabled(accountId, peerId, peerUsername))) {
       console.log(
@@ -1409,7 +1414,7 @@ async function fireReengage(accountId, peerId) {
   // в текст на этапе extractIncomingText, так что распознаётся и голосовой,
   // и текстовый ответ. Проверяем всегда, даже если автоответ уже отключён —
   // иначе после ��ер��ого отключения согласие на ��альнейшие сообщения перестало
-  // бы детектироваться вовсе.
+  // бы детектиров��ться вовсе.
   await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
   // После отправки голосового с просьбой о помощи автоответ для э��ого
   // конкретного собеседника отключён — дальше ве��ёт оператор вр��чную.
@@ -1483,8 +1488,9 @@ async function fireReengage(accountId, peerId) {
     await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
 
     if (outText) {
-      await client.sendMessage(sender, { message: outText });
-      await saveMessage(accountId, peerId, senderName, 'assistant', outText);
+  await client.sendMessage(sender, { message: outText });
+  lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
+  await saveMessage(accountId, peerId, senderName, 'assistant', outText);
       await learningDb.recordBotReply(accountId, peerId, text, outText);
       console.log(
         `[${accountLabel(accountId)}] Отложенный ответ для ${senderName}: "${outText}"`,
@@ -1583,7 +1589,7 @@ async function processBufferedMessages(
 ) {
   // Защита от дублей (см. комментарий у объявления processingInFlight выше):
   // если этот диалог УЖЕ обрабатывается (например, живой обработчик уже
-  // внутри своей человеческой паузы перед ��тветом), второй параллельный
+  // внутри своей человеческой пау��ы перед ��тветом), второй параллельный
   // вызов (из скана непрочитанных или рассылки приветствий) пропускаем,
   // а не запускаем вторую генерацию ответа на то же сообщение.
   const inFlightKey = bufferKey(accountId, peerId);
@@ -1593,7 +1599,16 @@ async function processBufferedMessages(
     );
     return;
   }
-  processingInFlight.add(inFlightKey);
+    processingInFlight.add(inFlightKey);
+
+    const lastReply = lastReplyAt.get(inFlightKey) || 0;
+    if (Date.now() - lastReply < MIN_REPLY_GAP_MS) {
+      console.log(
+        `[${accountLabel(accountId)}] Слишком скоро после предыдущего ответа — пропускаю повторный ответ для ${senderName}.`,
+      );
+      processingInFlight.delete(inFlightKey);
+      return;
+    }
 
   try {
     // Проверяем настройки аккаунта: автоответчик должен быть включён.
@@ -1643,13 +1658,34 @@ async function processBufferedMessages(
       return;
     }
 
+    let contextualText = text;
+    try {
+      const repliedMessage =
+        typeof message.getReplyMessage === 'function'
+          ? await message.getReplyMessage()
+          : null;
+      const repliedText = repliedMessage
+        ? String(repliedMessage.message || repliedMessage.text || '').trim()
+        : '';
+      if (repliedText) {
+        contextualText = `${text}\n[Ответ на сообщение собеседника: "${repliedText}"]`;
+      }
+    } catch (error) {
+      console.warn(
+        `[${accountLabel(accountId)}] Не удалось получить цитируемое сообщение:`,
+        error.message,
+      );
+    }
+
+    // Дальше все классификаторы и AI используют сообщение вместе с цитатой.
+    text = contextualText;
     console.log(`[${accountLabel(accountId)}] ${senderName}: "${text}"`);
 
     // 1. Берём историю диалога (до текущего сообщения).
     const history = await getHistory(accountId, peerId);
 
     // 2. Сохраняем входящее сообщение собеседника.
-    await saveMessage(accountId, peerId, senderName, 'user', text);
+    await saveMessage(accountId, peerId, senderName, 'user', contextualText);
 
     // 2.5. Если человек написал во время паузы занятости, отменяем старый
     // таймер. Больше не отправляем запланированный вопрос ��роде «что делаешь?»:
@@ -1667,7 +1703,7 @@ async function processBufferedMessages(
 
     // Явная просьба прислать медиа определяется заранее — она нужна и для
     // приоритета над голосовыми, и для медиа-логики ниже.
-    const explicitMediaRequest = isExplicitMediaRequest(text);
+    const explicitMediaRequest = isExplicitMediaRequest(contextualText);
     const mediaLinkEarly =
       typeof settings.media_chat_link === 'string'
         ? settings.media_chat_link.trim()
@@ -1737,8 +1773,9 @@ async function processBufferedMessages(
         `[${accountLabel(accountId)}] Пауза ${Math.round(delayMs / 1000)}с перед фиксированным ответом для ${senderName}.`,
       );
       await waitBeforeReply(client, sender, delayMs, computeTypingMs(fixedReply));
-      await client.sendMessage(sender, { message: fixedReply });
-      await saveMessage(accountId, peerId, senderName, 'assistant', fixedReply);
+  await client.sendMessage(sender, { message: fixedReply });
+  lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
+  await saveMessage(accountId, peerId, senderName, 'assistant', fixedReply);
       console.log(
         `[${accountLabel(accountId)}] Фиксированный ответ для ${senderName}: "${fixedReply}"`,
       );
@@ -1788,7 +1825,7 @@ async function processBufferedMessages(
       console.log(`[${accountLabel(accountId)}] Ночь — пропускаем ответ ${senderName}`);
       return;
     }
-    const moodInfo = await moodEngine.getConversationMood(accountId, peerId, text);
+    const moodInfo = await moodEngine.getConversationMood(accountId, peerId, contextualText);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const objectionHint = objectionHandler.detectHint(text);
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
@@ -1840,8 +1877,9 @@ async function processBufferedMessages(
     await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
 
     if (outText) {
-      await client.sendMessage(sender, { message: outText });
-      await saveMessage(accountId, peerId, senderName, 'assistant', outText);
+  await client.sendMessage(sender, { message: outText });
+  lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
+  await saveMessage(accountId, peerId, senderName, 'assistant', outText);
       await learningDb.recordBotReply(accountId, peerId, text, outText);
       console.log(`[${accountLabel(accountId)}] Ответ для ${senderName}: "${outText}"`);
     }
@@ -2191,7 +2229,7 @@ async function sendGreetings(accountId, kind) {
 
       const message = dialog.message;
       if (!message) continue;
-      // Только недавняя активность (мы правда общалис��).
+      // Только недавняя активность (��ы правда общалис��).
       if (!message.date || message.date < recentThreshold) continue;
 
       // Есть ли непрочитанный вопрос (последнее сообщение — ИХ, входящее).
