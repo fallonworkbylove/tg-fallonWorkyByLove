@@ -1620,8 +1620,8 @@ async function handleRefresh() {
   }
 }
 
-/**
- * Закрывает и удаляет модально�� окно деталей, если оно открыто.
+  /**
+ * Закрывает и удаляет модальное окно деталей, если оно открыто.
  */
 function closeAccountModal() {
   const overlay = document.getElementById('account-modal');
@@ -1713,14 +1713,14 @@ function handleDetails(accountId) {
   closeAccountModal();
 
   const aiEnabled = isAiEnabled(account);
-  const statusText = account.status || (aiEnabled ? 'AI включен' : 'Остановлен');
+  const statusText = account.status || (aiEnabled ? 'AI вк��ючен' : 'Остановлен');
 
   const overlay = document.createElement('div');
   overlay.id = 'account-modal';
   overlay.className = 'modal-overlay';
 
   overlay.innerHTML = `
-    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Детали акка��нта">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Детали аккаунта">
       <div class="modal-card__header">
         <div>
           <p class="modal-card__eyebrow">Аккаунт</p>

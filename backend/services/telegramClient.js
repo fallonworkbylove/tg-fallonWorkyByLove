@@ -179,7 +179,7 @@ function buildProxyPool() {
 
 const PROXY_POOL = buildProxyPool();
 
-// Индекс текущего рабочег�������� прокси. Начинаем с найденного при старте.
+// Индекс текущего рабочег���������� прокси. Начинаем с найденного при старте.
 let currentProxyIndex = 0;
 
 function proxyLabel(p) {
@@ -502,7 +502,7 @@ async function activateAccount(accountId, sessionString) {
     }
   }
 
-  console.error(`Аккаунт ${accountId}: все прокси недоступны, подключение не удалось.`);
+  console.error(`Аккаунт ${accountId}: все прокси недоступны, ��одключение не удалось.`);
   return false;
 }
 
@@ -687,7 +687,7 @@ async function isPeerArchived(client, inputPeer) {
     return dialog.folderId === 1;
   } catch (err) {
     console.error(
-      'Не удалось определить папку диалога — ответ заблокирован для безопасности:',
+      'Не удалось опре��елить папку диалога — ответ заблокирован для безопасности:',
       err.errorMessage || err.message,
     );
     return true;
@@ -992,7 +992,7 @@ async function trySendMedia(
     try {
       await sendMediaItem(client, sender, item, pickCaption(mediaType));
     } catch (e) {
-      // Устаревшая ссылка на файл — сбрасываем кэш и пробуем ещё раз.
+      // Устаревшая ссылк�� на файл — сбрасываем кэш и пробуем ещё раз.
       if (String(e.message || '').includes('FILE_REFERENCE')) {
         clearMediaCache(accountId, link);
         record = await getMediaItems(client, accountId, link);
@@ -1429,7 +1429,9 @@ async function fireReengage(accountId, peerId) {
         : '';
     // Отлож��нный ответ — не прямая реакция на явную просьбу медиа, поэтому
     // ИИ здесь никогда не решает сама прислать фото/видео/кружок.
-    const mediaEnabled = false;
+    // Отложенный сценарий не инициирует медиа сам: фото отправляются только
+  // в основном обработчике после явной просьбы собеседника.
+  const mediaEnabled = false;
     const nft = await getNftCampaignState(accountId, peerId, history.length);
 
     // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на

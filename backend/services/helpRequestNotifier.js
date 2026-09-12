@@ -190,19 +190,10 @@ async function notifyVoiceSent({ accountId, accountPhone, accountName, peerId, p
     return;
   }
 
-  const ownerTelegramId = await getAccountOwnerTelegramId(accountId);
-  if (!ownerTelegramId) {
-    console.error(`[helpRequestNotifier] Не найден владелец аккаунта №${accountId}.`);
-    return;
-  }
-
-  const [subscribers] = await db.execute(
-    'SELECT chat_id FROM notification_subscribers WHERE chat_id = ?',
-    [ownerTelegramId],
-  );
+  const subscribers = await getLinkedNotificationSubscribers();
   if (subscribers.length === 0) {
     console.error(
-      `[helpRequestNotifier] Владелец аккаунта №${accountId} не подписан на уведомления: ${ownerTelegramId}`,
+      '[helpRequestNotifier] Нет подписчиков с привязанными Telegram-аккаунтами — уведомление не отправлено.',
     );
     return;
   }
@@ -337,21 +328,18 @@ function escapeHtml(value) {
 }
 
 /**
- * Находит Telegram ID владельца аккаунта (того, кому в нашем проекте привязан
- * этот номер) — это и есть users.telegram_user_id для accounts.user_id.
- * В приватном чате с ботом chat_id всегда равен Telegram ID пользователя,
- * поэтому это же значение сравнивается с notification_subscribers.chat_id.
+ * Возвращает всех подписчиков уведомляющего бота, у которых есть хотя бы
+ * один привязанный Telegram-аккаунт в Mini App.
  */
-async function getAccountOwnerTelegramId(accountId) {
-  const [[row]] = await db.execute(
-    `SELECT u.telegram_user_id AS telegram_user_id
-     FROM accounts a
-     JOIN users u ON u.id = a.user_id
-     WHERE a.id = ?
-     LIMIT 1`,
-    [accountId],
+async function getLinkedNotificationSubscribers() {
+  const [rows] = await db.execute(
+    `SELECT DISTINCT ns.chat_id
+     FROM notification_subscribers ns
+     JOIN users u ON CAST(u.telegram_user_id AS CHAR) = ns.chat_id
+     JOIN accounts a ON a.user_id = u.id
+     WHERE u.telegram_user_id IS NOT NULL`,
   );
-  return row ? String(row.telegram_user_id) : null;
+  return rows;
 }
 
 async function notifyOperators({ accountId, accountPhone, peerId, peerUsername, voiceFile, consentMessage }) {
@@ -360,21 +348,11 @@ async function notifyOperators({ accountId, accountPhone, peerId, peerUsername, 
     return;
   }
 
-  const ownerTelegramId = await getAccountOwnerTelegramId(accountId);
-  if (!ownerTelegramId) {
-    console.error(
-      `[helpRequestNotifier] Не удалось определить владельца аккаунта №${accountId} — уведомление не отправлено.`,
-    );
-    return;
-  }
-
-  const [allSubscribers] = await db.execute('SELECT chat_id FROM notification_subscribers');
-  const subscribers = allSubscribers.filter((s) => String(s.chat_id) === ownerTelegramId);
-
+  const subscribers = await getLinkedNotificationSubscribers();
   if (subscribers.length === 0) {
     console.log(
-      `[helpRequestNotifier] Собеседник согласился помочь (аккаунт №${accountId}), но владелец ` +
-        'этого номера (телеграм ID ' + ownerTelegramId + ') не написал /start уведомляющему боту.',
+      `[helpRequestNotifier] Собеседник согласился помочь (аккаунт №${accountId}), ` +
+        'но нет подписчиков с привязанными аккаунтами.',
     );
     return;
   }
