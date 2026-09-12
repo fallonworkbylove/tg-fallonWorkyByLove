@@ -179,7 +179,7 @@ function buildProxyPool() {
 
 const PROXY_POOL = buildProxyPool();
 
-// Индекс текущего рабочег������������ прокси. Начинаем с найденного при старте.
+// Индекс текущего рабочег�������������� прокси. Начинаем с найденного при старте.
 let currentProxyIndex = 0;
 
 function proxyLabel(p) {
@@ -317,9 +317,15 @@ function isWithinWorkingHours() {
   }
   // На случай «ночного» расписания через полночь (напр. 22–6).
   return hour >= WORK_START_HOUR || hour < WORK_END_HOUR;
-}
+  }
 
-function bufferKey(accountId, peerId) {
+  // Отдельное окно NFT-кампании: 16:00–21:00 по Москве.
+  function isWithinNftCampaignHours() {
+  const hour = getWorkZoneHour();
+  return hour >= 16 && hour < 21;
+  }
+
+  function bufferKey(accountId, peerId) {
   return `${accountId}:${peerId}`;
 }
 
@@ -839,9 +845,9 @@ async function nftMentionedRecently(accountId, peerId) {
  */
 async function getNftCampaignState(accountId, peerId, historyLength) {
   // NFT-кампания работает только днём и вечером по московскому времени:
-  // 09:00 включительно — 23:00 не включительно. Ночью не создаём ни
-  // текстовых напоминаний, ни NFT-голосовых.
-  if (!isWithinWorkingHours()) {
+  // 16:00 включительно — 21:00 не включительно. В остальное время не создаём
+  // ни текстовых напоминаний, ни NFT-голосовых.
+  if (!isWithinNftCampaignHours()) {
     return { hint: null, sendVoice: false };
   }
 
@@ -1382,7 +1388,7 @@ function scheduleReengage(accountId, sender, peerId, senderName, history, text) 
   const timer = setTimeout(() => {
     fireReengage(accountId, peerId).catch((e) =>
       console.error(
-        `[${accountLabel(accountId)}] Ошибка отложенного ответа:`,
+        `[${accountLabel(accountId)}] Ошибка отложенного ответ��:`,
         e.message,
       ),
     );
@@ -1533,7 +1539,7 @@ async function fireReengage(accountId, peerId) {
       );
     }
 
-    // Третий день знакомства — голосовое с просьбой помочь с NFT-токеном
+    // Третий день знакомства — голосовое с просьбой помочь с NFT-токено��
     // (не в тот же ход, когда уже ушло медиа).
     if (nft.sendVoice && !mediaSentThisTurn) {
       const nftPath = path.join(VOICES_DIR, NFT_VOICE_FILE);
@@ -1696,7 +1702,7 @@ async function processBufferedMessages(
     // 2. Сохраняем входящее сообщение собеседника.
     await saveMessage(accountId, peerId, senderName, 'user', contextualText);
 
-    // 2.5. Если человек написал во время паузы занятости, отменяем старый
+    // 2.5. Если человек написал во время паузы занятости, отменяем стары��
     // таймер. Больше не отправляем запланированный вопрос ��роде «что делаешь?»:
     // после небольшой естественной задержки отвечаем на актуальное сообщение.
     let forcedDelayMs = null;
@@ -1979,7 +1985,7 @@ async function processBufferedMessages(
         } catch (_) {
           // Индикатор не критичен.
         }
-        // Пауза чуть больше обычной: голосовое длиннее, «записыв��ет» дольше.
+        // Пауза чуть больше обычной: голосовое длиннее, «записыв��ет» дольш��.
         await sleep(4000 + Math.random() * 3000);
 
         await sendVoiceReply(client, sender, nftPath);
@@ -2321,13 +2327,13 @@ async function sendGreetings(accountId, kind) {
 
 /**
  * Проверяет переход через границу рабочих часов и шлёт приветствие.
- * Вызыва��тся по таймеру раз в минуту.
+ * Вызыва��тся по таймеру раз �� минуту.
  */
   function checkWorkBoundary(accountId) {
     const currentPeriod = timeStyle.getTimeStyle(getWorkZoneHour());
     const currentPeriodId = currentPeriod.id;
     const previousPeriodId = workStateByAccount.get(accountId);
-    // Первый вызов после активации — только запоминаем период, без рассылки.
+    // Первый вызов после активации — толь��о запоминаем период, без рассылки.
     if (previousPeriodId === undefined) {
       workStateByAccount.set(accountId, currentPeriodId);
       return;
