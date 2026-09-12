@@ -859,7 +859,7 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
   // С третьего дня: пора просить помощи с токеном голосовым. В первые два дня
   // NFT-голосовое не отправляется. После отправки
   // голосового бот полностью замолкает на этом собеседнике (автоответ
-  // отключаетс�� через disableAutoreplyForPeer) и оператору приходит
+  // о��ключаетс�� через disableAutoreplyForPeer) и оператору приходит
   // уведомление о том, что голосовое отправлено — дальше ведёт живой человек.
   if (ageHours >= NFT_VOICE_AFTER_HOURS) {
     const voiceAlreadySent = await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE);
@@ -980,7 +980,7 @@ async function getSentMediaSet(accountId, peerId) {
 
 /**
  * В��бирает и отправляет случайное неотправленное медиа нужного типа из
- * медиа-чата аккаунта. Возвращает true, если медиа реально ушло.
+ * медиа-чата аккаунта. Возвращает true, если медиа реаль��о ушло.
  */
 async function trySendMedia(
   client,
@@ -1376,7 +1376,7 @@ async function flushMessageBuffer(accountId, peerId, senderName) {
  * ОТВЕЧАЕТ ПО СУЩЕСТВУ на то сообщение, из-за которого сработала пауза —
  * прост�� с большой естественной за��ержкой, как будто был занят делами.
  * Раньше здесь отправлялась шаблонная фраза («что делаешь?», «ты тут?») —
- * это приводило к тому, что реальный вопрос собеседника оставался без ответа.
+ * это приводило к тому, что реальный вопрос собеседника оставался б��з ответа.
  * Если пауза для этого диалога уже идёт — второй раз не планируем.
  */
 function scheduleReengage(accountId, sender, peerId, senderName, history, text) {
@@ -1971,7 +1971,7 @@ async function processBufferedMessages(
         voiceSendInFlight.has(voiceSendKey(accountId, peerId, NFT_VOICE_FILE)) ||
         (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE))
       ) {
-        // Уже отправляется или отправлялось этому человеку — повторно не ш��ём.
+        // Уже отпр��вляется или отправлялось этому человеку — повторно не ш��ём.
       } else {
         const sendKey = voiceSendKey(accountId, peerId, NFT_VOICE_FILE);
         voiceSendInFlight.add(sendKey);
@@ -2361,4 +2361,5 @@ module.exports = {
   isPeerArchived,
   saveMessage,
   archivePeer,
-};
+  NFT_VOICE_AFTER_HOURS,
+  };

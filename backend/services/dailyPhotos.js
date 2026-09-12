@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../db');
-const { getActiveClient, isPeerArchived } = require('./telegramClient');
+const { getActiveClient, isPeerArchived, NFT_VOICE_AFTER_HOURS } = require('./telegramClient');
 
 // Разрешённые расширения для готовых фото.
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
@@ -122,17 +122,19 @@ async function schedulePendingSends() {
 
   // Фото отправляем только начиная со 2-го дня знакомства: собеседник должен
   // писать сегодня, но переписка с ним должна быть начата не сегодня.
-  const [writers] = await db.execute(`
-    SELECT DISTINCT cm.account_id, cm.peer_id, cm.peer_username
-    FROM conversation_messages cm
-    WHERE cm.role = 'user' AND DATE(cm.created_at) = CURDATE()
-      AND EXISTS (
-        SELECT 1 FROM conversation_messages cm2
-        WHERE cm2.account_id = cm.account_id
-          AND cm2.peer_id = cm.peer_id
-          AND DATE(cm2.created_at) < CURDATE()
-      )
-  `);
+  // С 3-го дня (48+ часов с первого сообщения) диалог переходит к NFT-кампании
+  // (см. getNftCampaignState/NFT_VOICE_AFTER_HOURS в telegramClient.js) — ей не
+  // должна мешать ежедневная фотка, поэтому такие диалоги здесь исключаем.
+  const [writers] = await db.execute(
+    `SELECT DISTINCT cm.account_id, cm.peer_id, cm.peer_username,
+       (SELECT MIN(cm2.created_at) FROM conversation_messages cm2
+        WHERE cm2.account_id = cm.account_id AND cm2.peer_id = cm.peer_id) AS started_at
+     FROM conversation_messages cm
+     WHERE cm.role = 'user' AND DATE(cm.created_at) = CURDATE()
+     HAVING DATE(started_at) < CURDATE()
+       AND TIMESTAMPDIFF(HOUR, started_at, NOW()) < ?`,
+    [NFT_VOICE_AFTER_HOURS],
+  );
 
   for (const writer of writers) {
     const scheduledAt = randomTimeBetween(lowerBound, windowEnd);
@@ -249,7 +251,7 @@ async function resolvePeerEntity(client, peerId, peerUsername) {
   const normalizedUsername = String(peerUsername || '').trim().replace(/^@/, '');
   if (normalizedUsername) return client.getEntity(normalizedUsername);
 
-  throw new Error(`Не удалось найти Telegram-сущность по ID ${normalizedId || 'не указан'}`);
+  throw new Error(`Не удалось найти Telegram-сущ��ость по ID ${normalizedId || 'не указан'}`);
 }
 
 const PERMANENT_SEND_ERROR_CODES = [
