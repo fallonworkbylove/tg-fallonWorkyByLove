@@ -123,6 +123,16 @@ const api = {
       method: 'POST',
     }),
 
+  bulkStartAi: () =>
+    request('/accounts/bulk/start-ai', {
+      method: 'POST',
+    }),
+
+  bulkStopAi: () =>
+    request('/accounts/bulk/stop-ai', {
+      method: 'POST',
+    }),
+
   getOptions: () => request('/options'),
 
   saveDelay: (delayMin, delayMax) =>
@@ -146,6 +156,24 @@ const api = {
 
   deleteBlacklistItem: (id) =>
     request(`/blacklist/${id}`, {
+      method: 'DELETE',
+    }),
+
+  getPhotoExceptions: () => request('/photo-exceptions'),
+
+  addPhotoException: (chatIdentifier) =>
+    request('/photo-exceptions', {
+      method: 'POST',
+      body: { chatIdentifier },
+    }),
+
+  clearPhotoExceptions: () =>
+    request('/photo-exceptions', {
+      method: 'DELETE',
+    }),
+
+  deletePhotoException: (id) =>
+    request(`/photo-exceptions/${id}`, {
       method: 'DELETE',
     }),
 
@@ -193,6 +221,7 @@ const state = {
   },
 
   blacklist: [],
+  photoExceptions: [],
 
   stats: {
     messages: 0,
@@ -223,6 +252,10 @@ const elements = {
   blacklistInput: document.getElementById('blacklist-input'),
   addBlacklist: document.getElementById('add-blacklist'),
   clearBlacklist: document.getElementById('clear-blacklist'),
+  photoExceptionInput: document.getElementById('photo-exception-input'),
+  addPhotoException: document.getElementById('add-photo-exception'),
+  clearPhotoExceptions: document.getElementById('clear-photo-exceptions'),
+  photoExceptionsList: document.getElementById('photo-exceptions-list'),
 };
 
 
@@ -451,6 +484,11 @@ async function loadBlacklist() {
   state.blacklist = getResponseArray(response, 'blacklist');
 }
 
+async function loadPhotoExceptions() {
+  const response = await api.getPhotoExceptions();
+  state.photoExceptions = getResponseArray(response, 'chats');
+}
+
 async function loadExamples() {
   const response = await api.getExamples();
   state.examples = getResponseArray(response, 'examples');
@@ -496,6 +534,7 @@ async function loadAllData() {
     loadAccounts(),
     loadOptions(),
     loadBlacklist(),
+    loadPhotoExceptions(),
     loadExamples(),
     loadConversations(),
     loadStats(),
@@ -591,7 +630,7 @@ function renderPanel() {
             <strong>
               <span
                 class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"
-                title="${isOnline ? 'Подключён и слушает сообщения' : 'Не подключён'}"
+                title="${isOnline ? 'Подключён и слушает сообщения' : '��е подключён'}"
               ></span>
               ${escapeHtml(account.phone)}
             </strong>
@@ -922,6 +961,47 @@ function renderBlacklist() {
   `;
 }
 
+function renderPhotoExceptions() {
+  const container = elements.photoExceptionsList;
+
+  if (!container) {
+    return;
+  }
+
+  if (!state.photoExceptions.length) {
+    container.innerHTML =
+      '<p class="muted">Список пуст — распознавание фото работает для всех пользователей.</p>';
+    return;
+  }
+
+  container.innerHTML = state.photoExceptions
+    .map((item) => {
+      const identifier = item?.chat_identifier ?? item?.chatIdentifier ?? '';
+      const itemId = item?.id;
+
+      return `
+        <span class="badge badge-soft">
+          ${escapeHtml(identifier)}
+          ${
+            itemId !== null && itemId !== undefined
+              ? `
+                <button
+                  type="button"
+                  data-action="delete-photo-exception"
+                  data-id="${itemId}"
+                  aria-label="Удалить чат из списка"
+                >
+                  ×
+                </button>
+              `
+              : ''
+          }
+        </span>
+      `;
+    })
+    .join(' ');
+}
+
 function renderOptions() {
   if (elements.delayInput) {
     elements.delayInput.value = state.options.delay;
@@ -936,6 +1016,7 @@ function renderOptions() {
   }
 
   renderBlacklist();
+  renderPhotoExceptions();
 }
 
 function renderStats() {
@@ -1228,6 +1309,25 @@ async function handleStop(accountId) {
   }
 }
 
+async function handleBulkAiToggle(enabled) {
+  const actionLabel = enabled ? 'включить AI на всех аккаунтах' : 'выключить AI на всех аккаунтах';
+  if (!window.confirm(`Точно ${actionLabel}?`)) return;
+
+  try {
+    if (enabled) {
+      await api.bulkStartAi();
+    } else {
+      await api.bulkStopAi();
+    }
+
+    await Promise.all([loadAccounts(), loadDashboard(), loadStats()]);
+    render();
+    notify(enabled ? 'AI включен на всех аккаунтах' : 'AI выключен на всех аккаунтах');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
 /**
  * Сохранение обучающего примера.
  */
@@ -1410,6 +1510,86 @@ async function handleClearHistory(accountId, peerId) {
   }
 }
 
+/**
+ * Удаление одной записи из blacklist.
+ */
+async function deleteBlacklistItem(id) {
+  if (id === null || id === undefined) {
+    return;
+  }
+
+  try {
+    await api.deleteBlacklistItem(id);
+    await loadBlacklist();
+
+    render();
+    notify('Запись удалена из blacklist');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
+/**
+ * Удаление одного пользователя из списка исключений распознавания фото.
+ */
+async function deletePhotoExceptionItem(id) {
+  if (id === null || id === undefined) {
+    return;
+  }
+
+  try {
+    await api.deletePhotoException(id);
+    await loadPhotoExceptions();
+
+    render();
+    notify('Пользователь удалён из списка исключений');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
+/**
+ * Добавление пользователя (ID или username) в список исключений
+ * распознавания фото — применяется для всех сессий (аккаунтов).
+ */
+async function handleAddPhotoException() {
+  const rawValue = elements.photoExceptionInput?.value?.trim();
+
+  if (!rawValue) {
+    notify('Введите ID или username пользователя');
+    return;
+  }
+
+  try {
+    await api.addPhotoException(rawValue);
+    await loadPhotoExceptions();
+
+    if (elements.photoExceptionInput) {
+      elements.photoExceptionInput.value = '';
+    }
+
+    render();
+    notify('Пользователь добавлен в список исключений');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
+/**
+ * Полная очистка списка исключений распознавания фото.
+ */
+async function handleClearPhotoExceptions() {
+  try {
+    await api.clearPhotoExceptions();
+    await loadPhotoExceptions();
+
+    render();
+    notify('Список исключений очищен');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
 function updateOptionsPreview() {
   state.options.delay = toNumber(
     elements.delayInput?.value,
@@ -1440,8 +1620,8 @@ async function handleRefresh() {
   }
 }
 
-/**
- * Закрывает и удаляет модально�� окно деталей, если оно открыто.
+  /**
+ * Закрывает и удаляет модальное окно деталей, если оно открыто.
  */
 function closeAccountModal() {
   const overlay = document.getElementById('account-modal');
@@ -1533,7 +1713,7 @@ function handleDetails(accountId) {
   closeAccountModal();
 
   const aiEnabled = isAiEnabled(account);
-  const statusText = account.status || (aiEnabled ? 'AI включен' : 'Остановлен');
+  const statusText = account.status || (aiEnabled ? 'AI вк��ючен' : 'Остановлен');
 
   const overlay = document.createElement('div');
   overlay.id = 'account-modal';
@@ -1593,7 +1773,7 @@ function handleDetails(accountId) {
             aria-label="Максимальная задержка в секундах"
           />
         </div>
-        <small class="modal-field__hint">Бот ответит через случайное время в этом диапазоне (1–60 сек). Например 10 и 20 — ответ придёт через 10–20 секунд.</small>
+        <small class="modal-field__hint">Бот ответит через случайное время в этом диапазоне (1–60 сек). Например 10 и 20 — ответ придёт через 10–20 се��унд.</small>
       </div>
 
       <label class="modal-field">
@@ -1695,6 +1875,14 @@ function bindEvents() {
     elements.clearBlacklist.addEventListener('click', clearBlacklist);
   }
 
+  if (elements.addPhotoException) {
+    elements.addPhotoException.addEventListener('click', handleAddPhotoException);
+  }
+
+  if (elements.clearPhotoExceptions) {
+    elements.clearPhotoExceptions.addEventListener('click', handleClearPhotoExceptions);
+  }
+
   [
     elements.delayInput,
     elements.minInput,
@@ -1753,6 +1941,16 @@ function bindEvents() {
       return;
     }
 
+    if (action === 'bulk-start') {
+      handleBulkAiToggle(true);
+      return;
+    }
+
+    if (action === 'bulk-stop') {
+      handleBulkAiToggle(false);
+      return;
+    }
+
     if (action === 'stop') {
       handleStop(id);
       return;
@@ -1765,6 +1963,11 @@ function bindEvents() {
 
     if (action === 'delete-blacklist') {
       deleteBlacklistItem(id);
+      return;
+    }
+
+    if (action === 'delete-photo-exception') {
+      deletePhotoExceptionItem(id);
       return;
     }
 

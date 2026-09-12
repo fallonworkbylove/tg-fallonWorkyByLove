@@ -23,6 +23,7 @@ app.use('/api/accounts', require('./routes/accounts'));
 app.use("/api/dashboard", require("./routes/dashboard"));
 app.use("/api/options", require("./routes/options"));
 app.use("/api/blacklist", require("./routes/blacklist"));
+app.use("/api/photo-exceptions", require("./routes/photoExceptions"));
 app.use("/api/examples", require("./routes/examples"));
 app.use("/api/stats", require("./routes/stats"));
 
@@ -36,8 +37,28 @@ app.get('/api/health', (req, res) => {
   }
 });
 const { bootstrapSessions } = require('./services/sessionBootstrap');
+const { ensureSchema: ensurePhotoExceptionsSchema } = require('./services/photoRecognitionSettings');
+const { startDailyPhotoScheduler } = require('./services/dailyPhotos');
+const { startNotificationBot } = require('./services/helpRequestNotifier');
+const { startSilenceScheduler } = require('./services/objectionHandler');
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  ensurePhotoExceptionsSchema().catch((err) =>
+    console.error('Не удалось создать таблицу photo_recognition_disabled_chats:', err.message),
+  );
   bootstrapSessions();
+  startDailyPhotoScheduler();
+  startNotificationBot();
+
+  // Напоминание «привет, чё молчиш)» при 2-3 днях молчания собеседника.
+  // Зависимости берутся из telegramClient.js лениво (require внутри), чтобы
+  // избежать циклической загрузки модулей при старте сервера.
+  const {
+    getAccountSettings,
+    isWithinWorkingHours,
+    saveMessage,
+  } = require('./services/telegramClient');
+  const { isAutoreplyDisabledForPeer } = require('./services/helpRequestNotifier');
+  startSilenceScheduler({ getAccountSettings, isWithinWorkingHours, isAutoreplyDisabledForPeer, saveMessage });
 });

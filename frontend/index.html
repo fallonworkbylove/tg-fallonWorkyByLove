@@ -10,7 +10,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Telegram Mini App</title>
-    <link rel="stylesheet" href="styles.css?v=3" />
+    <link rel="stylesheet" href="styles.css?v=8" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -44,8 +44,12 @@
             </div>
           </div>
 
-          <div class="action-row">
+          <div class="action-row panel-actions">
             <button class="btn btn-primary" data-action="refresh" type="button">Обновить</button>
+            <div class="bulk-controls" aria-label="Управление всеми аккаунтами">
+              <button id="bulk-start-panel" class="btn btn-primary bulk-action" data-action="bulk-start" type="button">Включить все аккаунты</button>
+              <button id="bulk-stop-panel" class="btn btn-secondary bulk-action" data-action="bulk-stop" type="button">Выключить все аккаунты</button>
+            </div>
             <button class="btn btn-secondary" data-action="open-accounts" type="button">Добавить аккаунт</button>
             <button class="btn btn-secondary" data-action="topup" type="button">Пополнить</button>
             <button class="btn btn-danger" data-action="logout" type="button">Выйти</button>
@@ -149,7 +153,7 @@
             <h2>О сервисе</h2>
             <p>Это Telegram Mini App для управления AI-ассистентами и обучением сценариев ответов для аккаунтов.</p>
             <h3>Blacklist</h3>
-            <p>Blacklist — это список Telegram User ID, которым AI-автоответчик не будет отвечать. Если человек находится в blacklist, система увидит входящее сообщение, но не отправит его в AI и не будет писать ответ. Это удобно для блокировки нежелательных пользователей, спама или людей, которым должен отвечать только человек.</p>
+            <p>Blacklist — это список Telegram User ID, которым AI-автоответчик не будет отвечать. Если человек находится в blacklist, система увидит входящее со��бщение, но не отправит его в AI и не будет писать ответ. Это удобно для блокировки нежелательных пользователей, спама или людей, которым должен отвечать только человек.</p>
             <h3>Инструкция</h3>
             <ul class="list">
               <li>Добавляйте аккаунты с промптом и проверяйте лимиты.</li>
@@ -182,8 +186,19 @@
               </label>
               <button id="add-blacklist" class="btn btn-secondary" type="button">Добавить User ID</button>
               <button id="clear-blacklist" class="btn btn-danger" type="button">Очистить blacklist</button>
+              <label>
+                <span>Без распознавания фото</span>
+                <input id="photo-exception-input" type="text" placeholder="@username пользователя" />
+              </label>
+              <button id="add-photo-exception" class="btn btn-secondary" type="button">Добавить пользователя</button>
+              <button id="clear-photo-exceptions" class="btn btn-danger" type="button">Очистить список</button>
             </div>
             <div id="options-preview" class="stack"></div>
+            <div class="stack">
+              <h3>Пользователи без распознавания фото</h3>
+              <p>От этих пользователей (по @username), на всех сессиях (аккаунтах), фото будут игнорироваться AI (без анализа изображения) — независимо от того, с какого аккаунта они пишут. У пользователей без username фото заблокировать нельзя.</p>
+              <div id="photo-exceptions-list" class="stack"></div>
+            </div>
           </div>
         </section>
 
@@ -191,6 +206,10 @@
           <div id="stats-cards" class="stats-grid"></div>
           <div class="section-card card">
             <h3>Сообщения по аккаунтам</h3>
+            <div class="action-row account-bulk-actions">
+              <button class="btn btn-primary" data-action="bulk-start" type="button">Включить все аккаунты</button>
+              <button class="btn btn-secondary" data-action="bulk-stop" type="button">Выключить все аккаунты</button>
+            </div>
             <div id="stats-accounts" class="stack"></div>
           </div>
         </section>
@@ -207,6 +226,6 @@
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=3"></script>
+    <script src="app.js?v=8"></script>
     </body>
     </html>

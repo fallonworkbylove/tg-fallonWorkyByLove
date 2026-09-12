@@ -219,6 +219,37 @@ router.post('/connect/password', async (req, res) => {
   }
 });
 
+// Массовое управление автоответами для всех аккаунтов текущего пользователя.
+router.post('/bulk/start-ai', async (req, res) => {
+  try {
+    const [result] = await db.execute(
+      `UPDATE accounts
+       SET status = 'AI включен', is_autoreply_enabled = TRUE
+       WHERE user_id = ?`,
+      [getUserId(req)],
+    );
+    return res.json({ success: true, affectedRows: result.affectedRows, is_autoreply_enabled: true });
+  } catch (error) {
+    console.error('Bulk start AI error:', error);
+    return res.status(500).json({ success: false, error: 'Не удалось включить AI на аккаунтах' });
+  }
+});
+
+router.post('/bulk/stop-ai', async (req, res) => {
+  try {
+    const [result] = await db.execute(
+      `UPDATE accounts
+       SET status = 'Остановлен', is_autoreply_enabled = FALSE
+       WHERE user_id = ?`,
+      [getUserId(req)],
+    );
+    return res.json({ success: true, affectedRows: result.affectedRows, is_autoreply_enabled: false });
+  } catch (error) {
+    console.error('Bulk stop AI error:', error);
+    return res.status(500).json({ success: false, error: 'Не удалось выключить AI на аккаунтах' });
+  }
+});
+
 // Временно только обновляем состояние аккаунта, без запуска настоящего AI.
 router.post('/:id/start-ai', async (req, res) => {
   try {
@@ -282,10 +313,23 @@ router.put('/:id', async (req, res) => {
     const prompt = typeof req.body.prompt === 'string' ? req.body.prompt.trim() : '';
 
     // Ссылка на Telegram-чат с медиа (фото/видео/кружки). Пусто = выключено.
-    const mediaChatLink =
+    const rawMediaChatLink =
       typeof req.body.mediaChatLink === 'string'
-        ? req.body.mediaChatLink.trim().slice(0, 255)
+        ? req.body.mediaChatLink.trim()
         : '';
+    const mediaChatLink = rawMediaChatLink.slice(0, 255);
+
+    if (
+      mediaChatLink &&
+      !mediaChatLink.startsWith('@') &&
+      !mediaChatLink.startsWith('+') &&
+      !/^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)\//i.test(mediaChatLink)
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: 'Укажите ссылку t.me/telegram.me, @username или приватную ссылку +hash',
+      });
+    }
 
     // Диапазон задержки перед ответом (в секундах, 1..60).
     let delayMin = clampDelay(req.body.replyDelayMin, 3);
