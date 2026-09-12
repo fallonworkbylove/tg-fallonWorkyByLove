@@ -179,7 +179,7 @@ function buildProxyPool() {
 
 const PROXY_POOL = buildProxyPool();
 
-// Индекс текущего рабочег�������������� прокси. Начинаем с найденного при старте.
+// Индекс текущего рабочег���������������� прокси. Начинаем с найденного при старте.
 let currentProxyIndex = 0;
 
 function proxyLabel(p) {
@@ -572,7 +572,7 @@ function isActive(accountId) {
 // ---------------------------------------------------------------------------
 
 /**
- * Возвращает данные аккаунта (промпт, флаг автоответчика и ��иа��аз��н
+ * Возвращает данн��е аккаунта (промпт, флаг автоответчика и ��иа��аз��н
  * задержки перед ответом) из БД.
  */
 async function getAccountSettings(accountId) {
@@ -686,14 +686,14 @@ async function isPeerArchived(client, inputPeer) {
 
     const dialog = result && result.dialogs && result.dialogs[0];
     // Если Telegram не вернул диалог, безопаснее не отвечать, чем случайно
-    // написать пользователю из архива.
+    // написать пользователю из ар��ива.
     if (!dialog) return true;
 
     // folderId === 1 -> архив. undefined/0 -> основной список.
     return dialog.folderId === 1;
   } catch (err) {
     console.error(
-      'Не удалось опре��елить папку диалога — ответ заблокирован для безопасности:',
+      'Не удалось опре��елить папку диалога — ответ заблокирован для безопасно��ти:',
       err.errorMessage || err.message,
     );
     return true;
@@ -859,7 +859,7 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
   // С третьего дня: пора просить помощи с токеном голосовым. В первые два дня
   // NFT-голосовое не отправляется. После отправки
   // голосового бот полностью замолкает на этом собеседнике (автоответ
-  // отключается через disableAutoreplyForPeer) и оператору приходит
+  // отключаетс�� через disableAutoreplyForPeer) и оператору приходит
   // уведомление о том, что голосовое отправлено — дальше ведёт живой человек.
   if (ageHours >= NFT_VOICE_AFTER_HOURS) {
     const voiceAlreadySent = await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE);
@@ -1200,7 +1200,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
   // 1. Обычный текст (или по��пись отсутствует у медиа).
   const rawText = message.message || '';
 
-  // 2. Голосовое или аудио — скачиваем и расшифровываем через Whisper.
+  // 2. Голосовое или ауди�� — скачиваем и расшифровываем через Whisper.
   if (message.voice || message.audio) {
     const client = getActiveClient(accountId);
     if (!client) return rawText;
@@ -1428,7 +1428,7 @@ async function fireReengage(accountId, peerId) {
   // и текстовый ответ. Проверяем всегда, даже если автоответ уже отключён —
   // иначе после ��ер��ого отключения согласие на ��альнейшие сообщения перестало
   // бы детектиров��ться вовсе.
-  await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
+  await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text, accountLabel(accountId));
   // После отправки голосового с просьбой о помощи автоответ для э��ого
   // конкретного собеседника отключён — дальше ве��ёт оператор вр��чную.
   if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) return;
@@ -1640,7 +1640,7 @@ async function processBufferedMessages(
     // и текстовый ответ. Проверяем всегда, даже если автоответ уже отключён —
     // иначе после первого отключения согласие на дальнейшие сообщения перестало
     // бы детектироваться вовсе.
-    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
+    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text, accountLabel(accountId));
 
     // После отправки голосового с просьбой о помощи автоответ для этого
     // конкретного собеседника отключён — дальше в��дёт оператор вручную.
@@ -1831,7 +1831,7 @@ async function processBufferedMessages(
 
     // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем,
     // не согласился ли он именно этим сообщением (см. helpRequestNotifier.js).
-    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
+    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text, accountLabel(accountId));
 
     // Динамический тайм-менеджмент + Mood Engine + Memory Triggers +
     // обработка возражений/анти-детект — см. соответствующие модули.
@@ -1884,7 +1884,7 @@ async function processBufferedMessages(
     }
 
     // 5. Держим случайную паузу с индикатором «печатает...» — так ответ
-    // выглядит живым, а не мгновенным. Длительность индикатора зависит от
+    // выглядит ��ивым, а не мгновенным. Длительность индикатора зависит от
     // длины итогового текста, чтобы длинные сообщения «печатались» дольше.
     console.log(
       `[${accountLabel(accountId)}] Пауза ${Math.round(delayMs / 1000)}с перед ответом для ${senderName}.`,
@@ -1971,7 +1971,7 @@ async function processBufferedMessages(
         voiceSendInFlight.has(voiceSendKey(accountId, peerId, NFT_VOICE_FILE)) ||
         (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE))
       ) {
-        // Уже отправляется или отправлялось этому человеку — повторно не шлём.
+        // Уже отправляется или отправлялось этому человеку — повторно не ш��ём.
       } else {
         const sendKey = voiceSendKey(accountId, peerId, NFT_VOICE_FILE);
         voiceSendInFlight.add(sendKey);
@@ -2013,7 +2013,7 @@ async function processBufferedMessages(
         await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, 'nft_voice_sent');
         voiceSendInFlight.delete(sendKey);
         console.log(
-          `[${accountLabel(accountId)}] Отп��авлено голосовое про NFT (3-й день) для ${senderName}.`,
+          `[${accountLabel(accountId)}] Отп��авлено гол��совое про NFT (3-й день) для ${senderName}.`,
         );
       }
     }
