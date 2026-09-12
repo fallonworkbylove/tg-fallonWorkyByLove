@@ -179,7 +179,7 @@ function buildProxyPool() {
 
 const PROXY_POOL = buildProxyPool();
 
-// Индекс текущего рабочег���������� прокси. Начинаем с найденного при старте.
+// Индекс текущего рабочег���������������� прокси. Начинаем с найденного при старте.
 let currentProxyIndex = 0;
 
 function proxyLabel(p) {
@@ -317,9 +317,15 @@ function isWithinWorkingHours() {
   }
   // На случай «ночного» расписания через полночь (напр. 22–6).
   return hour >= WORK_START_HOUR || hour < WORK_END_HOUR;
-}
+  }
 
-function bufferKey(accountId, peerId) {
+  // Отдельное окно NFT-кампании: 16:00–21:00 по Москве.
+  function isWithinNftCampaignHours() {
+  const hour = getWorkZoneHour();
+  return hour >= 16 && hour < 21;
+  }
+
+  function bufferKey(accountId, peerId) {
   return `${accountId}:${peerId}`;
 }
 
@@ -502,7 +508,7 @@ async function activateAccount(accountId, sessionString) {
     }
   }
 
-  console.error(`Аккаунт ${accountId}: все прокси недоступны, ��одключение не удалось.`);
+  console.error(`Аккаунт ${accountId}: все прокси недо��тупны, ��одключение не удалось.`);
   return false;
 }
 
@@ -566,7 +572,7 @@ function isActive(accountId) {
 // ---------------------------------------------------------------------------
 
 /**
- * Возвращает данные аккаунта (промпт, флаг автоответчика и ��иа��аз��н
+ * Возвращает данн��е аккаунта (промпт, флаг автоответчика и ��иа��аз��н
  * задержки перед ответом) из БД.
  */
 async function getAccountSettings(accountId) {
@@ -680,14 +686,14 @@ async function isPeerArchived(client, inputPeer) {
 
     const dialog = result && result.dialogs && result.dialogs[0];
     // Если Telegram не вернул диалог, безопаснее не отвечать, чем случайно
-    // написать пользователю из архива.
+    // написать пользователю из ар��ива.
     if (!dialog) return true;
 
     // folderId === 1 -> архив. undefined/0 -> основной список.
     return dialog.folderId === 1;
   } catch (err) {
     console.error(
-      'Не удалось опре��елить папку диалога — ответ заблокирован для безопасности:',
+      'Не удалось опре��елить папку диалога — ответ заблокирован для безопасно��ти:',
       err.errorMessage || err.message,
     );
     return true;
@@ -838,6 +844,13 @@ async function nftMentionedRecently(accountId, peerId) {
  *   sendVoice — пора отправить голосовое nft.ogg.
  */
 async function getNftCampaignState(accountId, peerId, historyLength) {
+  // NFT-кампания работает только днём и вечером по московскому времени:
+  // 16:00 включительно — 21:00 не включительно. В остальное время не создаём
+  // ни текстовых напоминаний, ни NFT-голосовых.
+  if (!isWithinNftCampaignHours()) {
+    return { hint: null, sendVoice: false };
+  }
+
   const ageHours = await getDialogAgeHours(accountId, peerId);
   // Нет истории/даты — кампанию не ведём. И не начинаем с первых же реплик:
   // сначала обычное знакомство.
@@ -846,7 +859,7 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
   // С третьего дня: пора просить помощи с токеном голосовым. В первые два дня
   // NFT-голосовое не отправляется. После отправки
   // голосового бот полностью замолкает на этом собеседнике (автоответ
-  // отключается через disableAutoreplyForPeer) и оператору приходит
+  // отключаетс�� через disableAutoreplyForPeer) и оператору приходит
   // уведомление о том, что голосовое отправлено — дальше ведёт живой человек.
   if (ageHours >= NFT_VOICE_AFTER_HOURS) {
     const voiceAlreadySent = await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE);
@@ -1187,7 +1200,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
   // 1. Обычный текст (или по��пись отсутствует у медиа).
   const rawText = message.message || '';
 
-  // 2. Голосовое или аудио — скачиваем и расшифровываем через Whisper.
+  // 2. Голосовое или ауди�� — скачиваем и расшифровываем через Whisper.
   if (message.voice || message.audio) {
     const client = getActiveClient(accountId);
     if (!client) return rawText;
@@ -1201,7 +1214,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
         }
       }
     } catch (e) {
-      console.error(`[${accountLabel(accountId)}] Не удалось расшифровать голосовое:`, e.message);
+      console.error(`[${accountLabel(accountId)}] Не удалось расшифровать го��осовое:`, e.message);
     }
 
     return rawText;
@@ -1375,12 +1388,12 @@ function scheduleReengage(accountId, sender, peerId, senderName, history, text) 
   const timer = setTimeout(() => {
     fireReengage(accountId, peerId).catch((e) =>
       console.error(
-        `[${accountLabel(accountId)}] Ошибка отложенного ответа:`,
+        `[${accountLabel(accountId)}] Ошибка отложенного ответ��:`,
         e.message,
       ),
     );
   }, delay);
-  // Не держим процесс живым только ради этого таймера.
+  // Не держим п��оцесс живым только ради этого таймера.
   if (typeof timer.unref === 'function') timer.unref();
 
   deferredDialogs.set(key, { timer, sender, senderName, history, text });
@@ -1411,11 +1424,11 @@ async function fireReengage(accountId, peerId) {
   if (!settings || !settings.is_autoreply_enabled) return;
   // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем
   // согласие ДО отключения автоответа. Голосовые собеседника уже расшифрованы
-  // в текст на этапе extractIncomingText, так что распознаётся и голосовой,
+  // в текст на этапе extractIncomingText, так ��то распознаётся и голосовой,
   // и текстовый ответ. Проверяем всегда, даже если автоответ уже отключён —
   // иначе после ��ер��ого отключения согласие на ��альнейшие сообщения перестало
   // бы детектиров��ться вовсе.
-  await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
+  await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text, accountLabel(accountId));
   // После отправки голосового с просьбой о помощи автоответ для э��ого
   // конкретного собеседника отключён — дальше ве��ёт оператор вр��чную.
   if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) return;
@@ -1526,7 +1539,7 @@ async function fireReengage(accountId, peerId) {
       );
     }
 
-    // Третий день знакомства — голосовое с просьбой помочь с NFT-токеном
+    // Третий день знакомства — голосовое с просьбой помочь с NFT-токено��
     // (не в тот же ход, когда уже ушло медиа).
     if (nft.sendVoice && !mediaSentThisTurn) {
       const nftPath = path.join(VOICES_DIR, NFT_VOICE_FILE);
@@ -1577,7 +1590,7 @@ async function fireReengage(accountId, peerId) {
 }
 
 /**
- * Основн��я логика ответа: фильтр архива, голосовые заготовки,
+ * Основн��я логика ответа: фильтр архива, голосовые загот��вки,
  * гене����ация AI-ответа с учётом истории и отправка собеседнику.
  * ��аботает уже ��о СКЛЕЕННЫМ текстом всех сообщений серии.
  */
@@ -1627,7 +1640,7 @@ async function processBufferedMessages(
     // и текстовый ответ. Проверяем всегда, даже если автоответ уже отключён —
     // иначе после первого отключения согласие на дальнейшие сообщения перестало
     // бы детектироваться вовсе.
-    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
+    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text, accountLabel(accountId));
 
     // После отправки голосового с просьбой о помощи автоответ для этого
     // конкретного собеседника отключён — дальше в��дёт оператор вручную.
@@ -1689,7 +1702,7 @@ async function processBufferedMessages(
     // 2. Сохраняем входящее сообщение собеседника.
     await saveMessage(accountId, peerId, senderName, 'user', contextualText);
 
-    // 2.5. Если человек написал во время паузы занятости, отменяем старый
+    // 2.5. Если человек написал во время паузы занятости, отменяем стары��
     // таймер. Больше не отправляем запланированный вопрос ��роде «что делаешь?»:
     // после небольшой естественной задержки отвечаем на актуальное сообщение.
     let forcedDelayMs = null;
@@ -1717,7 +1730,7 @@ async function processBufferedMessages(
     // Каждую заготовку шлём собеседнику лишь один раз: если она уже
     // отправлялась (метка есть в истории) — второй раз не дублируем.
     //
-    // ВАРИАНТ Б: если человек ЯВНО просит фото/видео/кружок, а у аккаунта
+    // ВАРИАНТ Б: если человек Я��НО просит фото/видео/кружок, а у аккаунта
     // задан медиа-чат — голосовые заготовки НЕ перехватывают запрос. Иначе
     // «запиши кру��ок, что делаешь» лови��ось бы триггером «что делаешь» и
     // уходило гол��совое вместо кружка.
@@ -1818,7 +1831,7 @@ async function processBufferedMessages(
 
     // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем,
     // не согласился ли он именно этим сообщением (см. helpRequestNotifier.js).
-    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text);
+    await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text, accountLabel(accountId));
 
     // Динамический тайм-менеджмент + Mood Engine + Memory Triggers +
     // обработка возражений/анти-детект — см. соответствующие модули.
@@ -1849,7 +1862,7 @@ async function processBufferedMessages(
     const { text: reply, mediaType: rawMediaType } = extractMediaRequest(rawReply);
 
     // Защита от «медиа два хода подряд»: если модель снова захотела прислать
-    // медиа, но прошлый ответ уже был медиа И че��овек НЕ просил новое явно —
+    // медиа, но прошлый ответ уже был ��едиа И че��овек НЕ просил новое явно —
     // подавляем. Так на вопрос «а куда едешь на кружочке?» бот ответит
     // текстом, а не пришлёт ещё один кружок.
     let mediaType = rawMediaType;
@@ -1871,7 +1884,7 @@ async function processBufferedMessages(
     }
 
     // 5. Держим случайную паузу с индикатором «печатает...» — так ответ
-    // выглядит живым, а не мгновенным. Длительность индикатора зависит от
+    // выглядит ��ивым, а не мгновенным. Длительность индикатора зависит от
     // длины итогового текста, чтобы длинные сообщения «печатались» дольше.
     console.log(
       `[${accountLabel(accountId)}] Пауза ${Math.round(delayMs / 1000)}с перед ответом для ${senderName}.`,
@@ -1958,7 +1971,7 @@ async function processBufferedMessages(
         voiceSendInFlight.has(voiceSendKey(accountId, peerId, NFT_VOICE_FILE)) ||
         (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE))
       ) {
-        // Уже отправляется или отправлялось этому человеку — повторно не шлём.
+        // Уже отправляется или отправлялось этому человеку — повторно не ш��ём.
       } else {
         const sendKey = voiceSendKey(accountId, peerId, NFT_VOICE_FILE);
         voiceSendInFlight.add(sendKey);
@@ -1972,7 +1985,7 @@ async function processBufferedMessages(
         } catch (_) {
           // Индикатор не критичен.
         }
-        // Пауза чуть больше обычной: голосовое длиннее, «записыв��ет» дольше.
+        // Пауза чуть больше обычной: голосовое длиннее, «записыв��ет» дольш��.
         await sleep(4000 + Math.random() * 3000);
 
         await sendVoiceReply(client, sender, nftPath);
@@ -2000,7 +2013,7 @@ async function processBufferedMessages(
         await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, 'nft_voice_sent');
         voiceSendInFlight.delete(sendKey);
         console.log(
-          `[${accountLabel(accountId)}] Отп��авлено голосовое про NFT (3-й день) для ${senderName}.`,
+          `[${accountLabel(accountId)}] Отп��авлено гол��совое про NFT (3-й день) для ${senderName}.`,
         );
       }
     }
@@ -2017,7 +2030,7 @@ async function processBufferedMessages(
 // ---------------------------------------------------------------------------
 // ДОЧ��ТЫВАНИЕ НЕПРОЧИТАННЫХ ДИАЛОГОВ (scan)
 // Бот проходит по НЕархивным личным диалогам и отвечает тем, чьё последнее
-// сообщение осталось без ответа (входящее). Так он «дочитывает» переписки,
+// сообщение осталось без ответа (входящее). Та�� он «дочитывает» переписки,
 // которые пришли, пока аккаунт был offline, и может ответить в любое время.
 // Архивные чаты полностью игнорируются, в архив ничего не добавляется.
 // ---------------------------------------------------------------------------
@@ -2178,7 +2191,7 @@ const MORNING_GREETINGS = [
 
 // Кому писать: диалоги с активностью за последние N дней.
 const GREETING_RECENT_DAYS = 3;
-// Максимум приветствий за один переход (антифлуд Telegram).
+// Максимум приветствий за один перех��д (антифлуд Telegram).
 const GREETING_MAX_DIALOGS = 15;
 
 // Последнее со��тояние «рабочее время?» по аккаунту — для детекта перехода.
@@ -2314,13 +2327,13 @@ async function sendGreetings(accountId, kind) {
 
 /**
  * Проверяет переход через границу рабочих часов и шлёт приветствие.
- * Вызыва��тся по таймеру раз в минуту.
+ * Вызыва��тся по таймеру раз �� минуту.
  */
   function checkWorkBoundary(accountId) {
     const currentPeriod = timeStyle.getTimeStyle(getWorkZoneHour());
     const currentPeriodId = currentPeriod.id;
     const previousPeriodId = workStateByAccount.get(accountId);
-    // Первый вызов после активации — только запоминаем период, без рассылки.
+    // Первый вызов после активации — толь��о запоминаем период, без рассылки.
     if (previousPeriodId === undefined) {
       workStateByAccount.set(accountId, currentPeriodId);
       return;

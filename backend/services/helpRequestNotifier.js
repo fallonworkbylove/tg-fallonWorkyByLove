@@ -190,10 +190,13 @@ async function notifyVoiceSent({ accountId, accountPhone, accountName, peerId, p
     return;
   }
 
-  const subscribers = await getLinkedNotificationSubscribers();
+  const owner = await getAccountOwner(accountId);
+  const subscribers = owner?.telegramUserId
+    ? await getAccountNotificationSubscribers(accountId, owner.telegramUserId)
+    : [];
   if (subscribers.length === 0) {
     console.error(
-      '[helpRequestNotifier] Нет подписчиков с привязанными Telegram-аккаунтами — уведомление не отправлено.',
+      `[helpRequestNotifier] Для аккаунта №${accountId} не найден подписанный владелец — уведомление не отправлено.`,
     );
     return;
   }
@@ -202,10 +205,7 @@ async function notifyVoiceSent({ accountId, accountPhone, accountName, peerId, p
   const peerLabel = normalizedUsername
     ? `@${normalizedUsername} (id ${peerId})`
     : `id ${peerId}`;
-  const normalizedAccountName = String(accountName || '').trim();
-  const accountLabel = normalizedAccountName
-    ? `№${accountId} — ${normalizedAccountName}${accountPhone ? ` (${accountPhone})` : ''}`
-    : `№${accountId}${accountPhone ? ` (${accountPhone})` : ''}`;
+  const accountLabel = formatAccountLabel(accountId, accountPhone, accountName);
   const text =
     '<b>ИИ отправила NFT-голосовое</b>\n\n' +
     `<b>Аккаунт:</b> ${escapeHtml(accountLabel)}\n` +
@@ -217,7 +217,7 @@ async function notifyVoiceSent({ accountId, accountPhone, accountName, peerId, p
     const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: ownerTelegramId, text, parse_mode: 'HTML' }),
+      body: JSON.stringify({ chat_id: subscribers[0].chat_id, text, parse_mode: 'HTML' }),
     });
     if (!response.ok) {
       console.error('[helpRequestNotifier] Ошибка отправки уведомления о голосовом:', await response.text());
@@ -279,7 +279,7 @@ async function aiDetectAgreement(message) {
  * Ничего не бросает наружу: ошибки только логируются, чтобы не мешать
  * основной генерации ответа бота.
  */
-async function checkConsent(accountId, peerId, peerUsername, accountPhone, incomingText) {
+async function checkConsent(accountId, peerId, peerUsername, accountPhone, incomingText, accountName) {
   try {
     await ensureSchema();
 
@@ -306,6 +306,7 @@ async function checkConsent(accountId, peerId, peerUsername, accountPhone, incom
     await notifyOperators({
       accountId,
       accountPhone,
+      accountName,
       peerId,
       peerUsername,
       voiceFile: pending.voice_file,
@@ -331,36 +332,59 @@ function escapeHtml(value) {
  * Возвращает всех подписчиков уведомляющего бота, у которых есть хотя бы
  * один привязанный Telegram-аккаунт в Mini App.
  */
-async function getLinkedNotificationSubscribers() {
+async function getAccountOwner(accountId) {
+  const [[row]] = await db.execute(
+    `SELECT u.telegram_user_id AS telegram_user_id
+     FROM accounts a
+     JOIN users u ON u.id = a.user_id
+     WHERE a.id = ? AND u.telegram_user_id IS NOT NULL
+     LIMIT 1`,
+    [accountId],
+  );
+  return row ? { telegramUserId: String(row.telegram_user_id) } : null;
+}
+
+async function getAccountNotificationSubscribers(accountId, telegramUserId) {
   const [rows] = await db.execute(
     `SELECT DISTINCT ns.chat_id
-     FROM notification_subscribers ns
-     JOIN users u ON CAST(u.telegram_user_id AS CHAR) = ns.chat_id
-     JOIN accounts a ON a.user_id = u.id
-     WHERE u.telegram_user_id IS NOT NULL`,
+     FROM accounts a
+     JOIN users u ON u.id = a.user_id
+     JOIN notification_subscribers ns ON CAST(ns.chat_id AS CHAR) = CAST(u.telegram_user_id AS CHAR)
+     WHERE a.id = ? AND u.telegram_user_id = ?`,
+    [accountId, telegramUserId],
   );
   return rows;
 }
 
-async function notifyOperators({ accountId, accountPhone, peerId, peerUsername, voiceFile, consentMessage }) {
+function formatAccountLabel(accountId, accountPhone, accountName) {
+  const name = String(accountName || '').trim();
+  const phone = accountPhone ? ` (${accountPhone})` : '';
+  return name ? `${name}${phone}` : `аккаунт${phone}`;
+}
+
+async function notifyOperators({ accountId, accountPhone, accountName, peerId, peerUsername, voiceFile, consentMessage }) {
   if (!TELEGRAM_API) {
     console.error('[helpRequestNotifier] BOT_TOKEN не задан — уведомление не отправлено.');
     return;
   }
 
-  const subscribers = await getLinkedNotificationSubscribers();
+  const owner = await getAccountOwner(accountId);
+  const subscribers = owner?.telegramUserId
+    ? await getAccountNotificationSubscribers(accountId, owner.telegramUserId)
+    : [];
   if (subscribers.length === 0) {
     console.log(
       `[helpRequestNotifier] Собеседник согласился помочь (аккаунт №${accountId}), ` +
-        'но нет подписчиков с привязанными аккаунтами.',
+        'но владелец не подписан на уведомления бота.',
     );
     return;
   }
 
   const peerLabel = peerUsername ? `@${peerUsername} (id ${peerId})` : `id ${peerId}`;
+  const accountLabel = formatAccountLabel(accountId, accountPhone, accountName);
   const card =
-    `<b>✅ Собеседник согласился помочь</b>\n\n` +
-    `<b>��ккаунт:</b> №${accountId} (${escapeHtml(accountPhone || '—')})\n` +
+    '<b>✅ Собеседник согласился помочь</b>\n\n' +
+    `<b>Аккаунт:</b> ${escapeHtml(accountLabel)}\n` +
     `<b>Собеседник:</b> ${escapeHtml(peerLabel)}\n` +
     `<b>Голосовое:</b> ${escapeHtml(voiceFile)}\n` +
     `<b>Ответ собеседника:</b> «${escapeHtml(consentMessage.slice(0, 500))}»`;
