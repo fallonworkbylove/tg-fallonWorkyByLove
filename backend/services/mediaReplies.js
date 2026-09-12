@@ -89,9 +89,15 @@ function parseUsername(link) {
   s = s.replace(/^https?:\/\//i, '');
   s = s.replace(/^(?:t\.me\/|telegram\.me\/)/i, '');
   s = s.replace(/^@/, '');
+  // Ссылки вида t.me/channel/123 и t.me/c/123/456 указывают на канал,
+  // а не на username. Для /c/ Telegram API ожидает внутренний peer id.
+  const parts = s.split('/').filter(Boolean);
+  if (parts[0]?.toLowerCase() === 'c' && /^\d+$/.test(parts[1] || '')) {
+    return `-100${parts[1]}`;
+  }
+
   // Убираем возможный хвост вида «/123» (ссылка на сообщение).
-  s = s.split(/[/?#]/)[0];
-  return s;
+  return parts[0] || '' ;
 }
 
 /**
@@ -215,6 +221,10 @@ function pickUnsentMedia(items, type, sentIds) {
  * без плашки «переслано»). Для кружка выставляет videoNote.
  */
 async function sendMediaItem(client, peer, item, caption) {
+  if (!item?.msg?.media) {
+    throw new Error(`Медиа-сообщение #${item?.id || 'unknown'} больше недоступно`);
+  }
+
   const opts = { file: item.msg.media };
   if (caption) opts.caption = caption;
   if (item.type === 'circle') opts.videoNote = true;
