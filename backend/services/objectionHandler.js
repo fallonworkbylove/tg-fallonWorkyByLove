@@ -113,16 +113,38 @@ const SILENCE_PINGS = ['привет, чё молчиш)', 'ау, ты живо�
 
 async function resolveArchiveEntity(client, peerId, peerUsername) {
   const normalizedId = String(peerId || '').trim();
-  if (normalizedId && /^-?\d+$/.test(normalizedId)) {
+  const normalizedUsername = String(peerUsername || '').trim().replace(/^@/, '');
+
+  // Username даёт свежий access_hash напрямую от Telegram, поэтому пробуем
+  // его первым — он надёжнее «голого» числового ID из кеша сессии.
+  if (normalizedUsername) {
     try {
-      return await client.getEntity(Number(normalizedId));
-    } catch (idError) {
-      if (!peerUsername) throw idError;
+      return await client.getEntity(normalizedUsername);
+    } catch (usernameError) {
+      if (!normalizedId) throw usernameError;
     }
   }
 
-  const normalizedUsername = String(peerUsername || '').trim().replace(/^@/, '');
-  if (normalizedUsername) return client.getEntity(normalizedUsername);
+  if (normalizedId && /^-?\d+$/.test(normalizedId)) {
+    try {
+      return await client.getEntity(Number(normalizedId));
+    } catch {
+      // Игнорируем: ниже попробуем найти сущность среди диалогов.
+    }
+  }
+
+  // Резервный способ: getEntity() по числовому ID иногда возвращает сущность
+  // с устаревшим/нулевым access_hash из кеша сессии — сам вызов не падает,
+  // но Telegram отвечает PEER_ID_INVALID при следующем запросе (например,
+  // folders.EditPeerFolders при архивации). В списке диалогов access_hash
+  // всегда актуальный, поэтому ищем сущность там.
+  if (normalizedId) {
+    const dialogs = await client.getDialogs({ limit: 200 });
+    const match = dialogs.find(
+      (d) => String(d.id) === normalizedId || String(d.entity?.id) === normalizedId,
+    );
+    if (match?.entity) return match.entity;
+  }
 
   throw new Error(`Не удалось найти Telegram-сущность по ID ${normalizedId || 'не указан'}`);
 }
