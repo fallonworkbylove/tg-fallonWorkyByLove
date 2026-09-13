@@ -115,11 +115,13 @@ async function resolveArchiveEntity(client, peerId, peerUsername) {
   const normalizedId = String(peerId || '').trim();
   const normalizedUsername = String(peerUsername || '').trim().replace(/^@/, '');
 
-  // Username даёт свежий access_hash напрямую от Telegram, поэтому пробуем
-  // его первым — он надёжнее «голого» числового ID из кеша сессии.
+  // folders.EditPeerFolders — «сырой» MTProto-запрос: ему нужен именно
+  // TypeInputPeer (InputPeerUser/Channel/Chat с access_hash), а не обычная
+  // сущность User/Channel из getEntity(). client.getInputEntity() возвращает
+  // корректный InputPeer и сам обновляет access_hash в кеше сессии.
   if (normalizedUsername) {
     try {
-      return await client.getEntity(normalizedUsername);
+      return await client.getInputEntity(normalizedUsername);
     } catch (usernameError) {
       if (!normalizedId) throw usernameError;
     }
@@ -127,23 +129,21 @@ async function resolveArchiveEntity(client, peerId, peerUsername) {
 
   if (normalizedId && /^-?\d+$/.test(normalizedId)) {
     try {
-      return await client.getEntity(Number(normalizedId));
+      return await client.getInputEntity(Number(normalizedId));
     } catch {
       // Игнорируем: ниже попробуем найти сущность среди диалогов.
     }
   }
 
-  // Резервный способ: getEntity() по числовому ID иногда возвращает сущность
-  // с устаревшим/нулевым access_hash из кеша сессии — сам вызов не падает,
-  // но Telegram отвечает PEER_ID_INVALID при следующем запросе (например,
-  // folders.EditPeerFolders при архивации). В списке диалогов access_hash
-  // всегда актуальный, поэтому ищем сущность там.
+  // Резервный способ: если ID не резолвится напрямую (устарел/отсутствует
+  // в кеше сессии), ищем ту же сущность среди актуальных диалогов — там
+  // access_hash точно свежий — и конвертируем её в InputPeer.
   if (normalizedId) {
     const dialogs = await client.getDialogs({ limit: 200 });
     const match = dialogs.find(
       (d) => String(d.id) === normalizedId || String(d.entity?.id) === normalizedId,
     );
-    if (match?.entity) return match.entity;
+    if (match?.entity) return client.getInputEntity(match.entity);
   }
 
   throw new Error(`Не удалось найти Telegram-сущность по ID ${normalizedId || 'не указан'}`);
