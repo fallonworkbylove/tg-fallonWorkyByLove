@@ -7,10 +7,15 @@
  * генерирует AI, чтобы звучало естественно в контексте конкретного диалога.
  */
 
+const fs = require('fs');
+const path = require('path');
 const db = require('../db');
 // require отложенный (внутри функции), а не на верхнем уровне: telegramClient.js
 // сам подключает objectionHandler.js при загрузке, поэтому обратный require здесь
 // в начале файла привёл бы к undefined из-за циклической зависимости модулей.
+// voiceReplies.js ни от telegramClient.js, ни от objectionHandler.js не зависит,
+// поэтому его можно require-ить сразу.
+const { sendVoiceReply, VOICES_DIR } = require('./voiceReplies');
 
 const OBJECTION_PATTERNS = [
   {
@@ -96,20 +101,47 @@ let schemaReady = null;
 
 async function ensureSchema() {
   if (schemaReady) return schemaReady;
-  schemaReady = db.execute(`
-    CREATE TABLE IF NOT EXISTS silence_pings (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      account_id INT NOT NULL,
-      peer_id VARCHAR(64) NOT NULL,
-      last_message_at DATETIME NOT NULL,
-      pinged_at DATETIME NOT NULL,
-      UNIQUE KEY uniq_account_peer_last (account_id, peer_id, last_message_at)
-    )
-  `);
+  schemaReady = Promise.all([
+    db.execute(`
+      CREATE TABLE IF NOT EXISTS silence_pings (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        account_id INT NOT NULL,
+        peer_id VARCHAR(64) NOT NULL,
+        last_message_at DATETIME NOT NULL,
+        pinged_at DATETIME NOT NULL,
+        UNIQUE KEY uniq_account_peer_last (account_id, peer_id, last_message_at)
+      )
+    `),
+    db.execute(`
+      CREATE TABLE IF NOT EXISTS silence_voice_reminders (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        account_id INT NOT NULL,
+        peer_id VARCHAR(64) NOT NULL,
+        last_message_at DATETIME NOT NULL,
+        stage TINYINT NOT NULL,
+        sent_at DATETIME NOT NULL,
+        UNIQUE KEY uniq_account_peer_stage_last (account_id, peer_id, stage, last_message_at)
+      )
+    `),
+  ]);
   return schemaReady;
 }
 
 const SILENCE_PINGS = ['привет, чё молчиш)', 'ау, ты живой?)', 'привет) ты пропал'];
+
+// Готовое голосовое «как проходит день» — отправляется, если собеседник не
+// отвечает на последнее сообщение бота. Только в первые 2 дня знакомства
+// (до старта NFT-кампании на 3-й день — см. NFT_VOICE_AFTER_HOURS в
+// telegramClient.js), чтобы не конфликтовать с NFT-голосовым и напоминаниями.
+const SILENCE_VOICE_FILE = 'kak_prohodit_den.ogg';
+// Возраст диалога, до которого действует это напоминание (первые 2 дня).
+const SILENCE_VOICE_MAX_DIALOG_AGE_HOURS = 48;
+// Стадии по часам молчания: первая через 2 часа, вторая — через 4, если
+// собеседник так и не ответил. Больше двух стадий на один период молчания нет.
+const SILENCE_VOICE_STAGES = [
+  { stage: 1, afterHours: 2 },
+  { stage: 2, afterHours: 4 },
+];
 
 async function resolveArchiveEntity(client, peerId, peerUsername) {
   const normalizedId = String(peerId || '').trim();
@@ -239,6 +271,103 @@ async function sendSilencePings({ getAccountSettings, isWithinWorkingHours, isAu
   }
 }
 
+/**
+ * Отправляет заготовленное голосовое «как проходит день», если собеседник не
+ * ответил на последнее сообщение бота 2 часа (стадия 1) или 4 часа (стадия 2).
+ * Работает только в первые 2 дня знакомства — с 3-го дня тему ведёт
+ * NFT-кампания (getNftCampaignState в telegramClient.js), и голосовые не
+ * должны пересекаться.
+ */
+async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHours, isAutoreplyDisabledForPeer, saveMessage }) {
+  const { getActiveClient } = require('./telegramClient');
+  const { Api } = require('telegram');
+  try {
+    await ensureSchema();
+    if (!isWithinWorkingHours()) return;
+
+    const voicePath = path.join(VOICES_DIR, SILENCE_VOICE_FILE);
+    if (!fs.existsSync(voicePath)) {
+      console.error(
+        `[objectionHandler] Файл ${SILENCE_VOICE_FILE} не найден в voices/ — голосовое напоминание о молчании не отправлено.`,
+      );
+      return;
+    }
+
+    const [rows] = await db.execute(`
+      SELECT
+        cm.account_id,
+        cm.peer_id,
+        cm.peer_username,
+        MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END) AS last_incoming_at,
+        MAX(cm.created_at) AS last_message_at,
+        MIN(cm.created_at) AS started_at
+      FROM conversation_messages cm
+      GROUP BY cm.account_id, cm.peer_id, cm.peer_username
+      HAVING last_message_at > COALESCE(last_incoming_at, '1970-01-01 00:00:00')
+        AND last_message_at <= (NOW() - INTERVAL 2 HOUR)
+        AND started_at >= (NOW() - INTERVAL ${SILENCE_VOICE_MAX_DIALOG_AGE_HOURS} HOUR)
+    `);
+
+    for (const row of rows) {
+      try {
+        if (await isAutoreplyDisabledForPeer(row.account_id, row.peer_id)) continue;
+
+        const settings = await getAccountSettings(row.account_id);
+        if (!settings || !settings.is_autoreply_enabled) continue;
+
+        const silenceHours = (Date.now() - new Date(row.last_message_at).getTime()) / (60 * 60 * 1000);
+
+        // Ищем от старшей стадии к младшей: если бот не работал долго и
+        // молчание уже перевалило за 4 часа, шлём сразу вторую стадию, а не
+        // догоняем пропущенную первую.
+        const due = [...SILENCE_VOICE_STAGES].reverse().find((s) => silenceHours >= s.afterHours);
+        if (!due) continue;
+
+        const [[already]] = await db.execute(
+          `SELECT id FROM silence_voice_reminders
+           WHERE account_id = ? AND peer_id = ? AND stage = ? AND last_message_at = ? LIMIT 1`,
+          [row.account_id, row.peer_id, due.stage, row.last_message_at],
+        );
+        if (already) continue;
+
+        const client = getActiveClient(row.account_id);
+        if (!client) continue;
+
+        const entity = await client.getEntity(row.peer_username || row.peer_id);
+
+        try {
+          await client.invoke(
+            new Api.messages.SetTyping({ peer: entity, action: new Api.SendMessageRecordAudioAction() }),
+          );
+        } catch (_) {
+          // Индикатор «записывает голосовое» не критичен.
+        }
+
+        await sendVoiceReply(client, entity, voicePath);
+        await saveMessage(row.account_id, row.peer_id, row.peer_username, 'assistant', `[голосовое: ${SILENCE_VOICE_FILE}]`);
+
+        await db.execute(
+          `INSERT INTO silence_voice_reminders (account_id, peer_id, last_message_at, stage, sent_at)
+           VALUES (?, ?, ?, ?, NOW())`,
+          [row.account_id, row.peer_id, row.last_message_at, due.stage],
+        );
+
+        console.log(
+          `[Аккаунт ${row.account_id}] Голосовое «как проходит день» (${due.afterHours}ч молчания) ` +
+            `отправлено ${row.peer_username || row.peer_id}.`,
+        );
+      } catch (err) {
+        console.error(
+          `[Аккаунт ${row.account_id}] Ошибка отправки голосового напоминания ${row.peer_username || row.peer_id}:`,
+          err.message,
+        );
+      }
+    }
+  } catch (err) {
+    console.error('[objectionHandler] Ошибка планировщика голосовых напоминаний о молчании:', err.message);
+  }
+}
+
 let schedulerStarted = false;
 
 /**
@@ -251,6 +380,7 @@ function startSilenceScheduler(deps) {
 
   const tick = () => {
     sendSilencePings(deps).catch((err) => console.error('[objectionHandler] silence tick error:', err.message));
+    sendSilenceVoiceReminders(deps).catch((err) => console.error('[objectionHandler] silence voice tick error:', err.message));
     archiveSilentDialogs(deps).catch((err) => console.error('[objectionHandler] archive tick error:', err.message));
   };
   tick();
