@@ -980,7 +980,7 @@ async function getSentMediaSet(accountId, peerId) {
 
 /**
  * В��бирает и отправляет случайное неотправленное медиа нужного типа из
- * медиа-чата аккаунта. Возвращает true, если медиа реаль��о ушло.
+ * медиа-чата аккаунта. Возвращает true, если медиа реа��ь��о ушло.
  */
 async function trySendMedia(
   client,
@@ -1819,6 +1819,13 @@ async function processBufferedMessages(
     // никогда не вставит токен <<PHOTO>>/<<VIDEO>>/<<CIRCLE>> без прямой просьбы.
     const mediaLink = mediaLinkEarly;
     const mediaEnabled = !!mediaLink && explicitMediaRequest;
+    // Собеседник явно просит фото/видео/кружок, но у аккаунта НЕ привязан
+    // медиа-чат — реального медиа для отправки нет вообще. Без этой подсказки
+    // модель раз за разом стелется вежливыми «щас поищу», «щас подожди»,
+    // «выбираю» — это выглядит подозрительно при повторных просьбах (см.
+    // жалобу собеседника «третий раз уже это пишешь»). Вместо стилки просим
+    // модель сразу дать твёрдую бытовую отговорку.
+    const noMediaExcuse = explicitMediaRequest && !mediaLink;
 
     // NFT-кампания: 1–2 день — мягкое упоминание темы, 3-й день — голосовое.
     const nft = await getNftCampaignState(accountId, peerId, history.length);
@@ -1848,6 +1855,7 @@ async function processBufferedMessages(
 
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
+      noMediaExcuse,
       campaignHint: nft.hint,
       learningSnippet,
       timeHint: timeInfo.hint,
@@ -2173,7 +2181,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 // ждёт ответа — СЛЕДОМ (вторым сообщением) отвечаем ему по теме.
 // ---------------------------------------------------------------------------
 
-// Варианты фраз (случайный выбор — чтобы не выглядело шаблонно).
+// Вариа��ты фраз (случайный выбор — чтобы не выглядело шаблонно).
 const NIGHT_GREETINGS = [
   'спокойной ночи)',
   'ладно, спать пора, споки',
