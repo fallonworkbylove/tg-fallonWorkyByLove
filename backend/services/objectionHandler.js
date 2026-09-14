@@ -293,6 +293,12 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
       return;
     }
 
+    // ВАЖНО: молчание считаем строго от last_incoming_at — последнего
+    // сообщения САМОГО СОБЕСЕДНИКА. last_message_at (последнее сообщение в
+    // диалоге вообще) сюда брать нельзя: он включает и собственные голосовые
+    // напоминания бота, из-за чего каждое отправленное напоминание сдвигало
+    // точку отсчёта тишины и вызывало бесконечный повтор каждые ~2 часа
+    // вместо ровно двух напоминаний (2ч и 4ч).
     const [rows] = await db.execute(`
       SELECT
         cm.account_id,
@@ -303,8 +309,9 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
         MIN(cm.created_at) AS started_at
       FROM conversation_messages cm
       GROUP BY cm.account_id, cm.peer_id, cm.peer_username
-      HAVING last_message_at > COALESCE(last_incoming_at, '1970-01-01 00:00:00')
-        AND last_message_at <= (NOW() - INTERVAL 2 HOUR)
+      HAVING last_incoming_at IS NOT NULL
+        AND last_message_at > last_incoming_at
+        AND last_incoming_at <= (NOW() - INTERVAL 2 HOUR)
         AND started_at >= (NOW() - INTERVAL ${SILENCE_VOICE_MAX_DIALOG_AGE_HOURS} HOUR)
     `);
 
@@ -315,7 +322,7 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
         const settings = await getAccountSettings(row.account_id);
         if (!settings || !settings.is_autoreply_enabled) continue;
 
-        const silenceHours = (Date.now() - new Date(row.last_message_at).getTime()) / (60 * 60 * 1000);
+        const silenceHours = (Date.now() - new Date(row.last_incoming_at).getTime()) / (60 * 60 * 1000);
 
         // Ищем от старшей стадии к младшей: если бот не работал долго и
         // молчание уже перевалило за 4 часа, шлём сразу вторую стадию, а не
@@ -323,10 +330,13 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
         const due = [...SILENCE_VOICE_STAGES].reverse().find((s) => silenceHours >= s.afterHours);
         if (!due) continue;
 
+        // Дедуп-ключ — last_incoming_at (не меняется, пока собеседник
+        // молчит), поэтому каждая стадия отправится максимум один раз за
+        // весь период тишины, а не при каждом тике планировщика.
         const [[already]] = await db.execute(
           `SELECT id FROM silence_voice_reminders
            WHERE account_id = ? AND peer_id = ? AND stage = ? AND last_message_at = ? LIMIT 1`,
-          [row.account_id, row.peer_id, due.stage, row.last_message_at],
+          [row.account_id, row.peer_id, due.stage, row.last_incoming_at],
         );
         if (already) continue;
 
@@ -346,10 +356,12 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
         await sendVoiceReply(client, entity, voicePath);
         await saveMessage(row.account_id, row.peer_id, row.peer_username, 'assistant', `[голосовое: ${SILENCE_VOICE_FILE}]`);
 
+        // В колонку last_message_at пишем именно last_incoming_at — это и
+        // есть дедуп-ключ, использованный в SELECT-проверке выше.
         await db.execute(
           `INSERT INTO silence_voice_reminders (account_id, peer_id, last_message_at, stage, sent_at)
            VALUES (?, ?, ?, ?, NOW())`,
-          [row.account_id, row.peer_id, row.last_message_at, due.stage],
+          [row.account_id, row.peer_id, row.last_incoming_at, due.stage],
         );
 
         console.log(
