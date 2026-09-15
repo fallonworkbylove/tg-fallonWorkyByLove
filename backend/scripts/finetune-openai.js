@@ -51,25 +51,18 @@ function buildClient() {
     console.error('Ошибка: OPENAI_API_KEY не задан ни в .env, ни в окружении.');
     process.exit(1);
   }
-  const baseURL = process.env.OPENAI_BASE_URL || undefined;
-  // ВАЖНО: если бот работает через SOCKS5-прокси (см. aiResponder.js,
-  // api.openai.com блокирует российские IP) — на машине, где запускается
-  // ЭТОТ скрипт, тоже нужен доступ к api.openai.com. Проще всего гонять
-  // fine-tuning с сервера/машины с прямым доступом (например, через VPN),
-  // либо задать HTTPS_PROXY/ALL_PROXY перед запуском — пакет `openai`
-  // сам их не подхватывает, поэтому при необходимости используйте
-  // `httpAgent` (см. aiResponder.js) через переменную OPENAI_PROXY_URL.
-  const kwargs = { apiKey };
-  if (baseURL) {
-    kwargs.baseURL = baseURL;
-    console.log(`[finetune] Базовый URL переопределён: ${baseURL}`);
-  }
-  if (process.env.OPENAI_PROXY_URL) {
-    const { SocksProxyAgent } = require('socks-proxy-agent');
-    kwargs.httpAgent = new SocksProxyAgent(process.env.OPENAI_PROXY_URL);
-    console.log('[finetune] Использую SOCKS5-прокси из OPENAI_PROXY_URL.');
-  }
-  return new OpenAI(kwargs);
+  // ВАЖНО: api.openai.com отдаёт 403 "Country, region, or territory not
+  // supported" на российских/СНГ IP. Сам бот уже это решает в
+  // aiResponder.js через SOCKS5-прокси из PROXY_LIST — переиспользуем ТОТ
+  // ЖЕ buildOpenAIOptions(), а не собираем клиент заново.
+  //
+  // Раньше здесь стоял `httpAgent: new SocksProxyAgent(...)`, но OpenAI SDK
+  // v6 использует глобальный fetch (undici) и обычный http.Agent молча
+  // игнорирует — запрос всё равно уходил напрямую и падал с тем же 403.
+  // aiResponder.buildOpenAIOptions() уже собирает правильный
+  // fetchOptions.dispatcher через пакет fetch-socks.
+  const { buildOpenAIOptions } = require('../services/aiResponder');
+  return new OpenAI(buildOpenAIOptions());
 }
 
 /** Быстрая локальная проверка формата перед отправкой — экономит время и
