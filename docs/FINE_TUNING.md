@@ -62,38 +62,40 @@ node scripts/export-finetune-dataset.js \
 
 ---
 
-## 2. Загрузка датасета и запуск fine-tuning (Python)
+## 2. Загрузка датасета и запуск fine-tuning (Node.js)
 
-Один раз установить зависимости:
-
-```bash
-pip install openai python-dotenv
-```
+Скрипт использует тот же пакет `openai`, что и сам бот (`aiResponder.js`) —
+никаких дополнительных зависимостей/языков ставить не нужно.
 
 Запуск (скрипт сам подхватит `OPENAI_API_KEY` из `backend/.env`):
 
 ```bash
-cd backend/scripts
-python3 finetune_openai.py \
-  --file ../../training-data/finetune-dataset.jsonl \
-  --base-model gpt-4o-mini-2024-07-18 \
-  --suffix vika-v1
+cd backend
+node scripts/finetune-openai.js \
+  --file=../training-data/finetune-dataset.jsonl \
+  --base-model=gpt-4o-mini-2024-07-18 \
+  --suffix=vika-v1
 ```
 
 Скрипт:
 1. локально проверяет формат `.jsonl` (чтобы не тратить деньги на кривой датасет);
-2. загружает файл через `client.files.create(purpose="fine-tune")`;
-3. создаёт задание `client.fine_tuning.jobs.create(...)`;
+2. загружает файл через `client.files.create({ purpose: 'fine-tune' })`;
+3. создаёт задание `client.fineTuning.jobs.create(...)`;
 4. опрашивает статус каждые 30 секунд и печатает прогресс обучения, пока задание не завершится.
 
 Если api.openai.com у вас блокируется по IP (как и у самого бота, см.
-комментарий в `aiResponder.js`) — запускайте скрипт с машины с доступом
-напрямую, либо задайте `ALL_PROXY=socks5://user:pass@host:port` перед
-запуском (подхватится автоматически).
+комментарий в `aiResponder.js`) — запускайте скрипт с машины с прямым
+доступом (например, через VPN), либо задайте `OPENAI_PROXY_URL=socks5://user:pass@host:port`
+в `.env` — скрипт подхватит его тем же способом, что и сам бот.
 
 Если не хочется ждать в терминале — флаг `--no-wait` создаст задание и
-сразу вернёт управление, статус можно посмотреть позже в
-[OpenAI Dashboard → Fine-tuning](https://platform.openai.com/finetune).
+сразу вернёт управление, статус можно проверить позже:
+
+```bash
+node scripts/finetune-openai.js --check=JOB_ID
+```
+
+...или в [OpenAI Dashboard → Fine-tuning](https://platform.openai.com/finetune).
 
 ---
 
@@ -172,7 +174,6 @@ node scripts/finetune-cost-report.js --days=7
 ## Краткий чек-лист
 
 1. `node scripts/export-finetune-dataset.js ...` → получить `.jsonl`.
-2. `pip install openai python-dotenv` (один раз).
-3. `python3 finetune_openai.py --file ...` → дождаться `model_id`.
-4. Вписать `OPENAI_MODEL=ft:...` в `backend/.env`, `pm2 restart all`.
-5. Через день-два — `node scripts/finetune-cost-report.js --days=2`, сверить расходы и `fell_back`.
+2. `node scripts/finetune-openai.js --file=... ` → дождаться `model_id`.
+3. Вписать `OPENAI_MODEL=ft:...` в `backend/.env`, `pm2 restart all`.
+4. Через день-два — `node scripts/finetune-cost-report.js --days=2`, сверить расходы и `fell_back`.
