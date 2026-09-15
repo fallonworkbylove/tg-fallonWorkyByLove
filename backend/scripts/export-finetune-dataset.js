@@ -92,7 +92,11 @@ function toJsonlLine(systemPrompt, triggerMsg, botReply) {
 
 async function main() {
   const args = parseArgs();
-  const outPath = path.resolve(__dirname, args.out || 'finetune-dataset.jsonl');
+  // Резолвим от текущей рабочей директории (там, откуда запущена команда),
+  // а не от папки скрипта — иначе тот же самый "../training-data/..." путь
+  // указывает на разные места в export-finetune-dataset.js и
+  // finetune-openai.js (последний резолвит от process.cwd()).
+  const outPath = path.resolve(process.cwd(), args.out || 'finetune-dataset.jsonl');
   const minUses = Number(args['min-uses'] ?? 3);
   const minRate = Number(args['min-rate'] ?? 0.7);
   const stage = args.stage || null;
@@ -128,7 +132,7 @@ async function main() {
   console.log(`[export-finetune-dataset] Записано ${lines.length} примеров из БД в ${outPath}`);
 
   if (args.merge) {
-    const mergePath = path.resolve(__dirname, args.merge);
+    const mergePath = path.resolve(process.cwd(), args.merge);
     if (!fs.existsSync(mergePath)) {
       console.error(`[export-finetune-dataset] Файл для merge не найден: ${mergePath}`);
       process.exit(1);
