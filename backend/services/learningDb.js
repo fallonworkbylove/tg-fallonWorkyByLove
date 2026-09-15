@@ -106,10 +106,19 @@ async function ensureTables() {
   `);
   // На случай, если таблица создавалась раньше без колонки stage.
   await addColumnIfMissing('bot_patterns', 'stage', "VARCHAR(32) NOT NULL DEFAULT 'general'");
+  // "Закреплённые" вручную примеры (см. pinPattern/scripts/pin-pattern.js) —
+  // всегда попадают в подсказку few-shot независимо от uses/success_rate,
+  // на случай, когда конкретная фраза явно хороша, но статистики по ней
+  // пока накопилось мало.
+  await addColumnIfMissing('bot_patterns', 'pinned', 'TINYINT(1) NOT NULL DEFAULT 0');
+  // Различает закреплённый "хороший" эталон (pinned_bad=0) от закреплённого
+  // "плохого" примера (pinned_bad=1) — плохой пример всегда показывается
+  // модели как "никогда не делай так", независимо от накопленной статистики.
+  await addColumnIfMissing('bot_patterns', 'pinned_bad', 'TINYINT(1) NOT NULL DEFAULT 0');
 
   // Новая версия таблицы: несколько "ожидающих оценки" записей на диалог
   // одновременно (id — обычный автоинкремент, без уникальности по
-  // account+peer), потому что пока одна запись донакапливает реакцию
+  // account+peer), пот��му что пока одна запись донакапливает реакцию
   // (REACTION_LOOKAHEAD сообщений), бот успевает ответить и создать
   // следующую. reaction_msgs хранит уже накопленные сообщения-реакции как
   // JSON-массив.
@@ -271,38 +280,100 @@ async function getPatternsByStage(stage, { direction, limit, minUses, rateThresh
     await tablesReady;
     const rateCondition = direction === 'best' ? 'success_rate >= ?' : 'success_rate <= ?';
     const rateOrder = direction === 'best' ? 'DESC' : 'ASC';
+    const wantedLimit = Number(limit) || 4;
+
+    // Закреплённые вручную примеры (pinned=1) всегда идут первыми и не
+    // фильтруются по uses/success_rate — они закреплены именно потому, что
+    // статистики может быть мало (или пример специально важен), а результат
+    // уже очевиден. pinned_bad различает закреплённый "хороший" эталон
+    // (используется в направлении best) от закреплённого "плохого" примера,
+    // который всегда должен показываться как "никогда так не делай"
+    // (используется в направлении worst).
+    const pinnedBadFlag = direction === 'best' ? 0 : 1;
+    const [pinned] = await db.execute(
+      `SELECT trigger_msg, bot_reply, success_rate, stage, pinned, pinned_bad
+       FROM bot_patterns
+       WHERE pinned = 1 AND pinned_bad = ?
+       ORDER BY updated_at DESC
+       LIMIT ${wantedLimit}`,
+      [pinnedBadFlag],
+    );
+    if (pinned.length >= wantedLimit) return pinned;
+    const remainingLimit = wantedLimit - pinned.length;
 
     // Сначала пробуем строго по текущему этапу; если примеров мало —
     // дополняем общими (stage не совпадает), чтобы подсказка не была пустой.
+    // Закреплённые записи исключаем из обычной выборки, чтобы не показать
+    // их дважды.
     const [staged] = await db.execute(
-      `SELECT trigger_msg, bot_reply, success_rate, stage,
+      `SELECT trigger_msg, bot_reply, success_rate, stage, pinned, pinned_bad,
               (CASE WHEN ? = 'best' THEN success_rate ELSE (1 - success_rate) END)
                 * POW(${RECENCY_DECAY}, DATEDIFF(NOW(), updated_at)) AS weight
        FROM bot_patterns
-       WHERE uses >= ? AND ${rateCondition} AND stage = ?
+       WHERE uses >= ? AND ${rateCondition} AND stage = ? AND pinned = 0
        ORDER BY weight DESC, uses DESC
-       LIMIT ${Number(limit) || 4}`,
+       LIMIT ${remainingLimit}`,
       [direction, minUses, rateThreshold, stage],
     );
-    if (staged.length >= limit) return staged;
+    if (pinned.length + staged.length >= wantedLimit) return [...pinned, ...staged];
 
     const [general] = await db.execute(
-      `SELECT trigger_msg, bot_reply, success_rate, stage,
+      `SELECT trigger_msg, bot_reply, success_rate, stage, pinned, pinned_bad,
               (CASE WHEN ? = 'best' THEN success_rate ELSE (1 - success_rate) END)
                 * POW(${RECENCY_DECAY}, DATEDIFF(NOW(), updated_at)) AS weight
        FROM bot_patterns
-       WHERE uses >= ? AND ${rateCondition} AND stage != ?
+       WHERE uses >= ? AND ${rateCondition} AND stage != ? AND pinned = 0
        ORDER BY weight DESC, uses DESC
-       LIMIT ${Number(limit) || 4}`,
+       LIMIT ${remainingLimit}`,
       [direction, minUses, rateThreshold, stage],
     );
 
-    const combined = [...staged, ...general].slice(0, Number(limit) || 4);
+    const combined = [...pinned, ...staged, ...general].slice(0, wantedLimit);
     return combined;
   } catch (err) {
     console.error(`[learningDb] Не удалось получить паттерны (${direction}):`, err.message);
     return [];
   }
+}
+
+/**
+ * Закрепляет паттерн (по подстроке в trigger_msg и/или bot_reply) так, чтобы
+ * он всегда попадал в подсказку few-shot, независимо от накопленной
+ * статистики. По умолчанию закрепляет как "хороший" эталон (success_rate
+ * принудительно = 1). С `bad: true` закрепляет как "плохой" пример
+ * (success_rate принудительно = 0) — он будет всегда показываться модели
+ * как "никогда так не делай", даже если статистики по нему пока мало.
+ * Используется скриптом scripts/pin-pattern.js.
+ */
+async function pinPattern({ triggerContains, replyContains, bad = false }) {
+  await tablesReady;
+  const conditions = [];
+  const params = [];
+  if (triggerContains) {
+    conditions.push('trigger_msg LIKE ?');
+    params.push(`%${triggerContains}%`);
+  }
+  if (replyContains) {
+    conditions.push('bot_reply LIKE ?');
+    params.push(`%${replyContains}%`);
+  }
+  if (!conditions.length) throw new Error('Нужно указать triggerContains и/или replyContains.');
+
+  const [rows] = await db.execute(
+    `SELECT id, trigger_msg, bot_reply FROM bot_patterns WHERE ${conditions.join(' AND ')}`,
+    params,
+  );
+  if (!rows.length) return { updated: 0, rows: [] };
+
+  const ids = rows.map((r) => r.id);
+  const forcedRate = bad ? 0 : 1;
+  await db.execute(
+    `UPDATE bot_patterns
+     SET pinned = 1, pinned_bad = ?, success_rate = ?, success_score = ? * uses, uses = GREATEST(uses, 2)
+     WHERE id IN (${ids.map(() => '?').join(',')})`,
+    [bad ? 1 : 0, forcedRate, forcedRate, ...ids],
+  );
+  return { updated: ids.length, rows, bad };
 }
 
 // Лимиты подняты с 4/3 до 6/4: чем больше живых примеров в промпте, тем
@@ -342,7 +413,13 @@ async function buildLearningSnippet(stage = 'general') {
     for (const p of good) {
       const trigger = (p.trigger_msg || '').slice(0, 150);
       const reply = (p.bot_reply || '').slice(0, 200);
-      snippet += `Собеседник: «${trigger}»\nТы (сработало, успех ${Math.round(p.success_rate * 100)}%): «${reply}»\n\n`;
+      // Закреплённые примеры (pinned=1) помечаются отдельно — это не
+      // статистический вывод из истории, а вручную подтверждённый эталон,
+      // ему нужно следовать даже строже обычных "сработавших" фраз.
+      const label = p.pinned
+        ? 'ВСЕГДА используй именно такую манеру в похожей ситуации'
+        : `сработало, успех ${Math.round(p.success_rate * 100)}%`;
+      snippet += `Собеседник: «${trigger}»\nТы (${label}): «${reply}»\n\n`;
     }
   }
 
@@ -351,11 +428,18 @@ async function buildLearningSnippet(stage = 'general') {
     for (const p of bad) {
       const trigger = (p.trigger_msg || '').slice(0, 150);
       const reply = (p.bot_reply || '').slice(0, 200);
-      snippet += `Собеседник: «${trigger}»\nНЕ говори так (провалилось, успех всего ${Math.round(p.success_rate * 100)}%): «${reply}»\n\n`;
+      // Закреплённые плохие примеры (pinned=1, pinned_bad=1) — это не
+      // статистический вывод, а вручную подтверждённый запрет: в похожей
+      // ситуации так отвечать нельзя категорически, а не просто "не
+      // рекомендуется".
+      const label = p.pinned
+        ? 'НИКОГДА не говори так в похожей ситуации — это точно провалит разговор'
+        : `провалилось, успех всего ${Math.round(p.success_rate * 100)}%`;
+      snippet += `Собеседник: «${trigger}»\nНЕ говори так (${label}): «${reply}»\n\n`;
     }
   }
 
-  snippet += 'ВАЖНО: если текущая реплика собеседника похожа по смыслу на один из примеров выше — ' +
+  snippet += 'ВАЖНО: если текущая реплика собеседн��ка похожа по смыслу на один из примеров выше — ' +
     'ориентируйся на реально сработавший стиль сильнее, чем на общие абстрактные инструкции про характер. ' +
     'Не копируй фразы дословно (собеседник другой, слова должны звучать естественно именно сейчас) — ' +
     'бери саму интонацию, длину и структуру реакции.\n';
@@ -371,4 +455,5 @@ module.exports = {
   buildLearningSnippet,
   getBestPatterns,
   getWorstPatterns,
+  pinPattern,
 };
