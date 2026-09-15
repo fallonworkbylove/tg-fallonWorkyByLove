@@ -106,6 +106,11 @@ async function ensureTables() {
   `);
   // На случай, если таблица создавалась раньше без колонки stage.
   await addColumnIfMissing('bot_patterns', 'stage', "VARCHAR(32) NOT NULL DEFAULT 'general'");
+  // "Закреплённые" вручную примеры (см. pinPattern/scripts/pin-pattern.js) —
+  // всегда попадают в подсказку few-shot независимо от uses/success_rate,
+  // на случай, когда конкретная фраза явно хороша, но статистики по ней
+  // пока накопилось мало.
+  await addColumnIfMissing('bot_patterns', 'pinned', 'TINYINT(1) NOT NULL DEFAULT 0');
 
   // Новая версия таблицы: несколько "ожидающих оценки" записей на диалог
   // одновременно (id — обычный автоинкремент, без уникальности по
@@ -271,38 +276,95 @@ async function getPatternsByStage(stage, { direction, limit, minUses, rateThresh
     await tablesReady;
     const rateCondition = direction === 'best' ? 'success_rate >= ?' : 'success_rate <= ?';
     const rateOrder = direction === 'best' ? 'DESC' : 'ASC';
+    const wantedLimit = Number(limit) || 4;
+
+    // Закреплённые вручную примеры (pinned=1) всегда идут первыми и не
+    // фильтруются по uses/success_rate — они закреплены именно потому, что
+    // статистики может быть мало, но результат уже очевиден. Действуют
+    // только для "хороших" примеров: закреплять "плохую" фразу нет смысла.
+    let pinned = [];
+    if (direction === 'best') {
+      const [pinnedRows] = await db.execute(
+        `SELECT trigger_msg, bot_reply, success_rate, stage, pinned
+         FROM bot_patterns
+         WHERE pinned = 1
+         ORDER BY updated_at DESC
+         LIMIT ${wantedLimit}`,
+      );
+      pinned = pinnedRows;
+    }
+    if (pinned.length >= wantedLimit) return pinned;
+    const remainingLimit = wantedLimit - pinned.length;
 
     // Сначала пробуем строго по текущему этапу; если примеров мало —
     // дополняем общими (stage не совпадает), чтобы подсказка не была пустой.
+    // Закреплённые записи исключаем из обычной выборки, чтобы не показать
+    // их дважды.
     const [staged] = await db.execute(
-      `SELECT trigger_msg, bot_reply, success_rate, stage,
+      `SELECT trigger_msg, bot_reply, success_rate, stage, pinned,
               (CASE WHEN ? = 'best' THEN success_rate ELSE (1 - success_rate) END)
                 * POW(${RECENCY_DECAY}, DATEDIFF(NOW(), updated_at)) AS weight
        FROM bot_patterns
-       WHERE uses >= ? AND ${rateCondition} AND stage = ?
+       WHERE uses >= ? AND ${rateCondition} AND stage = ? AND pinned = 0
        ORDER BY weight DESC, uses DESC
-       LIMIT ${Number(limit) || 4}`,
+       LIMIT ${remainingLimit}`,
       [direction, minUses, rateThreshold, stage],
     );
-    if (staged.length >= limit) return staged;
+    if (pinned.length + staged.length >= wantedLimit) return [...pinned, ...staged];
 
     const [general] = await db.execute(
-      `SELECT trigger_msg, bot_reply, success_rate, stage,
+      `SELECT trigger_msg, bot_reply, success_rate, stage, pinned,
               (CASE WHEN ? = 'best' THEN success_rate ELSE (1 - success_rate) END)
                 * POW(${RECENCY_DECAY}, DATEDIFF(NOW(), updated_at)) AS weight
        FROM bot_patterns
-       WHERE uses >= ? AND ${rateCondition} AND stage != ?
+       WHERE uses >= ? AND ${rateCondition} AND stage != ? AND pinned = 0
        ORDER BY weight DESC, uses DESC
-       LIMIT ${Number(limit) || 4}`,
+       LIMIT ${remainingLimit}`,
       [direction, minUses, rateThreshold, stage],
     );
 
-    const combined = [...staged, ...general].slice(0, Number(limit) || 4);
+    const combined = [...pinned, ...staged, ...general].slice(0, wantedLimit);
     return combined;
   } catch (err) {
     console.error(`[learningDb] Не удалось получить паттерны (${direction}):`, err.message);
     return [];
   }
+}
+
+/**
+ * Закрепляет паттерн (по подстроке в trigger_msg и/или bot_reply) так, чтобы
+ * он всегда попадал в подсказку few-shot как "хороший" пример, независимо от
+ * накопленной статистики. Успех при этом принудительно выставляется в 100%.
+ * Используется скриптом scripts/pin-pattern.js.
+ */
+async function pinPattern({ triggerContains, replyContains }) {
+  await tablesReady;
+  const conditions = [];
+  const params = [];
+  if (triggerContains) {
+    conditions.push('trigger_msg LIKE ?');
+    params.push(`%${triggerContains}%`);
+  }
+  if (replyContains) {
+    conditions.push('bot_reply LIKE ?');
+    params.push(`%${replyContains}%`);
+  }
+  if (!conditions.length) throw new Error('Нужно указать triggerContains и/или replyContains.');
+
+  const [rows] = await db.execute(
+    `SELECT id, trigger_msg, bot_reply FROM bot_patterns WHERE ${conditions.join(' AND ')}`,
+    params,
+  );
+  if (!rows.length) return { updated: 0, rows: [] };
+
+  const ids = rows.map((r) => r.id);
+  await db.execute(
+    `UPDATE bot_patterns
+     SET pinned = 1, success_rate = 1, success_score = uses, uses = GREATEST(uses, 2)
+     WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  );
+  return { updated: ids.length, rows };
 }
 
 // Лимиты подняты с 4/3 до 6/4: чем больше живых примеров в промпте, тем
@@ -342,7 +404,13 @@ async function buildLearningSnippet(stage = 'general') {
     for (const p of good) {
       const trigger = (p.trigger_msg || '').slice(0, 150);
       const reply = (p.bot_reply || '').slice(0, 200);
-      snippet += `Собеседник: «${trigger}»\nТы (сработало, успех ${Math.round(p.success_rate * 100)}%): «${reply}»\n\n`;
+      // Закреплённые примеры (pinned=1) помечаются отдельно — это не
+      // статистический вывод из истории, а вручную подтверждённый эталон,
+      // ему нужно следовать даже строже обычных "сработавших" фраз.
+      const label = p.pinned
+        ? 'ВСЕГДА используй именно такую манеру в похожей ситуации'
+        : `сработало, успех ${Math.round(p.success_rate * 100)}%`;
+      snippet += `Собеседник: «${trigger}»\nТы (${label}): «${reply}»\n\n`;
     }
   }
 
@@ -371,4 +439,5 @@ module.exports = {
   buildLearningSnippet,
   getBestPatterns,
   getWorstPatterns,
+  pinPattern,
 };
