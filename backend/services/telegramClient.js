@@ -307,7 +307,7 @@ const AGGREGATE_MAX_WAIT_MS = 45000;
 // Иногда бот, вместо того чтобы сразу ответить, ведёт себя как занятой человек:
 // молчит некоторое время (5–25 мин), а потом САМ пишет собеседнику вопрос
 // («что делаешь?»). Это делает поведение менее «ботским».
-// Состояние хранится ТОЛЬКО в памяти процесса: при рестарте таймеры теряю��ся —
+// Состояние хранится ТОЛЬКО в памяти процесса: при рестарте таймеры теряю���ся —
 // тогда непрочитанный ��иалог утром/через 5 мин подхватит обычный скан.
 // Ключ: `${accountId}:${peerId}` (тот же bufferKey) -> { timer, sender, senderName }.
 // ---------------------------------------------------------------------------
@@ -1365,7 +1365,7 @@ async function handleIncomingMessage(accountId, event) {
         wait,
       );
       console.log(
-        `[${accountLabel(accountId)}] +сообщение от ${senderName}, жду паузу (${existing.texts.length} в очереди).`,
+        `[${accountLabel(accountId)}] +соо��щение от ${senderName}, жду паузу (${existing.texts.length} в очереди).`,
       );
       return;
     }
@@ -1490,12 +1490,6 @@ async function fireReengage(accountId, peerId) {
   const mediaEnabled = false;
     const nft = await getNftCampaignState(accountId, peerId, history.length);
 
-    // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на
-    // предыдущи�� ответ бота (если она ещё не оценена), затем достаём лучшие
-    // фразы для подмешивания в промпт текущего ответа.
-    await learningDb.scoreAndLearn(accountId, peerId, text);
-    const learningSnippet = await learningDb.buildLearningSnippet();
-
     // Динамический тайм-менеджм��нт + Mood Engine + Memory Triggers +
     // обработка возражений/анти-детект — см. соответствующие модули.
     const timeInfo = timeStyle.getTimeStyle();
@@ -1507,6 +1501,14 @@ async function fireReengage(accountId, peerId) {
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const objectionHint = objectionHandler.detectHint(text);
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, text);
+
+    // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на
+    // предыдущие ответы бота (окно из нескольких сообщений — см.
+    // learningDb.js), затем достаём лучшие/худшие фразы ТОГО ЖЕ ЭТАПА
+    // диалога для подмешивания в промпт текущего ответа.
+    const learningStage = learningDb.detectStage({ objectionHint, nftHint: nft.hint, historyLength: history.length });
+    await learningDb.scoreAndLearn(accountId, peerId, text);
+    const learningSnippet = await learningDb.buildLearningSnippet(learningStage);
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
 
@@ -1551,7 +1553,7 @@ async function fireReengage(accountId, peerId) {
   await client.sendMessage(sender, { message: outText });
   lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
   await saveMessage(accountId, peerId, senderName, 'assistant', outText);
-      await learningDb.recordBotReply(accountId, peerId, text, outText);
+      await learningDb.recordBotReply(accountId, peerId, text, outText, learningStage);
       console.log(
         `[${accountLabel(accountId)}] Отложенный ответ для ${senderName}: "${outText}"`,
       );
@@ -1688,7 +1690,7 @@ async function processBufferedMessages(
     await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text, accountLabel(accountId));
 
     // После отправки голосового с просьбой о помощи автоответ для этого
-    // конкретного собеседника отключён — дальше в��дёт оператор вручную.
+    // конкретного собеседника отключён �� дальше в��дёт оператор вручную.
     if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) {
       console.log(
         `[${accountLabel(accountId)}] Автоответ отключён для ${senderName} после голосового с просьбой — пропускаю.`,
@@ -1875,12 +1877,6 @@ async function processBufferedMessages(
     // NFT-кампания: 1–2 день — мягкое упоминание темы, 3-й день — голосовое.
     const nft = await getNftCampaignState(accountId, peerId, history.length);
 
-    // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на
-    // предыдущий ответ бота (если она ещё не оценена), затем достаём лучшие
-    // фразы для подмешивания в промпт текущего ответа. См. learningDb.js.
-    await learningDb.scoreAndLearn(accountId, peerId, text);
-    const learningSnippet = await learningDb.buildLearningSnippet();
-
     // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем,
     // не согласился ли он именно этим сообщением (см. helpRequestNotifier.js).
     await helpRequestNotifier.checkConsent(accountId, peerId, senderName, settings.phone, text, accountLabel(accountId));
@@ -1896,6 +1892,14 @@ async function processBufferedMessages(
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const objectionHint = objectionHandler.detectHint(text);
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, contextualText);
+
+    // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на
+    // предыдущие ответы бота (окно из нескольких сообщений — см.
+    // learningDb.js), затем достаём лучшие/худшие фразы ТОГО ЖЕ ЭТАПА
+    // диалога для подмешивания в промпт текущего ответа.
+    const learningStage = learningDb.detectStage({ objectionHint, nftHint: nft.hint, historyLength: history.length });
+    await learningDb.scoreAndLearn(accountId, peerId, text);
+    const learningSnippet = await learningDb.buildLearningSnippet(learningStage);
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
 
@@ -1950,7 +1954,7 @@ async function processBufferedMessages(
   await client.sendMessage(sender, { message: outText });
   lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
   await saveMessage(accountId, peerId, senderName, 'assistant', outText);
-      await learningDb.recordBotReply(accountId, peerId, text, outText);
+      await learningDb.recordBotReply(accountId, peerId, text, outText, learningStage);
       console.log(`[${accountLabel(accountId)}] Ответ для ${senderName}: "${outText}"`);
     }
 
@@ -2302,7 +2306,7 @@ async function sendGreetings(accountId, kind) {
       // Только недавняя активность (��ы правда общалис��).
       if (!message.date || message.date < recentThreshold) continue;
 
-      // Есть ли непрочитанный вопрос (последнее сообщение — ИХ, входящее).
+      // Есть ли непрочитанный вопрос (после��нее сообщение — ИХ, входящее).
       const hasUnanswered = !message.out;
 
       // Ночью пишем «спокойной ночи» ТОЛЬКО тем, где последнее слово за нами
