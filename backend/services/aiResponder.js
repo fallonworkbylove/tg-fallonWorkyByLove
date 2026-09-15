@@ -1,5 +1,6 @@
 const OpenAI = require('openai');
 const { toFile } = require('openai');
+const { logUsage } = require('./finetuneUsage');
 
 // ---------------------------------------------------------------------------
 // ПРОКСИ для OpenAI.
@@ -65,7 +66,16 @@ module.exports.buildOpenAIOptions = buildOpenAIOptions;
 // Значение читается один раз при старте процесса и не меняется во время
 // работы бота — чтобы переключить модель, поменяй .env и перезапусти pm2.
 // Если переменная не задана вовсе — используется gpt-4o по умолчанию.
+//
+// Fine-tuning: после обучения (см. scripts/finetune_openai.py) сюда
+// достаточно вписать полученный id вида "ft:gpt-4o-mini-2024-07-18:org::abc123" —
+// весь остальной код ничего не знает о fine-tuning и работает как раньше.
 const CHAT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
+
+// Запасная модель — используется автоматически, если основная (например,
+// fine-tuned) вернёт ошибку (модель удалена/деактивирована/недоступна).
+// Без фолбэка бот полностью замолчит, если fine-tuned модель отключат.
+const FALLBACK_MODEL = process.env.OPENAI_MODEL_FALLBACK || 'gpt-4o-mini';
 
 // Отдельный клиент для ГОЛОСА (whisper) и ФОТО (vision). Freemodel обычно
 // НЕ поддерживает эти модели, поэтому если задан OPENAI_FALLBACK_KEY (ключ
@@ -136,7 +146,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'а не придумывай новый контекст. Не ссылайся на факт, которого нет в истории. ' +
     'Продолжай последнюю тему естественно; новую тему начинай только если текущая завершена. ' +
     'Если последнее сообщение относится к недавно присланному фото, изображению или медиа, это имеет приоритет над старыми темами. ' +
-    'Отвечай именно на вопрос о последнем изображении и не возвращайся к спорту, хобби или другой прежней теме, если собеседник её не поднял.';
+    'Отвечай именно на вопрос о последнем изображении и не возвраща��ся к спорту, хобби или другой прежней теме, если собеседник её не поднял.';
 
   // Определение настроения: перед ответом модель сама (без отдельного
   // запроса к API) считывает эмоциональный тон последнего сообщения
@@ -288,8 +298,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     `[v0] Запрос к модели: "${CHAT_MODEL}" | baseURL: ${process.env.OPENAI_BASE_URL || 'api.openai.com (по умолчанию)'}`,
   );
 
-  const completion = await openai.chat.completions.create({
-    model: CHAT_MODEL,
+  const requestOptions = {
     messages,
     // Технический потолок длины: даже если модель проигнорирует текстовое
     // правило про 1-2 предложения, ответ физически не может растянуться в
@@ -297,7 +306,32 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     // предложения с запасом.
     max_tokens: 120,
     temperature: 0.7,
-  });
+  };
+
+  let completion;
+  let usedModel = CHAT_MODEL;
+  let fellBack = false;
+  try {
+    completion = await openai.chat.completions.create({ ...requestOptions, model: CHAT_MODEL });
+  } catch (err) {
+    // Фолбэк: если основная модель (например, отключённая/удалённая
+    // fine-tuned версия) недоступна, не роняем ответ бота, а пробуем
+    // запасную модель. Срабатывает только когда CHAT_MODEL и FALLBACK_MODEL
+    // реально разные — иначе смысла в повторе нет.
+    if (CHAT_MODEL === FALLBACK_MODEL) throw err;
+    console.error(
+      `[openai] Модель "${CHAT_MODEL}" вернула ошибку (${err.message}), пробую запасную "${FALLBACK_MODEL}".`,
+    );
+    usedModel = FALLBACK_MODEL;
+    fellBack = true;
+    completion = await openai.chat.completions.create({ ...requestOptions, model: FALLBACK_MODEL });
+  }
+
+  // Учёт расходов: пишем реальные токены из ответа API в БД (см.
+  // services/finetuneUsage.js), чтобы можно было смотреть стоимость по
+  // модели/дням через scripts/finetune-cost-report.js. Не блокирует ответ
+  // бота при сбое логирования.
+  logUsage(usedModel, completion.usage, { fellBack }).catch(() => {});
 
   const rawText = completion.choices[0]?.message?.content?.trim() || '';
   return applyAntiDetectStyle(rawText);
