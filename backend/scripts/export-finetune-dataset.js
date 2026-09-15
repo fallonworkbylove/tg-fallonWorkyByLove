@@ -64,14 +64,18 @@ async function fetchGoodPatterns({ minUses, minRate, stage, limit }) {
     conditions.push('stage = ?');
     params.push(stage);
   }
+  // LIMIT нельзя биндить через execute() (подготовленные запросы) — MySQL/MariaDB
+  // в некоторых версиях отвечает "Incorrect arguments to mysqld_stmt_execute" на
+  // параметризованный LIMIT. Подставляем безопасно провалидированное целое число
+  // напрямую в текст запроса (никакого пользовательского ввода здесь нет).
+  const safeLimit = Number.isFinite(Number(limit)) ? Math.max(1, Math.trunc(Number(limit))) : 2000;
   const sql = `
     SELECT trigger_msg, bot_reply, uses, success_rate, stage
     FROM bot_patterns
     WHERE ${conditions.join(' AND ')}
     ORDER BY success_rate DESC, uses DESC
-    LIMIT ?
+    LIMIT ${safeLimit}
   `;
-  params.push(Number(limit));
   const [rows] = await db.execute(sql, params);
   return rows;
 }
