@@ -40,10 +40,11 @@ const {
 } = require('./mediaReplies');
 const { isPhotoRecognitionDisabled } = require('./photoRecognitionSettings');
  const helpRequestNotifier = require('./helpRequestNotifier');
- const timeStyle = require('./timeStyle');
- const moodEngine = require('./moodEngine');
- const memoryTriggers = require('./memoryTriggers');
- const objectionHandler = require('./objectionHandler');
+const timeStyle = require('./timeStyle');
+const moodEngine = require('./moodEngine');
+const memoryTriggers = require('./memoryTriggers');
+const objectionHandler = require('./objectionHandler');
+const complimentEngine = require('./complimentEngine');
 
 // Сколько последних сообщений диалога передавать модели как контекст.
 // Было 10 (всего 5 обменов) — бот забывал, о чём уже спрашивал, и мог
@@ -307,7 +308,7 @@ const AGGREGATE_MAX_WAIT_MS = 45000;
 // молчит некоторое время (10–60 мин), а потом САМ пишет собеседнику вопрос
 // («что делаешь?»). Это делает поведение менее «ботским».
 // Состояние хранится ТОЛЬКО в памяти процесса: при рестарте таймеры теряются —
-// тогда непрочитанный диалог утром/через 5 мин подхватит обычный скан.
+// тогда непрочитанный ��иалог утром/через 5 мин подхватит обычный скан.
 // Ключ: `${accountId}:${peerId}` (тот же bufferKey) -> { timer, sender, senderName }.
 // ---------------------------------------------------------------------------
 const deferredDialogs = new Map();
@@ -505,7 +506,7 @@ async function activateAccount(accountId, sessionString) {
         new NewMessage({ incoming: true }),
       );
 
-      // Фоном «дочитываем» непрочитанные диалоги, пришедшие пока аккаунт был
+      // Фоном «дочитываем» непрочитанные диалоги, пришедшие пока аккау��т был
       // offline (minAgeSec=0 — live-обработчик их всё равно не видел).
       scanUnansweredDialogs(accountId, 0).catch((e) =>
         console.error(
@@ -1087,7 +1088,7 @@ const HOWLONG_PLATFORMS = ['дс', 'сз', 'дайвинчике'];
 function buildHowLongQuestion() {
   const place =
     HOWLONG_PLATFORMS[Math.floor(Math.random() * HOWLONG_PLATFORMS.length)];
-  return `слушай, а ты давно тут сидишь, на ${place}? сколько уже примерно?`;
+  return `слушай, а ты давно тут си��ишь, на ${place}? сколько уже примерно?`;
 }
 
 // После скольких сообщений собеседника задавать вопрос.
@@ -1416,7 +1417,7 @@ async function flushMessageBuffer(accountId, peerId, senderName) {
 /**
  * Планирует «занятость»: бот молчит случайные 10–60 минут, а потом всё равно
  * ОТВЕЧАЕТ ПО СУЩЕСТВУ на то сообщение, из-за которого сработала пауза —
- * прост�� с большой естественной за��ержкой, как будто был занят делами.
+ * прост�� с большой естественной за��ержкой, как будто был занят д��лами.
  * Раньше здесь отправлялась шаблонная фраза («что делаешь?», «ты тут?») —
  * это приводило к тому, что реальный вопрос собеседника оставался б��з ответа.
  * Если пауза для этого диалога уже идёт — второй раз не планируем.
@@ -1505,6 +1506,7 @@ async function fireReengage(accountId, peerId) {
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, text);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const objectionHint = objectionHandler.detectHint(text);
+    const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, text);
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
 
@@ -1516,6 +1518,7 @@ async function fireReengage(accountId, peerId) {
       moodHint: moodInfo.hint,
       memoryHint: dueMemory?.hint,
       objectionHint,
+      complimentHint,
     });
     if (!rawReply) return;
     if (dueMemory) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
@@ -1892,6 +1895,7 @@ async function processBufferedMessages(
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, contextualText);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const objectionHint = objectionHandler.detectHint(text);
+    const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, contextualText);
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
 
@@ -1904,6 +1908,7 @@ async function processBufferedMessages(
       moodHint: moodInfo.hint,
       memoryHint: dueMemory?.hint,
       objectionHint,
+      complimentHint,
     });
     if (!rawReply) return;
     if (dueMemory) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
@@ -2164,7 +2169,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
       // Если по диалогу ��дёт «пауза занятости» — не отвечаем, ждём таймер.
       if (deferredDialogs.has(bufferKey(accountId, peerId))) continue;
-      // Если диалог УЖЕ обрабатывается (live-обработчик внутри своей паузы
+      // Если диалог УЖЕ обрабатывается (live-обработчик внутр�� своей паузы
       // перед ответом) — не запускаем вторую генерацию ответа параллельно.
       if (processingInFlight.has(bufferKey(accountId, peerId))) continue;
 
