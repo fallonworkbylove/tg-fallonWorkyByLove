@@ -147,10 +147,46 @@ function parseProxyEntry(raw) {
   return null;
 }
 
+// Файловый способ задать список прокси — удобен, когда прокси часто меняются
+// или их список большой (не нужно перезаписывать .env и перезапускать env
+// вручную каждый раз, достаточно поправить файл и перезапустить процесс).
+// Путь можно переопределить в .env через PROXY_FILE, по умолчанию:
+//   backend/config/proxies.txt
+// Формат файла — одна запись прокси на строку, тот же синтаксис, что и в
+// PROXY_LIST (без "точки с запятой" — разделитель здесь просто перевод строки):
+//   mtproxy:1.2.3.4:443:ee00aa...
+//   socks5:9.9.9.9:1080:user:pass
+// Строки, начинающиеся с "#", и пустые строки игнорируются (можно комментировать).
+const DEFAULT_PROXY_FILE = path.join(__dirname, '..', 'config', 'proxies.txt');
+
+function readProxyFile() {
+  const filePath = process.env.PROXY_FILE
+    ? path.resolve(process.env.PROXY_FILE)
+    : DEFAULT_PROXY_FILE;
+
+  if (!fs.existsSync(filePath)) return [];
+
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    console.warn(`[proxy] Не удалось прочитать файл прокси ${filePath}: ${err.message}`);
+    return [];
+  }
+
+  const entries = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
+
+  console.log(`[proxy] Файл ${filePath}: найдено ${entries.length} записей.`);
+  return entries;
+}
+
 function buildProxyPool() {
   const pool = [];
 
-  // Новый формат: список
+  // Новый формат: список в .env
   if (process.env.PROXY_LIST) {
     for (const raw of process.env.PROXY_LIST.split(';')) {
       const entry = raw.trim();
@@ -158,6 +194,12 @@ function buildProxyPool() {
       const parsed = parseProxyEntry(entry);
       if (parsed) pool.push(parsed);
     }
+  }
+
+  // Файловый способ — записи из PROXY_FILE (или config/proxies.txt по умолчанию).
+  for (const entry of readProxyFile()) {
+    const parsed = parseProxyEntry(entry);
+    if (parsed) pool.push(parsed);
   }
 
   // Старый формат: одиночный прокси (для обратной совместимости)
@@ -179,7 +221,7 @@ function buildProxyPool() {
 
 const PROXY_POOL = buildProxyPool();
 
-// Индекс текущего рабочег���������������� прокси. Начинаем с найденного при старте.
+// Индекс текущего рабочег������������������ прокси. Начинаем с найденного при старте.
 let currentProxyIndex = 0;
 
 function proxyLabel(p) {
@@ -693,7 +735,7 @@ async function isPeerArchived(client, inputPeer) {
     return dialog.folderId === 1;
   } catch (err) {
     console.error(
-      'Не удалось опре��елить папку диалога — ответ заблокирован для безопасно��ти:',
+      'Не удалось опре��елить папку диалога — ответ заблокирован для безопа��но��ти:',
       err.errorMessage || err.message,
     );
     return true;
@@ -859,7 +901,7 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
   // С третьего дня: пора просить помощи с токеном голосовым. В первые два дня
   // NFT-голосовое не отправляется. После отправки
   // голосового бот полностью замолкает на этом собеседнике (автоответ
-  // о��ключаетс�� через disableAutoreplyForPeer) и оператору приходит
+  // о��к��ючаетс�� через disableAutoreplyForPeer) и оператору приходит
   // уведомление о том, что голосовое отправлено — дальше ведёт живой человек.
   if (ageHours >= NFT_VOICE_AFTER_HOURS) {
     const voiceAlreadySent = await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE);
@@ -980,7 +1022,7 @@ async function getSentMediaSet(accountId, peerId) {
 
 /**
  * В��бирает и отправляет случайное неотправленное медиа нужного типа из
- * медиа-чата аккаунта. Возвращает true, если медиа реа��ь��о ушло.
+ * медиа-чата аккаунта. Возвращает true, если медиа реа����ь��о ушло.
  */
 async function trySendMedia(
   client,
@@ -1200,7 +1242,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
   // 1. Обычный текст (или по��пись отсутствует у медиа).
   const rawText = message.message || '';
 
-  // 2. Голосовое или ауди�� — скачиваем и расшифровываем через Whisper.
+  // 2. Голо��овое или ауди�� — скачиваем и расшифровываем через Whisper.
   if (message.voice || message.audio) {
     const client = getActiveClient(accountId);
     if (!client) return rawText;
@@ -1692,7 +1734,7 @@ async function processBufferedMessages(
       );
     }
 
-    // Дальше все классификаторы и AI используют сообщение вместе с цитатой.
+    // Дальше в��е классификаторы и AI используют сообщение вместе с цитатой.
     text = contextualText;
     console.log(`[${accountLabel(accountId)}] ${senderName}: "${text}"`);
 
@@ -1876,7 +1918,7 @@ async function processBufferedMessages(
     let mediaType = rawMediaType;
     if (mediaType && !explicitMediaRequest && lastAssistantWasMedia(history)) {
       console.log(
-        `[${accountLabel(accountId)}] Подавил повторное медиа (${mediaType}) для ${senderName}: прошлый ответ уже был медиа, явной просьбы нет.`,
+        `[${accountLabel(accountId)}] Подавил повторное медиа (${mediaType}) для ${senderName}: прошлый ответ уже был медиа, явной просьбы н��т.`,
       );
       mediaType = null;
     }
