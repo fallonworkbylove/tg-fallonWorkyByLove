@@ -188,7 +188,7 @@ async function sendDuePhotos() {
       // является идентификатором и может совпадать у нескольких пользователей.
       const entity = await resolvePeerEntity(client, row.peer_id, row.peer_username);
 
-      // Архивные диалоги не получают готовые ежедневные фотографии.
+      // Архивные диалоги не ��олучают готовые ежедневные фотографии.
       if (await isPeerArchived(client, entity)) {
         await db.execute(
           'UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?',
@@ -251,7 +251,7 @@ async function resolvePeerEntity(client, peerId, peerUsername) {
   const normalizedUsername = String(peerUsername || '').trim().replace(/^@/, '');
   if (normalizedUsername) return client.getEntity(normalizedUsername);
 
-  throw new Error(`Не удалось найти Telegram-сущ��ость по ID ${normalizedId || 'не указан'}`);
+  throw new Error(`Не удалось найти Telegram-сущность по ID ${normalizedId || 'не указан'}`);
 }
 
 const PERMANENT_SEND_ERROR_CODES = [
