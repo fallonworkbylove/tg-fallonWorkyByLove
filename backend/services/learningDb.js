@@ -305,11 +305,17 @@ async function getPatternsByStage(stage, { direction, limit, minUses, rateThresh
   }
 }
 
-async function getBestPatterns(limit = 4, minUses = 2, minRate = 0.6, stage = 'general') {
+// Лимиты подняты с 4/3 до 6/4: чем больше живых примеров в промпте, тем
+// сильнее модель ориентируется на реально сработавший стиль, а не только на
+// абстрактное текстовое описание характера. minRate для хороших примеров
+// слегка снижен (0.6 -> 0.55), потому что при небольшом объёме накопленной
+// статистики (мало диалогов) строгий порог 0.6 отсекал почти всё и подсказка
+// часто была пустой.
+async function getBestPatterns(limit = 6, minUses = 2, minRate = 0.55, stage = 'general') {
   return getPatternsByStage(stage, { direction: 'best', limit, minUses, rateThreshold: minRate });
 }
 
-async function getWorstPatterns(limit = 3, minUses = 2, maxRate = 0.35, stage = 'general') {
+async function getWorstPatterns(limit = 4, minUses = 2, maxRate = 0.35, stage = 'general') {
   return getPatternsByStage(stage, { direction: 'worst', limit, minUses, rateThreshold: maxRate });
 }
 
@@ -321,30 +327,38 @@ async function getWorstPatterns(limit = 3, minUses = 2, maxRate = 0.35, stage = 
  */
 async function buildLearningSnippet(stage = 'general') {
   if (!LEARNING_ENABLED) return '';
-  const [good, bad] = await Promise.all([getBestPatterns(4, 2, 0.6, stage), getWorstPatterns(3, 2, 0.35, stage)]);
+  const [good, bad] = await Promise.all([getBestPatterns(6, 2, 0.55, stage), getWorstPatterns(4, 2, 0.35, stage)]);
   if (!good.length && !bad.length) return '';
 
-  let snippet = '\n\n=== ОБУЧЕНИЕ НА ПРОШЛОМ ОПЫТЕ ===\n';
+  let snippet = '\n\n=== ОБУЧЕНИЕ НА ПРОШЛОМ ОПЫТЕ (это не гипотеза, это реально сработавшие диалоги) ===\n';
 
   if (good.length) {
-    snippet += 'Примеры фраз, которые хорошо сработали в похожих ситуациях в других диалогах:\n';
+    // Формат "Собеседник: ... / Вика: ..." оформлен как настоящий диалог, а
+    // не как абстрактное описание "хорошо сработал ответ" — модели заметно
+    // сильнее следуют примеру, поданному в форме реального обмена
+    // репликами, чем текстовому пересказу о том, что сработало.
+    snippet += 'РЕАЛЬНЫЕ примеры из других диалогов, где твой ответ дал хорошую реакцию собеседника ' +
+      '(отсортированы от самых надёжных — используй именно эту манеру речи и реакции как эталон):\n';
     for (const p of good) {
       const trigger = (p.trigger_msg || '').slice(0, 150);
       const reply = (p.bot_reply || '').slice(0, 200);
-      snippet += `— Если собеседник пишет что-то в духе «${trigger}», хорошо сработал ответ: «${reply}» (успех: ${Math.round(p.success_rate * 100)}%)\n`;
+      snippet += `Собеседник: «${trigger}»\nТы (сработало, успех ${Math.round(p.success_rate * 100)}%): «${reply}»\n\n`;
     }
   }
 
   if (bad.length) {
-    snippet += 'Примеры фраз, которые ПЛОХО сработали — не повторяй их и избегай похожего подхода:\n';
+    snippet += 'А вот эти похожие по смыслу ответы дали ХОЛОДНУЮ/плохую реакцию — не повторяй сам подход, интонацию или формулировку:\n';
     for (const p of bad) {
       const trigger = (p.trigger_msg || '').slice(0, 150);
       const reply = (p.bot_reply || '').slice(0, 200);
-      snippet += `— На «${trigger}» ответ «${reply}» вызвал холодную/плохую реакцию (успех всего: ${Math.round(p.success_rate * 100)}%)\n`;
+      snippet += `Собеседник: «${trigger}»\nНЕ говори так (провалилось, успех всего ${Math.round(p.success_rate * 100)}%): «${reply}»\n\n`;
     }
   }
 
-  snippet += 'Не копируй примеры дословно — адаптируй саму идею (или, для плохих примеров, сам избегаемый подход) под текущий диалог и характер персонажа.\n';
+  snippet += 'ВАЖНО: если текущая реплика собеседника похожа по смыслу на один из примеров выше — ' +
+    'ориентируйся на реально сработавший стиль сильнее, чем на общие абстрактные инструкции про характер. ' +
+    'Не копируй фразы дословно (собеседник другой, слова должны звучать естественно именно сейчас) — ' +
+    'бери саму интонацию, длину и структуру реакции.\n';
   return snippet;
 }
 
