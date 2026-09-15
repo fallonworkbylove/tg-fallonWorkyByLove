@@ -15,11 +15,16 @@ router.get("/", async (req, res) => {
       [getUserId(req)]
     );
 
+    // Считаем сообщения из реальной таблицы истории переписок
+    // (conversation_messages), а не из несуществующей "dialogs" —
+    // раньше запрос падал на отсутствующей таблице и /api/stats
+    // всегда отвечал 500.
     const [messageRows] = await db.execute(
       `
       SELECT COUNT(*) AS total
-      FROM dialogs
-      WHERE user_id = ?
+      FROM conversation_messages cm
+      JOIN accounts a ON a.id = cm.account_id
+      WHERE a.user_id = ?
       `,
       [getUserId(req)]
     );
@@ -47,9 +52,9 @@ router.get("/", async (req, res) => {
       SELECT 
         a.id,
         a.phone,
-        COUNT(d.id) AS messages
+        COUNT(cm.id) AS messages
       FROM accounts a
-      LEFT JOIN dialogs d ON d.account_id = a.id
+      LEFT JOIN conversation_messages cm ON cm.account_id = a.id
       WHERE a.user_id = ?
       GROUP BY a.id, a.phone
       ORDER BY messages DESC

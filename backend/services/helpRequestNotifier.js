@@ -274,7 +274,7 @@ async function aiDetectAgreement(message) {
 
 /**
  * Проверяет входящее сообщение собеседника на согласие помочь, если для этой
- * пары аккаунт+собеседник есть ��ткрытое ("pending") голосовое-просьба.
+ * пары аккаунт+собеседник есть открытое ("pending") голосовое-просьба.
  * При обнаружении согласия — уведомляет операторов и закрывает окно.
  * Ничего не бросает наружу: ошибки только логируются, чтобы не мешать
  * основной генерации ответа бота.
@@ -436,7 +436,7 @@ async function handleUpdate(update) {
     };
     if (MINIAPP_URL) {
       payload.reply_markup = {
-        inline_keyboard: [[{ text: 'Откры��ь приложение', web_app: { url: MINIAPP_URL } }]],
+        inline_keyboard: [[{ text: 'Открыть приложение', web_app: { url: MINIAPP_URL } }]],
       };
     }
     await fetch(`${TELEGRAM_API}/sendMessage`, {
@@ -477,7 +477,7 @@ async function pollOnce() {
  */
 function startNotificationBot() {
   if (!TELEGRAM_API) {
-    console.log('[helpRequestNotifier] BOT_TOKEN_2 не задан — бот-уведомитель не запущен.');
+    console.log('[helpRequestNotifier] BOT_TOKEN не задан — бот-уведомитель не запущен.');
     return;
   }
   if (pollingActive) return;

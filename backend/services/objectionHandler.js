@@ -150,7 +150,7 @@ async function resolveArchiveEntity(client, peerId, peerUsername) {
   // folders.EditPeerFolders — «сырой» MTProto-запрос: ему нужен именно
   // TypeInputPeer (InputPeerUser/Channel/Chat с access_hash), а не обычная
   // сущность User/Channel из getEntity(). client.getInputEntity() возвращает
-  // корре��тный InputPeer и сам обновляет access_hash в кеше сессии.
+  // корректный InputPeer и сам обновляет access_hash в кеше сессии.
   if (normalizedUsername) {
     try {
       return await client.getInputEntity(normalizedUsername);
@@ -293,7 +293,7 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
       return;
     }
 
-    // ВАЖНО: молчание считаем строго от last_incoming_at — последнего
+    // ВАЖНО: молчание считаем с��рого от last_incoming_at — последнего
     // сообщения САМОГО СОБЕСЕДНИКА. last_message_at (последнее сообщение в
     // диалоге вообще) сюда брать нельзя: он включает и собственные голосовые
     // напоминания бота, из-за чего каждое отправленное напоминание сдвигало
