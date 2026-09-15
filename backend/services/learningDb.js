@@ -9,20 +9,24 @@ const { buildOpenAIOptions } = require('./aiResponder');
 // Идея (упрощённая версия python-примера с реальным fine-tuning модели):
 // вместо того чтобы дообучать саму модель (дорого, и OpenAI больше не даёт
 // fine-tuning новым аккаунтам), мы копим статистику "какие фразы бота
-// хорошо/плохо сработали" и подмешиваем ЛУЧШИЕ примеры прямо в системный
-// промпт перед каждым ответом. Модель остаётся стандартной (gpt-4o-mini/
-// gpt-4o) — никакой доплаты за инференс, только 1 короткий доп. запрос на
-// оценку реакции собеседника.
+// хорошо/плохо сработали" и подмешиваем ЛУЧШИЕ (и худшие — чтобы не
+// повторять ошибки) примеры прямо в системный промпт перед каждым ответом.
+// Модель остаётся стандартной (gpt-4o-mini/gpt-4o) — никакой доплаты за
+// инференс, только 1 короткий доп. запрос на оценку реакции собеседника.
 //
 // Цикл работы:
-//   1. Бот отвечает -> recordBotReply() запоминает пару (что сказал
-//      собеседник -> что ответил бот) как "ожидающую оценки".
-//   2. Собеседник пишет следующее сообщение -> scoreAndLearn() смотрит на
-//      это сообщение как на РЕАКЦИЮ на предыдущий ответ бота, просит
-//      gpt-4o-mini оценить её (good/neutral/bad) и обновляет рейтинг фразы.
+//   1. Бот отвечает -> recordBotReply() создаёт НОВУЮ запись "ожидающую
+//      оценки" (можно накопить несколько таких записей на один диалог —
+//      см. ниже, почему).
+//   2. Собеседник пишет сообщения после ответа бота -> scoreAndLearn()
+//      подкладывает каждое новое сообщение как очередной фрагмент РЕАКЦИИ.
+//      Оценка выполняется не по одному сообщению, а по ОКНУ из
+//      REACTION_LOOKAHEAD сообщений подряд — так короткое "хм" перед тем,
+//      как человек согласился, не портит рейтинг удачной фразы.
 //   3. При каждой генерации нового ответа buildLearningSnippet() достаёт
-//      несколько лучших фраз (по всем аккаунтам сразу — обучение общее) и
-//      добавляет их в промпт как примеры удачных ответов.
+//      несколько лучших И несколько худших фраз (по всем аккаунтам сразу —
+//      обучение общее), с приоритетом на: (а) тот же этап диалога, что и
+//      сейчас, (б) более свежую статистику.
 //
 // Обучение общее для всех профилей: bot_patterns не хранит account_id,
 // поэтому удачная фраза с одного аккаунта подсказывает всем остальным.
@@ -36,6 +40,54 @@ const LEARNING_ENABLED = process.env.LEARNING_ENABLED !== '0' && process.env.LEA
 // supported (api.openai.com блокирует российские IP).
 const scorerClient = new OpenAI(buildOpenAIOptions());
 
+// Сколько сообщений собеседника подряд после ответа бота учитывается как
+// "реакция", прежде чем она получает финальную оценку. 2 — по данным
+// переписок, реакция часто раскрывается не в первом же сообщении (сначала
+// настороженное "хм", а через сообщение — реальное согласие).
+const REACTION_LOOKAHEAD = 2;
+// Если собеседник написал только 1 сообщение и затем надолго замолчал —
+// не держим строку вечно: форсируем оценку по накопленному, если строка
+// старше этого возраста.
+const PENDING_MAX_AGE_HOURS = 6;
+
+// Коэффициент экспоненциального затухания веса паттерна по возрасту:
+// weight = success_rate * RECENCY_DECAY ^ (дней с последнего обновления).
+// 0.985 => через 30 дней вес ~65% от исходного, через 90 дней ~24%.
+// Не отбрасывает старые фразы совсем, но естественно смещает приоритет к
+// более свежим (стиль переписки и трендовые фразы меняются со временем).
+const RECENCY_DECAY = 0.985;
+
+// Этапы диалога — используются, чтобы подсказки были в тему момента, а не
+// случайным успешным примером из совершенно другой ситуации.
+const STAGES = ['early_chat', 'objection_handling', 'nft_pitch', 'general'];
+
+/**
+ * Определяет текущий этап диалога по контексту, который уже собран в
+ * telegramClient.js перед генерацией ответа. Приоритет: возражение важнее
+ * NFT-подводки (если человек одновременно возражает и в разгаре кампании),
+ * а ранний этап знакомства актуален только пока не всплыло ничего другое.
+ */
+function detectStage({ objectionHint, nftHint, historyLength } = {}) {
+  if (objectionHint) return 'objection_handling';
+  if (nftHint) return 'nft_pitch';
+  if (typeof historyLength === 'number' && historyLength <= 6) return 'early_chat';
+  return 'general';
+}
+
+async function columnExists(table, column) {
+  const [rows] = await db.execute(
+    `SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1`,
+    [table, column],
+  );
+  return rows.length > 0;
+}
+
+async function addColumnIfMissing(table, column, definition) {
+  if (await columnExists(table, column)) return;
+  await db.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
 async function ensureTables() {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS bot_patterns (
@@ -46,28 +98,38 @@ async function ensureTables() {
       uses INT NOT NULL DEFAULT 0,
       success_score FLOAT NOT NULL DEFAULT 0,
       success_rate FLOAT NOT NULL DEFAULT 0,
+      stage VARCHAR(32) NOT NULL DEFAULT 'general',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uniq_reply_hash (bot_reply_hash)
     )
   `);
+  // На случай, если таблица создавалась раньше без колонки stage.
+  await addColumnIfMissing('bot_patterns', 'stage', "VARCHAR(32) NOT NULL DEFAULT 'general'");
 
-  // Одна "ожидающая оценки" пара на диалог (account_id + peer_id) — новая
-  // всегда перезатирает старую, если собеседник так и не ответил.
+  // Новая версия таблицы: несколько "ожидающих оценки" записей на диалог
+  // одновременно (id — обычный автоинкремент, без уникальности по
+  // account+peer), потому что пока одна запись донакапливает реакцию
+  // (REACTION_LOOKAHEAD сообщений), бот успевает ответить и создать
+  // следующую. reaction_msgs хранит уже накопленные сообщения-реакции как
+  // JSON-массив.
   await db.execute(`
-    CREATE TABLE IF NOT EXISTS pending_reactions (
+    CREATE TABLE IF NOT EXISTS pending_reactions_v2 (
+      id INT AUTO_INCREMENT PRIMARY KEY,
       account_id INT NOT NULL,
       peer_id VARCHAR(64) NOT NULL,
       user_msg TEXT,
       bot_reply TEXT,
+      stage VARCHAR(32) NOT NULL DEFAULT 'general',
+      reaction_msgs TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (account_id, peer_id)
+      INDEX idx_account_peer (account_id, peer_id)
     )
   `);
 }
 
 const tablesReady = ensureTables().catch((err) => {
-  console.error('[learningDb] Не удалось создать таблицы обучения:', err.message);
+  console.error('[learningDb] Не удалось создать/обновить таблицы обучения:', err.message);
 });
 
 function hashReply(text) {
@@ -75,18 +137,19 @@ function hashReply(text) {
 }
 
 /**
- * Запоминает пару (сообщение собеседника -> ответ бота) как ожидающую
- * оценки реакции. Вызывается сразу после того, как бот отправил ответ.
+ * Запоминает пару (сообщение собеседника -> ответ бота) как новую запись,
+ * ожидающую накопления реакции. Вызывается сразу после того, как бот
+ * отправил ответ. В отличие от старой версии, НЕ перезатирает предыдущие
+ * ещё не оценённые записи — они донакапливают реакцию независимо.
  */
-async function recordBotReply(accountId, peerId, userMsg, botReply) {
+async function recordBotReply(accountId, peerId, userMsg, botReply, stage = 'general') {
   if (!LEARNING_ENABLED || !botReply) return;
   try {
     await tablesReady;
     await db.execute(
-      `INSERT INTO pending_reactions (account_id, peer_id, user_msg, bot_reply)
-       VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE user_msg = VALUES(user_msg), bot_reply = VALUES(bot_reply), created_at = CURRENT_TIMESTAMP`,
-      [accountId, peerId, userMsg || '', botReply],
+      `INSERT INTO pending_reactions_v2 (account_id, peer_id, user_msg, bot_reply, stage, reaction_msgs)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [accountId, peerId, userMsg || '', botReply, stage, JSON.stringify([])],
     );
   } catch (err) {
     console.error('[learningDb] Не удалось сохранить ожидающую пару:', err.message);
@@ -94,11 +157,14 @@ async function recordBotReply(accountId, peerId, userMsg, botReply) {
 }
 
 /**
- * Просит gpt-4o-mini коротко оценить реакцию собеседника на предыдущий
- * ответ бота. Возвращает число: 1 (good), 0.5 (neutral), 0 (bad).
+ * Просит gpt-4o-mini оценить реакцию собеседника на предыдущий ответ бота
+ * по короткой ПОСЛЕДОВАТЕЛЬНОСТИ его сообщений (а не одному) — так виден
+ * итоговый настрой, а не промежуточная растерянность/пауза перед согласием.
+ * Возвращает число: 1 (good), 0.5 (neutral), 0 (bad).
  */
-async function scoreReaction(botReply, userReaction) {
+async function scoreReaction(botReply, reactionMsgs) {
   try {
+    const reactionText = reactionMsgs.filter(Boolean).join('\n');
     const completion = await scorerClient.chat.completions.create({
       model: 'gpt-4o-mini',
       max_tokens: 5,
@@ -107,16 +173,17 @@ async function scoreReaction(botReply, userReaction) {
         {
           role: 'system',
           content:
-            'Ты оцениваешь переписку в мессенджере. Тебе дана фраза бота и следующий ' +
-            'ответ собеседника на неё. Определи, как собеседник отреагировал: ' +
-            'GOOD — заинтересованно, тепло, продолжил разговор, задал вопрос в ответ; ' +
+            'Ты оцениваешь переписку в мессенджере. Тебе дана фраза бота и следующие ' +
+            'сообщения собеседника ПОСЛЕ неё (может быть 1-2 сообщения подряд). Оцени ' +
+            'итоговую реакцию собеседника, а не промежуточную: ' +
+            'GOOD — в итоге заинтересованно, тепло, продолжил разговор, согласился, задал вопрос в ответ; ' +
             'NEUTRAL — нейтрально, коротко, без явного интереса или отказа; ' +
             'BAD — холодно, раздражённо, разочарованно, проигнорировал суть, оборвал разговор. ' +
             'Ответь строго одним словом: GOOD, NEUTRAL или BAD.',
         },
         {
           role: 'user',
-          content: `Фраза бота: "${botReply}"\nОтвет собеседника: "${userReaction}"`,
+          content: `Фраза бота: "${botReply}"\nСообщения собеседника после неё:\n${reactionText}`,
         },
       ],
     });
@@ -130,90 +197,164 @@ async function scoreReaction(botReply, userReaction) {
   }
 }
 
+async function finalizePendingRow(row) {
+  const reactionMsgs = safeParseArray(row.reaction_msgs);
+  const score = await scoreReaction(row.bot_reply, reactionMsgs);
+  await db.execute(`DELETE FROM pending_reactions_v2 WHERE id = ?`, [row.id]);
+  if (score === null) return;
+
+  const hash = hashReply(row.bot_reply);
+  await db.execute(
+    `INSERT INTO bot_patterns (trigger_msg, bot_reply, bot_reply_hash, uses, success_score, success_rate, stage)
+     VALUES (?, ?, ?, 1, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       uses = uses + 1,
+       success_score = success_score + ?,
+       success_rate = (success_score + ?) / (uses + 1)`,
+    [row.user_msg || '', row.bot_reply, hash, score, score, row.stage || 'general', score, score],
+  );
+}
+
+function safeParseArray(json) {
+  try {
+    const parsed = JSON.parse(json || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
 /**
- * Смотрит, есть ли для этого диалога ответ бота, ожидающий оценки, и если
- * да — оценивает реакцию собеседника (его НОВОЕ сообщение) и обновляет
- * рейтинг фразы в bot_patterns. Вызывается перед генерацией нового ответа,
- * когда пришло новое сообщение от собеседника.
+ * Донакапливает новое сообщение собеседника во ВСЕ ожидающие оценки записи
+ * этого диалога и финализирует (оценивает + удаляет) те, что набрали
+ * REACTION_LOOKAHEAD сообщений или зависли дольше PENDING_MAX_AGE_HOURS.
+ * Вызывается перед генерацией нового ответа, когда пришло новое сообщение.
  */
 async function scoreAndLearn(accountId, peerId, newUserMsg) {
   if (!LEARNING_ENABLED) return;
   try {
     await tablesReady;
     const [rows] = await db.execute(
-      `SELECT user_msg, bot_reply FROM pending_reactions WHERE account_id = ? AND peer_id = ? LIMIT 1`,
+      `SELECT * FROM pending_reactions_v2 WHERE account_id = ? AND peer_id = ?`,
       [accountId, peerId],
     );
     if (!rows.length) return;
-    const { user_msg: triggerMsg, bot_reply: botReply } = rows[0];
 
-    // Пара сразу удаляется, чтобы не оценить её повторно.
-    await db.execute(`DELETE FROM pending_reactions WHERE account_id = ? AND peer_id = ?`, [accountId, peerId]);
+    for (const row of rows) {
+      const reactionMsgs = safeParseArray(row.reaction_msgs);
+      reactionMsgs.push(newUserMsg);
 
-    const score = await scoreReaction(botReply, newUserMsg);
-    if (score === null) return;
+      const ageHours = (Date.now() - new Date(row.created_at).getTime()) / (60 * 60 * 1000);
+      const shouldFinalize = reactionMsgs.length >= REACTION_LOOKAHEAD || ageHours >= PENDING_MAX_AGE_HOURS;
 
-    const hash = hashReply(botReply);
-    await db.execute(
-      `INSERT INTO bot_patterns (trigger_msg, bot_reply, bot_reply_hash, uses, success_score, success_rate)
-       VALUES (?, ?, ?, 1, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         uses = uses + 1,
-         success_score = success_score + ?,
-         success_rate = (success_score + ?) / (uses + 1)`,
-      [triggerMsg || '', botReply, hash, score, score, score, score],
-    );
+      if (shouldFinalize) {
+        await finalizePendingRow({ ...row, reaction_msgs: JSON.stringify(reactionMsgs) });
+      } else {
+        await db.execute(`UPDATE pending_reactions_v2 SET reaction_msgs = ? WHERE id = ?`, [
+          JSON.stringify(reactionMsgs),
+          row.id,
+        ]);
+      }
+    }
   } catch (err) {
     console.error('[learningDb] Не удалось обучиться на реакции:', err.message);
   }
 }
 
 /**
- * Достаёт несколько лучших фраз (по всем аккаунтам) для подмешивания в
- * промпт. Требует минимум использований, чтобы рейтинг не был случайным.
+ * Достаёт паттерны с приоритетом: тот же этап диалога > более свежая
+ * статистика > более высокая (или низкая, для худших) частота успеха.
+ * direction: 'best' — success_rate DESC, 'worst' — success_rate ASC.
  */
-async function getBestPatterns(limit = 4, minUses = 2, minRate = 0.6) {
+async function getPatternsByStage(stage, { direction, limit, minUses, rateThreshold }) {
   try {
     await tablesReady;
-    const [rows] = await db.execute(
-      `SELECT trigger_msg, bot_reply, success_rate FROM bot_patterns
-       WHERE uses >= ? AND success_rate >= ?
-       ORDER BY success_rate DESC, uses DESC
+    const rateCondition = direction === 'best' ? 'success_rate >= ?' : 'success_rate <= ?';
+    const rateOrder = direction === 'best' ? 'DESC' : 'ASC';
+
+    // Сначала пробуем строго по текущему этапу; если примеров мало —
+    // дополняем общими (stage не совпадает), чтобы подсказка не была пустой.
+    const [staged] = await db.execute(
+      `SELECT trigger_msg, bot_reply, success_rate, stage,
+              (CASE WHEN ? = 'best' THEN success_rate ELSE (1 - success_rate) END)
+                * POW(${RECENCY_DECAY}, DATEDIFF(NOW(), updated_at)) AS weight
+       FROM bot_patterns
+       WHERE uses >= ? AND ${rateCondition} AND stage = ?
+       ORDER BY weight DESC, uses DESC
        LIMIT ${Number(limit) || 4}`,
-      [minUses, minRate],
+      [direction, minUses, rateThreshold, stage],
     );
-    return rows;
+    if (staged.length >= limit) return staged;
+
+    const [general] = await db.execute(
+      `SELECT trigger_msg, bot_reply, success_rate, stage,
+              (CASE WHEN ? = 'best' THEN success_rate ELSE (1 - success_rate) END)
+                * POW(${RECENCY_DECAY}, DATEDIFF(NOW(), updated_at)) AS weight
+       FROM bot_patterns
+       WHERE uses >= ? AND ${rateCondition} AND stage != ?
+       ORDER BY weight DESC, uses DESC
+       LIMIT ${Number(limit) || 4}`,
+      [direction, minUses, rateThreshold, stage],
+    );
+
+    const combined = [...staged, ...general].slice(0, Number(limit) || 4);
+    return combined;
   } catch (err) {
-    console.error('[learningDb] Не удалось получить лучшие паттерны:', err.message);
+    console.error(`[learningDb] Не удалось получить паттерны (${direction}):`, err.message);
     return [];
   }
 }
 
+async function getBestPatterns(limit = 4, minUses = 2, minRate = 0.6, stage = 'general') {
+  return getPatternsByStage(stage, { direction: 'best', limit, minUses, rateThreshold: minRate });
+}
+
+async function getWorstPatterns(limit = 3, minUses = 2, maxRate = 0.35, stage = 'general') {
+  return getPatternsByStage(stage, { direction: 'worst', limit, minUses, rateThreshold: maxRate });
+}
+
 /**
- * Формирует текстовый блок с примерами удачных фраз для вставки в системный
- * промпт. Возвращает пустую строку, если обучение выключено или подходящих
+ * Формирует текстовый блок с примерами удачных И неудачных фраз для
+ * вставки в системный промпт, с приоритетом на текущий этап диалога.
+ * Возвращает пустую строку, если обучение выключено или подходящих
  * примеров пока нет (мало данных).
  */
-async function buildLearningSnippet() {
+async function buildLearningSnippet(stage = 'general') {
   if (!LEARNING_ENABLED) return '';
-  const patterns = await getBestPatterns();
-  if (!patterns.length) return '';
+  const [good, bad] = await Promise.all([getBestPatterns(4, 2, 0.6, stage), getWorstPatterns(3, 2, 0.35, stage)]);
+  if (!good.length && !bad.length) return '';
 
   let snippet = '\n\n=== ОБУЧЕНИЕ НА ПРОШЛОМ ОПЫТЕ ===\n';
-  snippet += 'Вот примеры фраз, которые хорошо сработали в похожих ситуациях в других диалогах:\n';
-  for (const p of patterns) {
-    const trigger = (p.trigger_msg || '').slice(0, 150);
-    const reply = (p.bot_reply || '').slice(0, 200);
-    snippet += `— Если собеседник пишет что-то в духе «${trigger}», хорошо сработал ответ: «${reply}» (успе��: ${Math.round(p.success_rate * 100)}%)\n`;
+
+  if (good.length) {
+    snippet += 'Примеры фраз, которые хорошо сработали в похожих ситуациях в других диалогах:\n';
+    for (const p of good) {
+      const trigger = (p.trigger_msg || '').slice(0, 150);
+      const reply = (p.bot_reply || '').slice(0, 200);
+      snippet += `— Если собеседник пишет что-то в духе «${trigger}», хорошо сработал ответ: «${reply}» (успех: ${Math.round(p.success_rate * 100)}%)\n`;
+    }
   }
-  snippet += 'Не копируй эти примеры дословно — адаптируй саму идею под текущий диалог и характер персонажа.\n';
+
+  if (bad.length) {
+    snippet += 'Примеры фраз, которые ПЛОХО сработали — не повторяй их и избегай похожего подхода:\n';
+    for (const p of bad) {
+      const trigger = (p.trigger_msg || '').slice(0, 150);
+      const reply = (p.bot_reply || '').slice(0, 200);
+      snippet += `— На «${trigger}» ответ «${reply}» вызвал холодную/плохую реакцию (успех всего: ${Math.round(p.success_rate * 100)}%)\n`;
+    }
+  }
+
+  snippet += 'Не копируй примеры дословно — адаптируй саму идею (или, для плохих примеров, сам избегаемый подход) под текущий диалог и характер персонажа.\n';
   return snippet;
 }
 
 module.exports = {
   LEARNING_ENABLED,
+  STAGES,
+  detectStage,
   recordBotReply,
   scoreAndLearn,
   buildLearningSnippet,
   getBestPatterns,
+  getWorstPatterns,
 };
