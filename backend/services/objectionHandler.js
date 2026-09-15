@@ -113,14 +113,14 @@ async function ensureSchema() {
       )
     `),
     db.execute(`
-      CREATE TABLE IF NOT EXISTS silence_voice_reminders (
+      CREATE TABLE IF NOT EXISTS silence_voice_daily (
         id INT AUTO_INCREMENT PRIMARY KEY,
         account_id INT NOT NULL,
         peer_id VARCHAR(64) NOT NULL,
-        last_message_at DATETIME NOT NULL,
-        stage TINYINT NOT NULL,
-        sent_at DATETIME NOT NULL,
-        UNIQUE KEY uniq_account_peer_stage_last (account_id, peer_id, stage, last_message_at)
+        sent_date DATE NOT NULL,
+        sent TINYINT NOT NULL,
+        decided_at DATETIME NOT NULL,
+        UNIQUE KEY uniq_account_peer_day (account_id, peer_id, sent_date)
       )
     `),
   ]);
@@ -129,19 +129,19 @@ async function ensureSchema() {
 
 const SILENCE_PINGS = ['привет, чё молчиш)', 'ау, ты живой?)', 'привет) ты пропал'];
 
-// Готовое голосовое «как проходит день» — отправляется, если собеседник не
-// отвечает на последнее сообщение бота. Только в первые 2 дня знакомства
-// (до старта NFT-кампании на 3-й день — см. NFT_VOICE_AFTER_HOURS в
-// telegramClient.js), чтобы не конфликтовать с NFT-голосовым и напоминаниями.
+// Готовое голосовое «как проходит день» — если собеседник не отвечает
+// 2-4 часа, раз в сутки бросаем монетку (50%) и, если выпало «отправить»,
+// шлём голосовое. Только в первые 2 дня знакомства (до старта NFT-кампании
+// на 3-й день — см. NFT_VOICE_AFTER_HOURS в telegramClient.js), чтобы не
+// конфликтовать с NFT-голосовым и напоминаниями.
 const SILENCE_VOICE_FILE = 'kak_prohodit_den.ogg';
 // Возраст диалога, до которого действует это напоминание (первые 2 дня).
 const SILENCE_VOICE_MAX_DIALOG_AGE_HOURS = 48;
-// Стадии по часам молчания: первая через 2 часа, вторая — через 4, если
-// собеседник так и не ответил. Больше двух стадий на один период молчания нет.
-const SILENCE_VOICE_STAGES = [
-  { stage: 1, afterHours: 2 },
-  { stage: 2, afterHours: 4 },
-];
+// Окно молчания, в которое можно бросить монетку и отправить голосовое.
+const SILENCE_VOICE_WINDOW_MIN_HOURS = 2;
+const SILENCE_VOICE_WINDOW_MAX_HOURS = 4;
+// Шанс отправки при попадании в окно молчания — раз в сутки на диалог.
+const SILENCE_VOICE_CHANCE = 0.5;
 
 async function resolveArchiveEntity(client, peerId, peerUsername) {
   const normalizedId = String(peerId || '').trim();
@@ -150,7 +150,7 @@ async function resolveArchiveEntity(client, peerId, peerUsername) {
   // folders.EditPeerFolders — «сырой» MTProto-запрос: ему нужен именно
   // TypeInputPeer (InputPeerUser/Channel/Chat с access_hash), а не обычная
   // сущность User/Channel из getEntity(). client.getInputEntity() возвращает
-  // корректный InputPeer и сам обновляет access_hash в кеше сессии.
+  // корре��тный InputPeer и сам обновляет access_hash в кеше сессии.
   if (normalizedUsername) {
     try {
       return await client.getInputEntity(normalizedUsername);
@@ -272,8 +272,8 @@ async function sendSilencePings({ getAccountSettings, isWithinWorkingHours, isAu
 }
 
 /**
- * Отправляет заготовленное голосовое «как проходит день», если собеседник не
- * ответил на последнее сообщение бота 2 часа (стадия 1) или 4 часа (стадия 2).
+ * Раз в сутки на диалог: если собеседник молчит 2-4 часа, бросаем монетку
+ * (50%) и, если выпало «отправить», шлём голосовое «как проходит день».
  * Работает только в первые 2 дня знакомства — с 3-го дня тему ведёт
  * NFT-кампания (getNftCampaignState в telegramClient.js), и голосовые не
  * должны пересекаться.
@@ -297,8 +297,7 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
     // сообщения САМОГО СОБЕСЕДНИКА. last_message_at (последнее сообщение в
     // диалоге вообще) сюда брать нельзя: он включает и собственные голосовые
     // напоминания бота, из-за чего каждое отправленное напоминание сдвигало
-    // точку отсчёта тишины и вызывало бесконечный повтор каждые ~2 часа
-    // вместо ровно двух напоминаний (2ч и 4ч).
+    // бы точку отсчёта тишины.
     const [rows] = await db.execute(`
       SELECT
         cm.account_id,
@@ -311,7 +310,8 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
       GROUP BY cm.account_id, cm.peer_id, cm.peer_username
       HAVING last_incoming_at IS NOT NULL
         AND last_message_at > last_incoming_at
-        AND last_incoming_at <= (NOW() - INTERVAL 2 HOUR)
+        AND last_incoming_at <= (NOW() - INTERVAL ${SILENCE_VOICE_WINDOW_MIN_HOURS} HOUR)
+        AND last_incoming_at >= (NOW() - INTERVAL ${SILENCE_VOICE_WINDOW_MAX_HOURS} HOUR)
         AND started_at >= (NOW() - INTERVAL ${SILENCE_VOICE_MAX_DIALOG_AGE_HOURS} HOUR)
     `);
 
@@ -322,23 +322,28 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
         const settings = await getAccountSettings(row.account_id);
         if (!settings || !settings.is_autoreply_enabled) continue;
 
-        const silenceHours = (Date.now() - new Date(row.last_incoming_at).getTime()) / (60 * 60 * 1000);
-
-        // Ищем от старшей стадии к младшей: если бот не работал долго и
-        // молчание уже перевалило за 4 часа, шлём сразу вторую стадию, а не
-        // догоняем пропущенную первую.
-        const due = [...SILENCE_VOICE_STAGES].reverse().find((s) => silenceHours >= s.afterHours);
-        if (!due) continue;
-
-        // Дедуп-ключ — last_incoming_at (не меняется, пока собеседник
-        // молчит), поэтому каждая стадия отправится максимум один раз за
-        // весь период тишины, а не при каждом тике планировщика.
+        // Решение (бросок монетки) принимается максимум один раз в
+        // календарные сутки на диалог — вне зависимости от того, сколько
+        // раз за день собеседник попадал в окно 2-4ч молчания.
         const [[already]] = await db.execute(
-          `SELECT id FROM silence_voice_reminders
-           WHERE account_id = ? AND peer_id = ? AND stage = ? AND last_message_at = ? LIMIT 1`,
-          [row.account_id, row.peer_id, due.stage, row.last_incoming_at],
+          `SELECT id FROM silence_voice_daily
+           WHERE account_id = ? AND peer_id = ? AND sent_date = CURDATE() LIMIT 1`,
+          [row.account_id, row.peer_id],
         );
         if (already) continue;
+
+        const shouldSend = Math.random() < SILENCE_VOICE_CHANCE;
+
+        // Решение фиксируем сразу (даже если монетка сказала «не отправлять»),
+        // чтобы следующий тик планировщика (каждые 30 минут) не бросал её
+        // повторно в течение того же дня.
+        await db.execute(
+          `INSERT INTO silence_voice_daily (account_id, peer_id, sent_date, sent, decided_at)
+           VALUES (?, ?, CURDATE(), ?, NOW())`,
+          [row.account_id, row.peer_id, shouldSend ? 1 : 0],
+        );
+
+        if (!shouldSend) continue;
 
         const client = getActiveClient(row.account_id);
         if (!client) continue;
@@ -356,17 +361,9 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
         await sendVoiceReply(client, entity, voicePath);
         await saveMessage(row.account_id, row.peer_id, row.peer_username, 'assistant', `[голосовое: ${SILENCE_VOICE_FILE}]`);
 
-        // В колонку last_message_at пишем именно last_incoming_at — это и
-        // есть дедуп-ключ, использованный в SELECT-проверке выше.
-        await db.execute(
-          `INSERT INTO silence_voice_reminders (account_id, peer_id, last_message_at, stage, sent_at)
-           VALUES (?, ?, ?, ?, NOW())`,
-          [row.account_id, row.peer_id, row.last_incoming_at, due.stage],
-        );
-
         console.log(
-          `[Аккаунт ${row.account_id}] Голосовое «как проходит день» (${due.afterHours}ч молчания) ` +
-            `отправлено ${row.peer_username || row.peer_id}.`,
+          `[Аккаунт ${row.account_id}] Голосовое «как проходит день» отправлено ${row.peer_username || row.peer_id} ` +
+            '(молчание 2-4ч, монетка 50%).',
         );
       } catch (err) {
         console.error(
