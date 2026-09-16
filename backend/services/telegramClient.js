@@ -1194,6 +1194,49 @@ function extractMediaRequest(reply) {
   return { text, mediaType };
 }
 
+const LAUGH_TOKEN_RE = /<<\s*LAUGH\s*>>/gi;
+const LAUGH_LINES = ['ахаха', 'ахахах', 'ахах', 'ахахаха'];
+
+function peelLaugh(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return { laugh: false, text: '' };
+  if (/^ахах+а?[).!]*$/i.test(raw)) return { laugh: true, text: '' };
+  const lead = raw.match(/^(ахах+а?)(?:[).!]+)?(?:\s+|$)/i);
+  if (lead) {
+    return { laugh: true, text: raw.slice(lead[0].length).trim() };
+  }
+  const tail = raw.match(/(?:^|\s)(ахах+а?)[).!]*$/i);
+  if (tail && tail.index > 0) {
+    return { laugh: true, text: raw.slice(0, tail.index).trim() };
+  }
+  return { laugh: false, text: raw };
+}
+
+function splitLaugh(reply) {
+  const token = /<<\s*LAUGH\s*>>/i.test(reply);
+  const without = String(reply || '').replace(LAUGH_TOKEN_RE, ' ').replace(/[ \t]{2,}/g, ' ').trim();
+  const peeled = peelLaugh(without);
+  return { text: peeled.text, laugh: token || peeled.laugh };
+}
+
+function laughedRecently(history) {
+  let seen = 0;
+  for (let i = history.length - 1; i >= 0 && seen < 3; i--) {
+    if (history[i].role !== 'assistant') continue;
+    seen += 1;
+    if (/^ахах/i.test(String(history[i].content || '').trim())) return true;
+  }
+  return false;
+}
+
+async function sendLaughBubble(client, sender, accountId, peerId, senderName) {
+  const phrase = LAUGH_LINES[Math.floor(Math.random() * LAUGH_LINES.length)];
+  await sleep(700 + Math.random() * 1100);
+  await client.sendMessage(sender, { message: phrase });
+  await saveMessage(accountId, peerId, senderName, 'assistant', phrase);
+  console.log(`[${accountLabel(accountId)}] Смех отдельным сообщением для ${senderName}: "${phrase}"`);
+}
+
 /**
  * Возвращает множество id медиа, которые уже отправлялись этом�� собеседнику
  * (для дедупа — не шлём одно и то же дважды).
@@ -1721,8 +1764,9 @@ async function fireReengage(accountId, peerId) {
     if (!rawReply) return;
     if (dueMemory) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
+    const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
     const { text: reply, mediaType: rawMediaType } =
-      extractMediaRequest(rawReply);
+      extractMediaRequest(replyWithoutLaugh);
 
     // Та же защита от «медиа два хода подряд», что и в обычном ответе.
     let mediaType = rawMediaType;
@@ -1758,6 +1802,10 @@ async function fireReengage(accountId, peerId) {
       console.log(
         `[${accountLabel(accountId)}] Отложенный ответ для ${senderName}: "${outText}"`,
       );
+    }
+
+    if (laugh && !nft.sendVoice && !laughedRecently(history)) {
+      await sendLaughBubble(client, sender, accountId, peerId, senderName);
     }
 
     let mediaSentThisTurn = false;
@@ -2126,7 +2174,8 @@ async function processBufferedMessages(
     if (dueMemory) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     // Отделяем текст от запрошенного типа медиа (токен вырезаем из текста).
-    const { text: reply, mediaType: rawMediaType } = extractMediaRequest(rawReply);
+    const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
+    const { text: reply, mediaType: rawMediaType } = extractMediaRequest(replyWithoutLaugh);
 
     // Защита от «медиа два хода подряд»: если модель снова захотела прислать
     // медиа, но прошлый ответ уже был ��едиа И че��овек НЕ просил новое явно —
@@ -2169,6 +2218,10 @@ async function processBufferedMessages(
   await saveMessage(accountId, peerId, senderName, 'assistant', outText);
       await learningDb.recordBotReply(accountId, peerId, text, outText, learningStage);
       console.log(`[${accountLabel(accountId)}] Ответ для ${senderName}: "${outText}"`);
+    }
+
+    if (laugh && !voice && !nft.sendVoice && !laughedRecently(history)) {
+      await sendLaughBubble(client, sender, accountId, peerId, senderName);
     }
 
     // 6.5. Медиа по запросу модели (фото/видео/кружок из чата по ссылке).
@@ -2449,18 +2502,18 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 
 // Вариа��ты фраз (случайный выбор — чтобы не выглядело шаблонно).
 const NIGHT_GREETINGS = [
-  'спокойной ночи)',
-  'ладно, спать пора, споки',
-  'всё, отрубаюсь, сладких снов',
-  'пойду спать, споки-споки',
-  'доброй ночи, до завтра',
+  'спокойной ночи, сладких снов)',
+  'ладно, спать пора, целую, споки',
+  'всё, отрубаюсь, сладких снов, береги себя',
+  'пойду спать, споки-споки, ты мне снись',
+  'доброй ночи, до завтра, буду скучать',
 ];
 const MORNING_GREETINGS = [
-  'доброе утро)',
-  'утро доброе, как спалось',
+  'доброе утро, как спалось)',
+  'утро доброе, соскучилась',
   'привееет, с добрым утром',
-  'доброе, проснулась вот',
-  'утречко доброе)',
+  'доброе, проснулась и сразу про тебя',
+  'утречко доброе, береги себя)',
 ];
 
 const MORNING_BY_KIND = {
