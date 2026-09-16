@@ -66,11 +66,6 @@ function accountKey(accountId) {
   return Number.isInteger(n) ? n : accountId;
 }
 
-function accountKey(accountId) {
-  const n = Number(accountId);
-  return Number.isInteger(n) ? n : accountId;
-}
-
 async function cacheAccountLabel(client, accountId) {
   try {
     const me = await client.getMe();
@@ -594,6 +589,7 @@ async function deactivateAccount(accountId) {
     boundaryTimers.delete(accountId);
   }
   workStateByAccount.delete(accountId);
+  dailyLifeByAccount.delete(accountId);
 
   // Отменяем отложенные «паузы занятости» этого аккаунта, чтобы таймеры не
   // сработали после отключения.
@@ -2313,6 +2309,75 @@ const MORNING_GREETINGS = [
   'утречко доброе)',
 ];
 
+const MORNING_BY_KIND = {
+  robot: MORNING_GREETINGS,
+  early: [
+    'чё так рано вскочила, доброе утро)',
+    'рано проснулась, привет',
+    'не спалось, уже встала',
+    'глаза сами открылись, доброе',
+  ],
+  oversleep: [
+    'проспала жесть, только встала',
+    'заспалась, доброе',
+    'сори, проспала',
+    'только глаза открыла, заспалась',
+  ],
+  lunch: [
+    'я только к обеду глаза открыла ахах',
+    'проспала до обеда, привет',
+    'в обед встала, доброе)',
+    'доброе, я к обеду только выползла',
+  ],
+  late: [
+    'только встала, заспалась нормально',
+    'доброе, почти до обеда дрыхла',
+    'проспала почти до обеда, привет',
+  ],
+};
+
+const NIGHT_BY_KIND = {
+  robot: NIGHT_GREETINGS,
+  early: [
+    'что-то меня рубит, пойду спать',
+    'глаза закрываются, споки',
+    'сегодня рано отрубаюсь, спокойной',
+  ],
+  half_past: [
+    'не хотела спать, но уже полпервого, споки',
+    'ещё бы посидела, но глаза слипаются',
+    'ладно всё, засиделась, спокойной ночи)',
+  ],
+  late: [
+    'что-то не спалось, но всё отрубаюсь',
+    'засиделась, уже поздно, споки',
+    'глаза сами закрываются, спокойной',
+  ],
+  three_am: [
+    'уже часа три, всё я спать',
+    'досиделась до трёх, спокойной',
+    'не хотела ложиться и вот, отрубаюсь',
+  ],
+};
+
+const WAKE_ROLLS = [
+  { id: 'robot', weight: 12, from: 9 * 60, to: 9 * 60 + 8 },
+  { id: 'early', weight: 20, from: 6 * 60 + 15, to: 8 * 60 + 20 },
+  { id: 'normal', weight: 16, from: 8 * 60, to: 10 * 60 },
+  { id: 'oversleep', weight: 20, from: 10 * 60, to: 11 * 60 + 50 },
+  { id: 'late', weight: 14, from: 11 * 60, to: 12 * 60 + 40 },
+  { id: 'lunch', weight: 18, from: 12 * 60, to: 14 * 60 + 30 },
+];
+const SLEEP_ROLLS = [
+  { id: 'robot', weight: 12, from: 23 * 60, to: 23 * 60 + 8 },
+  { id: 'early', weight: 16, from: 22 * 60, to: 22 * 60 + 50 },
+  { id: 'half_past', weight: 22, from: 23 * 60 + 20, to: 24 * 60 + 15 },
+  { id: 'late', weight: 22, from: 24 * 60 + 20, to: 26 * 60 },
+  { id: 'three_am', weight: 18, from: 26 * 60 + 20, to: 27 * 60 + 40 },
+];
+
+const dailyLifeByAccount = new Map();
+
 // Кому писать: диалоги с активностью за последние N дней.
 const GREETING_RECENT_DAYS = 3;
 // Максимум приветствий за один перех��д (антифлуд Telegram).
@@ -2331,10 +2396,125 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+function randInt(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+function weightedRoll(items) {
+  const total = items.reduce((sum, item) => sum + item.weight, 0);
+  let cursor = Math.random() * total;
+  for (const item of items) {
+    cursor -= item.weight;
+    if (cursor <= 0) return item;
+  }
+  return items[items.length - 1];
+}
+
+function moscowClock(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: WORK_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const read = (type) => parts.find((part) => part.type === type)?.value;
+  const hour = Number(read('hour')) % 24;
+  const minute = Number(read('minute'));
+  return {
+    dateKey: `${read('year')}-${read('month')}-${read('day')}`,
+    minutes: hour * 60 + minute,
+  };
+}
+
+function formatClock(totalMinutes) {
+  const wrapped = ((totalMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
+  const hour = Math.floor(wrapped / 60);
+  const minute = wrapped % 60;
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function crossedMinute(lastMin, nowMin, target) {
+  if (lastMin === nowMin) return false;
+  if (nowMin > lastMin) return target > lastMin && target <= nowMin;
+  return target > lastMin || target <= nowMin;
+}
+
+function rollDailyLife(dateKey) {
+  const wake = weightedRoll(WAKE_ROLLS);
+  const sleep = weightedRoll(SLEEP_ROLLS);
+  return {
+    dateKey,
+    wakeMin: randInt(wake.from, wake.to),
+    sleepMin: randInt(sleep.from, sleep.to),
+    wakeKind: wake.id,
+    sleepKind: sleep.id,
+    morningSent: false,
+    nightSent: false,
+    lastMin: null,
+    booted: true,
+  };
+}
+
+function ensureDailyLife(accountId) {
+  const key = accountKey(accountId);
+  const now = moscowClock();
+  let life = dailyLifeByAccount.get(key);
+  if (!life || life.dateKey !== now.dateKey) {
+    const carryNight = life && !life.nightSent && life.sleepMin >= 24 * 60
+      ? { min: life.sleepMin - 24 * 60, kind: life.sleepKind }
+      : life?.carryNight && !life.carryNight.sent
+        ? life.carryNight
+        : null;
+    const lastMin = life ? life.lastMin : null;
+    life = rollDailyLife(now.dateKey);
+    life.carryNight = carryNight;
+    life.lastMin = lastMin;
+    life.booted = !lastMin && lastMin !== 0;
+    dailyLifeByAccount.set(key, life);
+    console.log(
+      `[${accountLabel(accountId)}] Режим дня: подъём ${formatClock(life.wakeMin)} (${life.wakeKind}), сон ${formatClock(life.sleepMin)} (${life.sleepKind}).`,
+    );
+  }
+  return life;
+}
+
+function tickDailyLife(accountId) {
+  const life = ensureDailyLife(accountId);
+  const now = moscowClock();
+
+  if (life.booted || life.lastMin == null) {
+    life.booted = false;
+    life.lastMin = now.minutes;
+    return;
+  }
+
+  const lastMin = life.lastMin;
+  if (!life.morningSent && crossedMinute(lastMin, now.minutes, life.wakeMin)) {
+    life.morningSent = true;
+    sendGreetings(accountId, 'morning', life.wakeKind).catch(() => {});
+  }
+
+  const sameDaySleep = life.sleepMin < 24 * 60 ? life.sleepMin : null;
+  if (!life.nightSent && sameDaySleep != null && crossedMinute(lastMin, now.minutes, sameDaySleep)) {
+    life.nightSent = true;
+    sendGreetings(accountId, 'night', life.sleepKind).catch(() => {});
+  }
+
+  if (life.carryNight && !life.carryNight.sent && crossedMinute(lastMin, now.minutes, life.carryNight.min)) {
+    life.carryNight.sent = true;
+    sendGreetings(accountId, 'night', life.carryNight.kind).catch(() => {});
+  }
+
+  life.lastMin = now.minutes;
+}
+
 /**
  * Рассылает приветствие ('night' | 'morning') недавним активным диалогам.
  */
-async function sendGreetings(accountId, kind) {
+async function sendGreetings(accountId, kind, mood) {
   if (greetingInFlight.has(accountId)) return;
   greetingInFlight.add(accountId);
   try {
@@ -2357,7 +2537,9 @@ async function sendGreetings(accountId, kind) {
 
     const nowSec = Math.floor(Date.now() / 1000);
     const recentThreshold = nowSec - GREETING_RECENT_DAYS * 24 * 3600;
-    const phrases = kind === 'night' ? NIGHT_GREETINGS : MORNING_GREETINGS;
+    const phrases = kind === 'night'
+      ? (NIGHT_BY_KIND[mood] || NIGHT_GREETINGS)
+      : (MORNING_BY_KIND[mood] || MORNING_GREETINGS);
     let sent = 0;
 
     for (const dialog of dialogs) {
@@ -2455,22 +2637,15 @@ async function sendGreetings(accountId, kind) {
  * Вызыва��тся по таймеру раз �� минуту.
  */
   function checkWorkBoundary(accountId) {
-    const currentPeriod = timeStyle.getTimeStyle(getWorkZoneHour());
-    const currentPeriodId = currentPeriod.id;
+    const currentPeriodId = timeStyle.getTimeStyle(getWorkZoneHour()).id;
     const previousPeriodId = workStateByAccount.get(accountId);
-    // Первый вызов после активации — толь��о запоминаем период, без рассылки.
     if (previousPeriodId === undefined) {
       workStateByAccount.set(accountId, currentPeriodId);
+      ensureDailyLife(accountId);
       return;
     }
-    if (previousPeriodId === currentPeriodId) return;
-
     workStateByAccount.set(accountId, currentPeriodId);
-    if (currentPeriod.isSleep && previousPeriodId !== 'going_to_bed') {
-      sendGreetings(accountId, 'night').catch(() => {});
-    } else if (currentPeriod.isWakeUp && previousPeriodId !== 'wake_up') {
-      sendGreetings(accountId, 'morning').catch(() => {});
-    }
+    tickDailyLife(accountId);
   }
 module.exports = {
   startLogin,
