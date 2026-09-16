@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { startLogin, confirmCode, confirmPassword, isActive, activateAccount, deactivateAccount } = require('../services/telegramClient');
+const { purgeAccount } = require('../services/accountCleanup');
 
 const router = express.Router();
 function getUserId(req) { return req.dbUser ? req.dbUser.id : 1; }
@@ -18,6 +19,26 @@ function normalizePhone(raw) {
 function readPhone(raw) {
   const phone = normalizePhone(raw);
   return phone.length >= 11 ? phone : '';
+}
+
+async function ownedAccount(req, id) {
+  const [[row]] = await db.execute(
+    'SELECT id, session_string FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
+    [id, getUserId(req)],
+  );
+  return row || null;
+}
+
+async function connectOwnedAccount(account) {
+  if (isActive(account.id)) return true;
+  if (!account.session_string) return false;
+  const online = await activateAccount(account.id, account.session_string);
+  if (online === 'revoked') {
+    const error = new Error('Сессия отозвана, аккаунт удалён из базы');
+    error.statusCode = 410;
+    throw error;
+  }
+  return online === true;
 }
 
 async function getAccountLimit(userId) {
@@ -218,7 +239,7 @@ router.post('/connect/code', async (req, res) => {
     // Успех -> сохраняем session_string (и промпт) в базу
     const accountId = await saveSession(getUserId(req), phone, result.sessionString, prompt);
     await deactivateAccount(accountId);
-    const online = await activateAccount(accountId, result.sessionString);
+    const online = (await activateAccount(accountId, result.sessionString)) === true;
     return res.json({ success: true, status: 'connected', is_online: online });
   } catch (error) {
     if (error.statusCode) {
@@ -243,7 +264,7 @@ router.post('/connect/password', async (req, res) => {
 
     const accountId = await saveSession(getUserId(req), phone, result.sessionString, prompt);
     await deactivateAccount(accountId);
-    const online = await activateAccount(accountId, result.sessionString);
+    const online = (await activateAccount(accountId, result.sessionString)) === true;
     return res.json({ success: true, status: 'connected', is_online: online });
   } catch (error) {
     if (error.statusCode) {
@@ -263,6 +284,22 @@ router.post('/bulk/start-ai', async (req, res) => {
        WHERE user_id = ?`,
       [getUserId(req)],
     );
+    const [accounts] = await db.execute(
+      `SELECT id, session_string
+       FROM accounts
+       WHERE user_id = ? AND is_autoreply_enabled = TRUE`,
+      [getUserId(req)],
+    );
+    let offline = 0;
+    for (const account of accounts) {
+      if (!(await connectOwnedAccount(account))) offline += 1;
+    }
+    if (offline > 0) {
+      return res.status(503).json({
+        success: false,
+        error: `AI включён, но не подключилось сессий: ${offline}`,
+      });
+    }
     return res.json({ success: true, affectedRows: result.affectedRows, is_autoreply_enabled: true });
   } catch (error) {
     console.error('Bulk start AI error:', error);
@@ -285,18 +322,25 @@ router.post('/bulk/stop-ai', async (req, res) => {
   }
 });
 
-// Временно только обновляем состояние аккаунта, без запуска настоящего AI.
 router.post('/:id/start-ai', async (req, res) => {
   try {
-    const [result] = await db.execute(
+    const account = await ownedAccount(req, req.params.id);
+    if (!account) {
+      return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
+    }
+
+    await db.execute(
       `UPDATE accounts
        SET status = ?, is_autoreply_enabled = ?
        WHERE id = ? AND user_id = ?`,
       ['AI включен', true, req.params.id, getUserId(req)],
     );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
+    if (!(await connectOwnedAccount(account))) {
+      return res.status(503).json({
+        success: false,
+        error: 'AI включён, но сессия не подключилась',
+      });
     }
 
     return res.json({
@@ -310,19 +354,19 @@ router.post('/:id/start-ai', async (req, res) => {
   }
 });
 
-// Временно только останавливаем автоответы в базе данных.
 router.post('/:id/stop-ai', async (req, res) => {
   try {
-    const [result] = await db.execute(
+    const account = await ownedAccount(req, req.params.id);
+    if (!account) {
+      return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
+    }
+
+    await db.execute(
       `UPDATE accounts
        SET status = ?, is_autoreply_enabled = ?
        WHERE id = ? AND user_id = ?`,
       ['Остановлен', false, req.params.id, getUserId(req)],
     );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
-    }
 
     return res.json({
       success: true,
@@ -373,14 +417,15 @@ router.put('/:id', async (req, res) => {
       [delayMin, delayMax] = [delayMax, delayMin];
     }
 
-    const [result] = await db.execute(
+    await db.execute(
       `UPDATE accounts
        SET prompt = ?, reply_delay_min = ?, reply_delay_max = ?, media_chat_link = ?
        WHERE id = ? AND user_id = ?`,
       [prompt, delayMin, delayMax, mediaChatLink, req.params.id, getUserId(req)],
     );
 
-    if (result.affectedRows === 0) {
+    const account = await ownedAccount(req, req.params.id);
+    if (!account) {
       return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
     }
 
@@ -397,19 +442,18 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Удалить только тот аккаунт, который принадлежит demo-пользователю.
 router.delete('/:id', async (req, res) => {
   try {
-    const [result] = await db.execute(
-      'DELETE FROM accounts WHERE id = ? AND user_id = ?',
-      [req.params.id, getUserId(req)],
-    );
-
-    if (result.affectedRows === 0) {
+    const account = await ownedAccount(req, req.params.id);
+    if (!account) {
       return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
     }
 
     await deactivateAccount(req.params.id);
+    const removed = await purgeAccount(req.params.id, getUserId(req));
+    if (!removed) {
+      return res.status(500).json({ success: false, error: 'Не удалось удалить аккаунт из базы' });
+    }
     return res.json({ success: true });
   } catch (error) {
     console.error('Delete account error:', error);

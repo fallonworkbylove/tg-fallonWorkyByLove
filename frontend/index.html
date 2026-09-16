@@ -10,7 +10,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Telegram Mini App</title>
-    <link rel="stylesheet" href="styles.css?v=9" />
+    <link rel="stylesheet" href="styles.css?v=11" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -30,7 +30,6 @@
             <p class="eyebrow">Telegram Mini App</p>
             <h1 id="page-title">Панель</h1>
           </div>
-          <button class="icon-btn" type="button">⋯</button>
         </div>
       </header>
 
@@ -131,7 +130,7 @@
           </div>
 
           <div class="section-card card">
-            <h3>Новый пример</h3>
+            <h3 id="example-form-title">Новый пример</h3>
             <form id="example-form" class="form-grid">
               <label>
                 <span>Аккаунт</span>
@@ -149,7 +148,10 @@
                 <span>Заметка</span>
                 <input id="example-note" type="text" placeholder="Например: отвечать конкретнее, без воды" />
               </label>
-              <button class="btn btn-primary full" type="submit" data-action="save-example">Сохранить пример</button>
+              <div class="example-form__actions">
+                <button id="example-cancel" class="btn btn-secondary" type="button" hidden>Отмена</button>
+                <button id="example-submit" class="btn btn-primary" type="submit">Сохранить пример</button>
+              </div>
             </form>
           </div>
         </section>
@@ -159,7 +161,7 @@
             <h2>О сервисе</h2>
             <p>Это Telegram Mini App для управления AI-ассистентами и обучением сценариев ответов для аккаунтов.</p>
             <h3>Blacklist</h3>
-            <p>Blacklist — это список Telegram User ID, которым AI-автоответчик не будет отвечать. Если человек находится в blacklist, система увидит входящее со��бщение, но не отправит его в AI и не будет писать ответ. Это удобно для блокировки нежелательных пользователей, спама или людей, которым должен отвечать только человек.</p>
+            <p>Blacklist — это список Telegram User ID, которым AI-автоответчик не будет отвечать. Если человек находится в blacklist, система увидит входящее сообщение, но не отправит его в AI и не будет писать ответ. Это удобно для блокировки нежелательных пользователей, спама или людей, которым должен отвечать только человек.</p>
             <h3>Инструкция</h3>
             <ul class="list">
               <li>Добавляйте аккаунты с промптом и проверяйте лимиты.</li>
@@ -219,6 +221,6 @@
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=9"></script>
+    <script src="app.js?v=11"></script>
     </body>
     </html>

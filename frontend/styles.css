@@ -45,8 +45,8 @@ select {
 .app-shell {
   max-width: 430px;
   /* dvh корректно учитывает адресную строку и клавиатуру на телефонах. */
-  min-height: 100dvh;
   min-height: -webkit-fill-available;
+  min-height: 100dvh;
   margin: 0 auto;
   background: linear-gradient(180deg, #1f2937 0%, var(--bg) 100%);
   display: flex;
@@ -619,6 +619,26 @@ textarea {
   font-size: 16px;
   scroll-margin-top: 16px;
   scroll-margin-bottom: 96px;
+}
+
+.lesson-item__head {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.example-form__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.example-form__actions .btn {
+  flex: 1;
+}
+
+.lesson-item__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .lesson-item .btn {

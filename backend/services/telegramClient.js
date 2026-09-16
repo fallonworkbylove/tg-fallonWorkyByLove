@@ -500,14 +500,23 @@ async function activateAccount(accountId, sessionString) {
 
       await client.connect();
 
-      // Проверяем, что сессия ещё жива
-      const authorized = await client.isUserAuthorized();
-      if (authorized) await cacheAccountLabel(client, accountId);
-      if (!authorized) {
-        await client.disconnect();
-        // Сессия мертва — перебор прокси не поможет, выходим сразу.
-        return false;
+      // Таймаут прокси не считаем удалением. Стираем запись только если
+      // Telegram прямо говорит, что аккаунт или сессия больше не существуют.
+      try {
+        await client.getMe();
+      } catch (authErr) {
+        try { await client.disconnect(); } catch (_) {}
+        if (isRevokedSessionError(authErr)) {
+          await forgetRevokedAccount(accountId);
+          return 'revoked';
+        }
+        console.error(
+          `Не удалось проверить сессию аккаунта ${accountId}:`,
+          authErr.errorMessage || authErr.message,
+        );
+        continue;
       }
+      await cacheAccountLabel(client, accountId);
 
       // Успех. Если использовали прокси — зап������минаем его как текущий рабочий.
       if (index !== undefined && index !== currentProxyIndex) {
@@ -564,11 +573,34 @@ async function activateAccount(accountId, sessionString) {
       );
       // Закрываем не��дачный клиент и пробуем следующий прокси.
       try { if (client) await client.disconnect(); } catch (_) {}
+      if (isRevokedSessionError(err)) {
+        await forgetRevokedAccount(accountId);
+        return 'revoked';
+      }
     }
   }
 
   console.error(`Аккаунт ${accountId}: все прокси недо��тупны, ��одключение не удалось.`);
   return false;
+}
+
+function isRevokedSessionError(err) {
+  const text = `${err?.errorMessage || ''} ${err?.message || ''}`;
+  return /AUTH_KEY_UNREGISTERED|AUTH_KEY_INVALID|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED|PHONE_NUMBER_BANNED/.test(text);
+}
+
+async function forgetRevokedAccount(accountId) {
+  try {
+    const { purgeAccount } = require('./accountCleanup');
+    const removed = await purgeAccount(accountId);
+    console.log(
+      removed
+        ? `Аккаунт ${accountId}: сессия отозвана, запись удалена из базы.`
+        : `Аккаунт ${accountId}: сессия отозвана, в базе записи уже нет.`,
+    );
+  } catch (err) {
+    console.error(`Аккаунт ${accountId}: не удалось удалить отозванную сессию из базы:`, err.message);
+  }
 }
 
 /**
@@ -958,14 +990,81 @@ function isWorkMentionWindow(scheduledAt, now = Date.now()) {
   return until >= NFT_WORK_MENTION_MIN_MS && until <= NFT_WORK_MENTION_MAX_MS;
 }
 
-async function loadArchiveFlags(client) {
-  const flags = new Map();
-  const dialogs = await client.getDialogs({ limit: 400 });
+async function listUserDialogs(client, maxCount = 5000) {
+  const dialogs = [];
+  const pageSize = 100;
+  let offsetId = 0;
+  let offsetDate;
+  let offsetPeer;
+
+  for (let page = 0; page < Math.ceil(maxCount / pageSize); page += 1) {
+    let batch;
+    try {
+      batch = await client.getDialogs({
+        limit: pageSize,
+        offsetId: offsetId || undefined,
+        offsetDate,
+        offsetPeer,
+        ignorePinned: page > 0,
+      });
+    } catch (err) {
+      if (!dialogs.length) throw err;
+      return { dialogs, complete: false };
+    }
+    if (!batch?.length) return { dialogs, complete: true };
+
+    dialogs.push(...batch);
+    if (batch.length < pageSize) return { dialogs, complete: true };
+
+    const last = batch[batch.length - 1];
+    const nextId = last.message?.id || last.dialog?.topMessage || 0;
+    const nextDate = last.message?.date || last.date;
+    const nextPeer = last.inputEntity || last.entity;
+    if (!nextId || nextId === offsetId) return { dialogs, complete: false };
+    offsetId = nextId;
+    offsetDate = nextDate;
+    offsetPeer = nextPeer;
+  }
+
+  return { dialogs, complete: false };
+}
+
+function rememberArchiveFlags(dialogs, flags) {
   for (const dialog of dialogs) {
     if (!dialog.isUser || !dialog.entity || dialog.entity.bot || dialog.entity.self) continue;
     flags.set(String(dialog.entity.id), !!dialog.archived);
   }
+}
+
+async function loadArchiveFlags(client) {
+  const flags = new Map();
+  const { dialogs, complete } = await listUserDialogs(client);
+  rememberArchiveFlags(dialogs, flags);
+  flags.complete = complete;
   return flags;
+}
+
+function isHiddenFromReplies(flags, peerId) {
+  return flags.get(String(peerId)) !== false;
+}
+
+async function peerHasIncoming(client, entity) {
+  let offsetId = 0;
+  for (let page = 0; page < 8; page += 1) {
+    const messages = await client.getMessages(entity, {
+      limit: 100,
+      ...(offsetId ? { offsetId } : {}),
+    });
+    if (!messages?.length) return false;
+    for (const message of messages) {
+      if (!message || isServiceMessage(message)) continue;
+      if (!message.out) return true;
+    }
+    const oldestId = messages[messages.length - 1]?.id;
+    if (!oldestId || oldestId === offsetId || messages.length < 100) return false;
+    offsetId = oldestId;
+  }
+  return false;
 }
 
 async function addNftScheduleColumn(name, definition) {
@@ -2982,7 +3081,7 @@ async function tickNftWorkMentions(accountId) {
       if (!isWorkMentionWindow(scheduledAt, now)) continue;
       const ageHours = await getDialogAgeHours(accountId, peerId);
       if (ageHours == null || ageHours < NFT_VOICE_AFTER_HOURS) continue;
-      if (archiveFlags.get(peerId) !== false) continue;
+      if (isHiddenFromReplies(archiveFlags, peerId)) continue;
       if (processingInFlight.has(bufferKey(accountId, peerId))) continue;
       if (await isPeerBlacklisted(accountId, peerId)) continue;
       if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) continue;
@@ -3070,7 +3169,7 @@ async function tickNftDueVoices(accountId) {
       if (await isPeerBlacklisted(accountId, peerId)) continue;
       if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) continue;
       if (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE)) continue;
-      if (archiveFlags.get(peerId) !== false) continue;
+      if (isHiddenFromReplies(archiveFlags, peerId)) continue;
 
       const plan = await getOrCreateNftVoiceAt(accountId, peerId);
       if (Date.now() < plan.scheduledAt.getTime()) continue;
@@ -3141,9 +3240,9 @@ async function rearchiveOurOnlyWorkChats(accountId) {
   try {
     const client = getActiveClient(accountId);
     if (!client) return;
-    let dialogs;
+    let listed;
     try {
-      dialogs = await client.getDialogs({ limit: 400 });
+      listed = await listUserDialogs(client);
     } catch (err) {
       console.error(
         `[${accountLabel(accountId)}] Не смог найти мёртвые чаты:`,
@@ -3152,25 +3251,26 @@ async function rearchiveOurOnlyWorkChats(accountId) {
       return;
     }
 
-    for (const dialog of dialogs) {
+    for (const dialog of listed.dialogs) {
       if (!dialog.isUser || dialog.archived) continue;
       const entity = dialog.entity;
       if (!entity || entity.bot || entity.self) continue;
 
-      let messages;
+      let incoming = false;
+      let sample = '';
       try {
-        messages = await client.getMessages(entity, { limit: 40 });
+        const recent = await client.getMessages(entity, { limit: 20 });
+        const texts = (recent || [])
+          .filter((message) => message?.out && !isServiceMessage(message))
+          .map((message) => String(message.message || ''))
+          .filter(Boolean);
+        if (!texts.length && !isDeletedUser(entity)) continue;
+        sample = texts.find((text) => OUR_ONLY_WORK_RE.test(text)) || texts[0] || '';
+        incoming = await peerHasIncoming(client, entity);
       } catch (_) {
         continue;
       }
-      const real = (messages || []).filter((message) => message && !isServiceMessage(message));
-      const ours = real.filter((message) => message.out);
-      if (!ours.length) continue;
-
-      const incoming = real.some((message) => !message.out);
       const deleted = isDeletedUser(entity);
-      const texts = ours.map((message) => String(message.message || '')).filter(Boolean);
-      const sample = texts.find((text) => OUR_ONLY_WORK_RE.test(text)) || texts[0];
       const dead = deleted || !incoming;
       if (!dead) continue;
 

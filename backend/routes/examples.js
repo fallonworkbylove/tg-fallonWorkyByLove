@@ -121,6 +121,76 @@ router.post("/", async (req, res) => {
   }
 });
 
+async function resolveAccountId(req, accountId) {
+  if (!accountId || accountId === "all") return null;
+  const finalAccountId = Number(accountId);
+  if (Number.isNaN(finalAccountId)) {
+    const error = new Error("Некорректный accountId");
+    error.statusCode = 400;
+    throw error;
+  }
+  const [accountRows] = await db.execute(
+    `SELECT id FROM accounts WHERE id = ? AND user_id = ?`,
+    [finalAccountId, getUserId(req)],
+  );
+  if (accountRows.length === 0) {
+    const error = new Error("Аккаунт не найден");
+    error.statusCode = 404;
+    throw error;
+  }
+  return finalAccountId;
+}
+
+router.put("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { accountId, clientMessage, correctAnswer, note } = req.body;
+
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ success: false, error: "Некорректный id" });
+    }
+    if (!clientMessage || !String(clientMessage).trim()) {
+      return res.status(400).json({ success: false, error: "Сообщение клиента обязательно" });
+    }
+    if (!correctAnswer || !String(correctAnswer).trim()) {
+      return res.status(400).json({ success: false, error: "Правильный ответ обязателен" });
+    }
+
+    const finalAccountId = await resolveAccountId(req, accountId);
+    const [result] = await db.execute(
+      `UPDATE training_examples
+       SET account_id = ?, client_message = ?, correct_answer = ?, note = ?
+       WHERE id = ? AND user_id = ?`,
+      [
+        finalAccountId,
+        String(clientMessage).trim(),
+        String(correctAnswer).trim(),
+        note ? String(note).trim() : null,
+        id,
+        getUserId(req),
+      ],
+    );
+
+    if (result.affectedRows === 0) {
+      const [rows] = await db.execute(
+        `SELECT id FROM training_examples WHERE id = ? AND user_id = ? LIMIT 1`,
+        [id, getUserId(req)],
+      );
+      if (!rows.length) {
+        return res.status(404).json({ success: false, error: "Пример не найден" });
+      }
+    }
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error("Update example error:", error);
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.statusCode ? error.message : "Не удалось изменить пример",
+    });
+  }
+});
+
 router.delete("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);

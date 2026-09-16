@@ -5,37 +5,52 @@ const fs = require('fs');
 // и вызывает reconnect(), из-за этого pm2 error-лог забивается и сессия дёргается.
 // Константы зашиты в node_modules, поэтому правим файл до первого require('telegram').
 const REPLACEMENTS = [
-  ['const PING_TIMEOUT = 10000;', 'const PING_TIMEOUT = 25000;'],
-  ['const PING_WAKE_UP_TIMEOUT = 3000;', 'const PING_WAKE_UP_TIMEOUT = 15000;'],
-  ['const PING_FAIL_INTERVAL = 100;', 'const PING_FAIL_INTERVAL = 1500;'],
+  ['PING_TIMEOUT', 25000],
+  ['PING_WAKE_UP_TIMEOUT', 15000],
+  ['PING_FAIL_INTERVAL', 1500],
 ];
+
+function replacePingConst(source, name, value) {
+  const pattern = new RegExp(`((?:const|let|var)\\s+${name}\\s*=\\s*)\\d+`);
+  if (!pattern.test(source)) return { source, changed: false };
+  return { source: source.replace(pattern, `$1${value}`), changed: true };
+}
 
 function relaxGramJsPingTimeout() {
   let updatesPath;
   try {
     updatesPath = require.resolve('telegram/client/updates.js');
   } catch (_) {
+    console.error('[telegram] Пакет telegram не найден — таймаут пинга не изменён.');
     return;
   }
 
   let source;
   try {
     source = fs.readFileSync(updatesPath, 'utf8');
-  } catch (_) {
+  } catch (err) {
+    console.error('[telegram] Не удалось прочитать updates.js:', err.message);
     return;
   }
 
-  if (source.includes('const PING_TIMEOUT = 25000;')) return;
+  if (/PING_TIMEOUT\s*=\s*25000/.test(source)) return;
 
   let next = source;
-  for (const [from, to] of REPLACEMENTS) {
-    if (!next.includes(from)) return;
-    next = next.replace(from, to);
+  const applied = [];
+  for (const [name, value] of REPLACEMENTS) {
+    const result = replacePingConst(next, name, value);
+    next = result.source;
+    if (result.changed) applied.push(name);
+  }
+
+  if (!applied.includes('PING_TIMEOUT')) {
+    console.error('[telegram] В установленной версии GramJS не найден PING_TIMEOUT — сессия может по-прежнему рваться.');
+    return;
   }
 
   try {
     fs.writeFileSync(updatesPath, next);
-    console.log('[telegram] Пинг GramJS увеличен до 25с, чтобы TIMEOUT через прокси не рвал сессию.');
+    console.log(`[telegram] Пинг GramJS увеличен (${applied.join(', ')}), чтобы TIMEOUT через прокси не рвал сессию.`);
   } catch (err) {
     console.error('[telegram] Не удалось поправить таймаут пинга GramJS:', err.message);
   }

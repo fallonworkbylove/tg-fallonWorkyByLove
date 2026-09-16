@@ -21,10 +21,13 @@ async function bootstrapSessions() {
     console.log(`Восстанавливаю ${rows.length} сессий...`);
 
     for (const account of rows) {
-      const ok = await activateAccount(account.id, account.session_string);
-      console.log(
-        `  Аккаунт ${account.phone} (id=${account.id}): ${ok ? 'активирован' : 'ошибка'}`,
-      );
+      const result = await activateAccount(account.id, account.session_string);
+      const status = result === true
+        ? 'активирован'
+        : result === 'revoked'
+          ? 'сессия мертва, удалён из базы'
+          : 'ошибка';
+      console.log(`  Аккаунт ${account.phone} (id=${account.id}): ${status}`);
     }
 
     console.log('Восстановление сессий завершено.');

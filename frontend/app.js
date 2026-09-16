@@ -177,6 +177,12 @@ const api = {
       body: data,
     }),
 
+  updateExample: (id, data) =>
+    request(`/examples/${id}`, {
+      method: 'PUT',
+      body: data,
+    }),
+
   deleteExample: (id) =>
     request(`/examples/${id}`, {
       method: 'DELETE',
@@ -327,7 +333,7 @@ function handleRequestError(error) {
     return;
   }
 
-  notify(error?.message || 'Пр����изошла ошибка');
+  notify(error?.message || 'Произошла ошибка');
 }
 
 /**
@@ -584,7 +590,7 @@ function renderPanel() {
             <strong>
               <span
                 class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"
-                title="${isOnline ? 'Подключён и слушает сообщения' : '��е подключён'}"
+                title="${isOnline ? 'Подключён и слушает сообщения' : 'не подключён'}"
               ></span>
               ${escapeHtml(formatPhone(account.phone))}
             </strong>
@@ -733,6 +739,14 @@ function renderAccounts() {
         .join('')
     : '<option value="">Сначала добавьте аккаунт</option>';
 
+  if (editingExampleId) {
+    const editing = state.examples.find(
+      (example) => String(example.id) === String(editingExampleId),
+    );
+    const accountId = editing?.accountId ?? editing?.account_id;
+    if (accountId != null) elements.exampleAccount.value = String(accountId);
+  }
+
   const limitsContainer = document.getElementById('limits-values');
 
   if (limitsContainer) {
@@ -839,14 +853,24 @@ function renderLearn() {
         <div class="lesson-item">
           <div class="lesson-item__head">
             <strong>${escapeHtml(getExampleAccountName(item))}</strong>
-            <button
-              class="btn btn-danger small"
-              type="button"
-              data-action="delete-example"
-              data-id="${escapeHtml(exampleId)}"
-            >
-              Удалить
-            </button>
+            <div class="lesson-item__actions">
+              <button
+                class="btn btn-secondary small"
+                type="button"
+                data-action="edit-example"
+                data-id="${escapeHtml(exampleId)}"
+              >
+                Изменить
+              </button>
+              <button
+                class="btn btn-danger small"
+                type="button"
+                data-action="delete-example"
+                data-id="${escapeHtml(exampleId)}"
+              >
+                Удалить
+              </button>
+            </div>
           </div>
 
           <p>
@@ -1225,6 +1249,10 @@ async function handleAiToggle(accountId) {
     render();
     notify('AI включен');
   } catch (error) {
+    try {
+      await Promise.all([loadAccounts(), loadDashboard(), loadStats()]);
+      render();
+    } catch (_) {}
     handleRequestError(error);
   }
 }
@@ -1264,8 +1292,55 @@ async function handleBulkAiToggle(enabled) {
     render();
     notify(enabled ? 'AI включен на всех аккаунтах' : 'AI выключен на всех аккаунтах');
   } catch (error) {
+    try {
+      await Promise.all([loadAccounts(), loadDashboard(), loadStats()]);
+      render();
+    } catch (_) {}
     handleRequestError(error);
   }
+}
+
+let editingExampleId = null;
+
+function resetExampleForm() {
+  editingExampleId = null;
+  const title = document.getElementById('example-form-title');
+  const submit = document.getElementById('example-submit');
+  const clientField = document.getElementById('example-client');
+  const replyField = document.getElementById('example-reply');
+  const noteField = document.getElementById('example-note');
+  const cancel = document.getElementById('example-cancel');
+  if (title) title.textContent = 'Новый пример';
+  if (submit) submit.textContent = 'Сохранить пример';
+  if (cancel) cancel.hidden = true;
+  if (clientField) clientField.value = '';
+  if (replyField) replyField.value = '';
+  if (noteField) noteField.value = '';
+}
+
+function editExample(id) {
+  const item = state.examples.find((example) => String(example.id) === String(id));
+  if (!item) return;
+
+  editingExampleId = item.id;
+  const accountField = document.getElementById('example-account');
+  const clientField = document.getElementById('example-client');
+  const replyField = document.getElementById('example-reply');
+  const noteField = document.getElementById('example-note');
+  const title = document.getElementById('example-form-title');
+  const submit = document.getElementById('example-submit');
+  const accountId = item.accountId ?? item.account_id;
+
+  if (accountField && accountId != null) accountField.value = String(accountId);
+  if (clientField) clientField.value = item.clientMessage ?? item.client_message ?? '';
+  if (replyField) replyField.value = item.correctAnswer ?? item.correct_answer ?? '';
+  if (noteField) noteField.value = item.note || '';
+  const cancel = document.getElementById('example-cancel');
+  if (title) title.textContent = 'Изменить пример';
+  if (submit) submit.textContent = 'Сохранить изменения';
+  if (cancel) cancel.hidden = false;
+
+  document.getElementById('example-form')?.scrollIntoView({ block: 'start' });
 }
 
 /**
@@ -1292,37 +1367,29 @@ async function saveExample(event) {
     return;
   }
 
+  const payload = {
+    accountId: Number(accountId),
+    clientMessage,
+    correctAnswer,
+    note,
+  };
+
   try {
-    await api.addExample({
-      accountId: Number(accountId),
-      clientMessage,
-      correctAnswer,
-      note,
-    });
+    if (editingExampleId) {
+      await api.updateExample(editingExampleId, payload);
+    } else {
+      await api.addExample(payload);
+    }
 
     await Promise.all([
       loadExamples(),
       loadStats(),
     ]);
 
-    const clientField = document.getElementById('example-client');
-    const replyField = document.getElementById('example-reply');
-    const noteField = document.getElementById('example-note');
-
-    if (clientField) {
-      clientField.value = '';
-    }
-
-    if (replyField) {
-      replyField.value = '';
-    }
-
-    if (noteField) {
-      noteField.value = '';
-    }
-
+    const wasEdit = Boolean(editingExampleId);
+    resetExampleForm();
     render();
-    notify('Пример сохранён');
+    notify(wasEdit ? 'Пример изменён' : 'Пример сохранён');
   } catch (error) {
     handleRequestError(error);
   }
@@ -1336,6 +1403,7 @@ async function deleteExample(id) {
 
   try {
     await api.deleteExample(id);
+    if (String(editingExampleId) === String(id)) resetExampleForm();
     await loadExamples();
     render();
     notify('Пример удалён');
@@ -1607,7 +1675,7 @@ function handleDetails(accountId) {
   closeAccountModal();
 
   const aiEnabled = isAiEnabled(account);
-  const statusText = account.status || (aiEnabled ? 'AI вк��ючен' : 'Остановлен');
+  const statusText = account.status || (aiEnabled ? 'AI включен' : 'Остановлен');
 
   const overlay = document.createElement('div');
   overlay.id = 'account-modal';
@@ -1765,6 +1833,8 @@ function bindEvents() {
     elements.exampleForm.addEventListener('submit', saveExample);
   }
 
+  document.getElementById('example-cancel')?.addEventListener('click', resetExampleForm);
+
   if (elements.addBlacklist) {
     elements.addBlacklist.addEventListener('click', addToBlacklist);
   }
@@ -1846,6 +1916,11 @@ function bindEvents() {
 
     if (action === 'delete-photo-exception') {
       deletePhotoExceptionItem(id);
+      return;
+    }
+
+    if (action === 'edit-example') {
+      editExample(id);
       return;
     }
 
