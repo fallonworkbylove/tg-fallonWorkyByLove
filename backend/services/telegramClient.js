@@ -894,6 +894,7 @@ const WORK_PROBLEM_PHRASES = [
 
 let nftScheduleReady = false;
 const nftWorkMentionInFlight = new Set();
+const nftVoiceTickInFlight = new Set();
 
 function pickWorkProblemPhrase() {
   return WORK_PROBLEM_PHRASES[Math.floor(Math.random() * WORK_PROBLEM_PHRASES.length)];
@@ -2911,8 +2912,108 @@ async function tickNftWorkMentions(accountId) {
   }
 }
 
+async function tickNftDueVoices(accountId) {
+  if (!isWithinNftCampaignHours()) return;
+  const key = accountKey(accountId);
+  if (nftVoiceTickInFlight.has(key)) return;
+  nftVoiceTickInFlight.add(key);
+  try {
+    const client = getActiveClient(accountId);
+    if (!client) return;
+    const settings = await getAccountSettings(accountId);
+    if (!settings || !settings.is_autoreply_enabled) return;
+    const nftPath = path.join(VOICES_DIR, NFT_VOICE_FILE);
+    if (!fs.existsSync(nftPath)) return;
+
+    const [rows] = await db.execute(
+      `SELECT peer_id,
+              MAX(peer_username) AS peer_username,
+              MIN(created_at) AS started,
+              COUNT(*) AS msg_count
+       FROM conversation_messages
+       WHERE account_id = ?
+       GROUP BY peer_id
+       HAVING started <= (NOW() - INTERVAL ${Number(NFT_VOICE_AFTER_HOURS)} HOUR)
+          AND msg_count >= 6`,
+      [accountId],
+    );
+
+    let sent = 0;
+    for (const row of rows) {
+      if (sent >= 4) break;
+      const peerId = String(row.peer_id);
+      const dialogKey = bufferKey(accountId, peerId);
+      if (processingInFlight.has(dialogKey) || messageBuffers.has(dialogKey)) continue;
+      if (await isPeerBlacklisted(accountId, peerId)) continue;
+      if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) continue;
+      if (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE)) continue;
+
+      const plan = await getOrCreateNftVoiceAt(accountId, peerId);
+      if (Date.now() < plan.scheduledAt.getTime()) continue;
+
+      const sendKey = voiceSendKey(accountId, peerId, NFT_VOICE_FILE);
+      if (voiceSendInFlight.has(sendKey)) continue;
+
+      let entity;
+      try {
+        entity = await client.getEntity(Number(peerId));
+      } catch (_) {
+        continue;
+      }
+      if (!entity || entity.bot || entity.self) continue;
+      if (await isPeerArchived(client, entity)) continue;
+
+      voiceSendInFlight.add(sendKey);
+      const senderName = entity.username || entity.firstName || row.peer_username || peerId;
+      try {
+        try {
+          await client.invoke(
+            new Api.messages.SetTyping({
+              peer: entity,
+              action: new Api.SendMessageRecordAudioAction(),
+            }),
+          );
+        } catch (_) {}
+        await sleep(2500 + Math.random() * 2500);
+        await sendVoiceReply(client, entity, nftPath);
+        await saveMessage(accountId, peerId, senderName, 'assistant', voiceTag(NFT_VOICE_FILE));
+        const me = await client.getMe();
+        const accountName = [me.firstName, me.lastName].filter(Boolean).join(' ')
+          || (me.username ? `@${me.username}` : '');
+        await helpRequestNotifier.recordVoiceSent(
+          accountId,
+          peerId,
+          senderName,
+          NFT_VOICE_FILE,
+          settings.phone,
+          accountName,
+        );
+        await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, 'nft_voice_sent');
+        sent += 1;
+        console.log(
+          `[${accountLabel(accountId)}] Отправлено голосовое про NFT (3-й день) для ${senderName}.`,
+        );
+      } catch (err) {
+        console.error(
+          `[${accountLabel(accountId)}] Не удалось отправить NFT-голосовое ${senderName}:`,
+          err.errorMessage || err.message,
+        );
+      } finally {
+        voiceSendInFlight.delete(sendKey);
+      }
+    }
+  } finally {
+    nftVoiceTickInFlight.delete(key);
+  }
+}
+
+async function tickNftCampaign(accountId) {
+  await tickNftWorkMentions(accountId);
+  await tickNftDueVoices(accountId);
+}
+
   function checkWorkBoundary(accountId) {
-    tickNftWorkMentions(accountId).catch((err) => {
+    tickNftCampaign(accountId).catch((err) => {
       console.error(
         `[${accountLabel(accountId)}] Фраза про работу перед голосовым:`,
         err.message,
