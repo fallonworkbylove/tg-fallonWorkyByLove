@@ -8,7 +8,7 @@ router.get("/", async (req, res) => {
   try {
     const [userRows] = await db.execute(
       `
-      SELECT balance, account_limit, subscription_until
+      SELECT account_limit
       FROM users
       WHERE id = ?
       `,
@@ -47,15 +47,9 @@ router.get("/", async (req, res) => {
       });
     }
 
-    const subscription =
-      user.subscription_until &&
-      new Date(user.subscription_until).getTime() > Date.now();
-
     return res.json({
       success: true,
       dashboard: {
-        balance: Number(user.balance || 0).toFixed(2),
-        subscription: Boolean(subscription),
         accountsUsed: accountsRows[0]?.total || 0,
         accountsLimit: user.account_limit || 10,
         messages: messagesRows[0]?.total || 0,

@@ -5,6 +5,21 @@ const { startLogin, confirmCode, confirmPassword, isActive, activateAccount, dea
 const router = express.Router();
 function getUserId(req) { return req.dbUser ? req.dbUser.id : 1; }
 
+// iPhone вставляет номер как «+7 958 738 14 82» или «8 (958) 738-14-82».
+// Telegram принимает только цифры с плюсом, иначе код не уходит.
+function normalizePhone(raw) {
+  let digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 11 && digits.startsWith('8')) digits = `7${digits.slice(1)}`;
+  if (digits.length === 10) digits = `7${digits}`;
+  return `+${digits}`;
+}
+
+function readPhone(raw) {
+  const phone = normalizePhone(raw);
+  return phone.length >= 11 ? phone : '';
+}
+
 async function getAccountLimit(userId) {
   const [[user]] = await db.execute(
     'SELECT account_limit FROM users WHERE id = ? LIMIT 1',
@@ -103,7 +118,7 @@ router.delete('/conversations/:accountId/:peerId', async (req, res) => {
 // Добавить аккаунт. Подключение к Telegram появится на следующем этапе.
 router.post('/', async (req, res) => {
   try {
-    const phone = typeof req.body.phone === 'string' ? req.body.phone.trim() : '';
+    const phone = readPhone(req.body.phone);
     const prompt = typeof req.body.prompt === 'string' ? req.body.prompt.trim() : '';
 
     if (!phone) {
@@ -123,10 +138,11 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const [[existingAccount]] = await db.execute(
-      'SELECT id FROM accounts WHERE user_id = ? AND phone = ? LIMIT 1',
-      [getUserId(req), phone],
+    const [owned] = await db.execute(
+      'SELECT id, phone FROM accounts WHERE user_id = ?',
+      [getUserId(req)],
     );
+    const existingAccount = owned.find((row) => normalizePhone(row.phone) === phone);
 
     if (existingAccount) {
       return res.status(409).json({
@@ -169,7 +185,7 @@ router.post('/', async (req, res) => {
 // Шаг 1: пользователь ввёл телефон -> просим Telegram отправить код.
 router.post('/connect/start', async (req, res) => {
   try {
-    const phone = typeof req.body.phone === 'string' ? req.body.phone.trim() : '';
+    const phone = readPhone(req.body.phone);
     if (!phone) {
       return res.status(400).json({ success: false, error: 'Поле phone обязательно' });
     }
@@ -185,7 +201,7 @@ router.post('/connect/start', async (req, res) => {
 // Шаг 2: пользователь ввёл код из Telegram.
 router.post('/connect/code', async (req, res) => {
   try {
-    const phone = typeof req.body.phone === 'string' ? req.body.phone.trim() : '';
+    const phone = readPhone(req.body.phone);
     const code = typeof req.body.code === 'string' ? req.body.code.trim() : '';
     const prompt = typeof req.body.prompt === 'string' ? req.body.prompt.trim() : '';
     if (!phone || !code) {
@@ -216,7 +232,7 @@ router.post('/connect/code', async (req, res) => {
 // Шаг 3 (если включена 2FA): пользователь ввёл облачный пароль.
 router.post('/connect/password', async (req, res) => {
   try {
-    const phone = typeof req.body.phone === 'string' ? req.body.phone.trim() : '';
+    const phone = readPhone(req.body.phone);
     const password = typeof req.body.password === 'string' ? req.body.password : '';
     const prompt = typeof req.body.prompt === 'string' ? req.body.prompt.trim() : '';
     if (!phone || !password) {
@@ -319,11 +335,11 @@ router.post('/:id/stop-ai', async (req, res) => {
   }
 });
 
-// Ограничивает задержку рамками 1..60 секунд.
+// Задержка только из карточки аккаунта. 8..90 секунд, как в ответе бота.
 function clampDelay(value, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
-  return Math.min(60, Math.max(1, Math.round(n)));
+  return Math.min(90, Math.max(8, Math.round(n)));
 }
 
 // Обновить промпт (характер AI) и/или диапазон задержки ответа.
@@ -351,8 +367,8 @@ router.put('/:id', async (req, res) => {
     }
 
     // Диапазон задержки перед ответом (в секундах, 1..60).
-    let delayMin = clampDelay(req.body.replyDelayMin, 3);
-    let delayMax = clampDelay(req.body.replyDelayMax, 8);
+    let delayMin = clampDelay(req.body.replyDelayMin, 25);
+    let delayMax = clampDelay(req.body.replyDelayMax, 50);
     if (delayMin > delayMax) {
       [delayMin, delayMax] = [delayMax, delayMin];
     }
@@ -405,21 +421,22 @@ router.delete('/:id', async (req, res) => {
 // prompt сохраняется только если он передан (не пустой), чтобы не затирать
 // уже заданный промпт при повторном подключении.
 async function saveSession(userId, phone, sessionString, prompt = '') {
-  const [[existing]] = await db.execute(
-    'SELECT id FROM accounts WHERE user_id = ? AND phone = ? LIMIT 1',
-    [userId, phone],
+  const [owned] = await db.execute(
+    'SELECT id, phone FROM accounts WHERE user_id = ?',
+    [userId],
   );
+  const existing = owned.find((row) => normalizePhone(row.phone) === phone);
 
   if (existing) {
     if (prompt) {
       await db.execute(
-        'UPDATE accounts SET session_string = ?, status = ?, prompt = ? WHERE id = ? AND user_id = ?',
-        [sessionString, 'Подключен', prompt, existing.id, userId],
+        'UPDATE accounts SET phone = ?, session_string = ?, status = ?, prompt = ? WHERE id = ? AND user_id = ?',
+        [phone, sessionString, 'Подключен', prompt, existing.id, userId],
       );
     } else {
       await db.execute(
-        'UPDATE accounts SET session_string = ?, status = ? WHERE id = ? AND user_id = ?',
-        [sessionString, 'Подключен', existing.id, userId],
+        'UPDATE accounts SET phone = ?, session_string = ?, status = ? WHERE id = ? AND user_id = ?',
+        [phone, sessionString, 'Подключен', existing.id, userId],
       );
     }
     return existing.id;

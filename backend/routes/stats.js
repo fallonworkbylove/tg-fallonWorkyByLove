@@ -6,15 +6,6 @@ function getUserId(req) { return req.dbUser ? req.dbUser.id : 1; }
 
 router.get("/", async (req, res) => {
   try {
-    const [userRows] = await db.execute(
-      `
-      SELECT balance
-      FROM users
-      WHERE id = ?
-      `,
-      [getUserId(req)]
-    );
-
     // Считаем сообщения из реальной таблицы истории переписок
     // (conversation_messages), а не из несуществующей "dialogs" —
     // раньше запрос падал на отсутствующей таблице и /api/stats
@@ -62,14 +53,10 @@ router.get("/", async (req, res) => {
       [getUserId(req)]
     );
 
-    const user = userRows[0];
-
     return res.json({
       success: true,
       stats: {
         messages: messageRows[0]?.total || 0,
-        referrals: 0,
-        income: Number(user?.balance || 0).toFixed(2),
         accounts: accountRows[0]?.total || 0,
         activeAccounts: activeAccountRows[0]?.total || 0,
         messagesByAccount,

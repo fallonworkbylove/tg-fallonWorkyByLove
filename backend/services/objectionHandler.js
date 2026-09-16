@@ -188,11 +188,11 @@ async function archiveSilentDialogs() {
       SELECT
         cm.account_id,
         cm.peer_id,
-        cm.peer_username,
+        MAX(cm.peer_username) AS peer_username,
         MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END) AS last_incoming_at,
         MAX(cm.created_at) AS last_message_at
       FROM conversation_messages cm
-      GROUP BY cm.account_id, cm.peer_id, cm.peer_username
+      GROUP BY cm.account_id, cm.peer_id
       HAVING last_incoming_at <= (NOW() - INTERVAL 2 DAY)
         AND last_message_at > last_incoming_at
     `);
@@ -304,12 +304,12 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
       SELECT
         cm.account_id,
         cm.peer_id,
-        cm.peer_username,
+        MAX(cm.peer_username) AS peer_username,
         MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END) AS last_incoming_at,
         MAX(cm.created_at) AS last_message_at,
         MIN(cm.created_at) AS started_at
       FROM conversation_messages cm
-      GROUP BY cm.account_id, cm.peer_id, cm.peer_username
+      GROUP BY cm.account_id, cm.peer_id
       HAVING last_incoming_at IS NOT NULL
         AND last_message_at > last_incoming_at
         AND last_incoming_at <= (NOW() - INTERVAL ${SILENCE_VOICE_WINDOW_MIN_HOURS} HOUR)

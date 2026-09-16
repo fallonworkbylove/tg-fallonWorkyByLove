@@ -10,7 +10,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Telegram Mini App</title>
-    <link rel="stylesheet" href="styles.css?v=8" />
+    <link rel="stylesheet" href="styles.css?v=9" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -51,7 +51,6 @@
               <button id="bulk-stop-panel" class="btn btn-secondary bulk-action" data-action="bulk-stop" type="button">Выключить все аккаунты</button>
             </div>
             <button class="btn btn-secondary" data-action="open-accounts" type="button">Добавить аккаунт</button>
-            <button class="btn btn-secondary" data-action="topup" type="button">Пополнить</button>
             <button class="btn btn-danger" data-action="logout" type="button">Выйти</button>
           </div>
 
@@ -65,7 +64,7 @@
             <form id="account-form" class="form-grid">
               <label>
                 <span>Телефон</span>
-                <input id="account-phone" type="text" placeholder="+79990000000" required />
+                <input id="account-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 999 000 00 00" required />
               </label>
 
               <label id="account-code-field" hidden>
@@ -92,7 +91,6 @@
           <div class="section-card card">
             <div class="section-card__header">
               <h3>Лимиты</h3>
-              <span class="badge badge-soft">Бесплатно</span>
             </div>
             <div id="limits-values" class="limits-grid">
               <div>
@@ -166,7 +164,7 @@
             <ul class="list">
               <li>Добавляйте аккаунты с промптом и проверяйте лимиты.</li>
               <li>Сохраняйте проверенные сценарии в разделе Учить.</li>
-              <li>Настройте задержку и черный список в разделе Опции.</li>
+              <li>Задержку ответа задавайте в карточке аккаунта. Черный список — в разделе Опции.</li>
             </ul>
           </div>
         </section>
@@ -175,19 +173,6 @@
           <div class="section-card card">
             <h2>Опции</h2>
             <div class="form-grid">
-              <label>
-                <span>Задержка ответов</span>
-                <input id="delay-input" type="number" min="15" max="25" value="15" />
-              </label>
-              <label>
-                <span>Минимум секунд</span>
-                <input id="min-input" type="number" min="15" max="25" value="15" />
-              </label>
-              <label>
-                <span>Максимум секунд</span>
-                <input id="max-input" type="number" min="15" max="25" value="25" />
-              </label>
-              <button id="save-options" class="btn btn-primary" type="button" data-action="save-options">Сохранить</button>
               <label>
                 <span>Blacklist</span>
                 <input id="blacklist-input" type="text" placeholder="User ID" />

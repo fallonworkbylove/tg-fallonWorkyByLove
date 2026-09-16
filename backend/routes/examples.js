@@ -121,4 +121,30 @@ router.post("/", async (req, res) => {
   }
 });
 
+router.delete("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ success: false, error: "Некорректный id" });
+    }
+
+    const [result] = await db.execute(
+      `DELETE FROM training_examples WHERE id = ? AND user_id = ?`,
+      [id, getUserId(req)],
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, error: "Пример не найден" });
+    }
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error("Delete example error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Не удалось удалить пример",
+    });
+  }
+});
+
 module.exports = router;

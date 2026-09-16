@@ -133,14 +133,6 @@ const api = {
       method: 'POST',
     }),
 
-  getOptions: () => request('/options'),
-
-  saveDelay: (delayMin, delayMax) =>
-    request('/options/delay', {
-      method: 'POST',
-      body: { delayMin, delayMax },
-    }),
-
   getBlacklist: () => request('/blacklist'),
 
   addBlacklist: (userId) =>
@@ -185,6 +177,11 @@ const api = {
       body: data,
     }),
 
+  deleteExample: (id) =>
+    request(`/examples/${id}`, {
+      method: 'DELETE',
+    }),
+
   getConversations: () => request('/accounts/conversations'),
 
   clearConversation: (accountId, peerId) =>
@@ -203,8 +200,6 @@ const state = {
   activeTab: localStorage.getItem('currentTab') || 'panel',
 
   dashboard: {
-    balance: 0,
-    subscription: false,
     accountsUsed: 0,
     accountsLimit: 10,
     messages: 0,
@@ -214,20 +209,13 @@ const state = {
   examples: [],
   conversations: [],
 
-  options: {
-    delay: 15,
-    min: 15,
-    max: 25,
-  },
-
   blacklist: [],
   photoExceptions: [],
 
   stats: {
     messages: 0,
-    referrals: 0,
-    income: 0,
     accounts: 0,
+    messagesByAccount: [],
   },
 };
 
@@ -246,9 +234,6 @@ const elements = {
   statsCards: document.getElementById('stats-cards'),
   statsAccounts: document.getElementById('stats-accounts'),
   optionsPreview: document.getElementById('options-preview'),
-  delayInput: document.getElementById('delay-input'),
-  minInput: document.getElementById('min-input'),
-  maxInput: document.getElementById('max-input'),
   blacklistInput: document.getElementById('blacklist-input'),
   addBlacklist: document.getElementById('add-blacklist'),
   clearBlacklist: document.getElementById('clear-blacklist'),
@@ -276,8 +261,25 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
-function formatCurrency(value) {
-  return `$${toNumber(value).toFixed(2)}`;
+function shownDelayPair(min, max) {
+  const a = Number(min);
+  const b = Number(max);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || (a <= 8 && b <= 15)) return [25, 50];
+  const low = Math.min(90, Math.max(8, Math.round(a)));
+  const high = Math.min(90, Math.max(8, Math.round(b)));
+  return low <= high ? [low, high] : [high, low];
+}
+
+function formatPhone(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  const normalized = digits.length === 11 && digits.startsWith('8')
+    ? `7${digits.slice(1)}`
+    : digits;
+  if (normalized.length === 11 && normalized.startsWith('7')) {
+    return `+7 ${normalized.slice(1, 4)} ${normalized.slice(4, 7)} ${normalized.slice(7, 9)} ${normalized.slice(9)}`;
+  }
+  const trimmed = String(value || '').trim();
+  return trimmed || 'Аккаунт';
 }
 
 function showNotice(message) {
@@ -382,7 +384,7 @@ function getExampleAccountName(example) {
     example.account;
 
   if (accountName) {
-    return accountName;
+    return formatPhone(accountName);
   }
 
   const accountId = getExampleAccountId(example);
@@ -390,7 +392,7 @@ function getExampleAccountName(example) {
     (item) => String(item.id) === String(accountId),
   );
 
-  return account?.phone || 'Аккаунт';
+  return formatPhone(account?.phone);
 }
 
 function setActiveTab(tabName) {
@@ -427,8 +429,6 @@ async function loadDashboard() {
   const dashboard = response.dashboard || response.data || response;
 
   state.dashboard = {
-    balance: toNumber(dashboard.balance),
-    subscription: Boolean(dashboard.subscription),
     accountsUsed: toNumber(
       dashboard.accountsUsed ?? dashboard.accounts_used,
     ),
@@ -443,40 +443,6 @@ async function loadDashboard() {
 async function loadAccounts() {
   const response = await api.getAccounts();
   state.accounts = getResponseArray(response, 'accounts');
-}
-
-async function loadOptions() {
-  const response = await api.getOptions();
-  const options =
-    response.options ||
-    response.settings ||
-    response.data ||
-    response;
-
-  const delayMin = toNumber(
-    options.delayMin ??
-      options.delay_min ??
-      options.min,
-    15,
-  );
-
-  const delayMax = toNumber(
-    options.delayMax ??
-      options.delay_max ??
-      options.max,
-    25,
-  );
-
-  state.options = {
-    delay: toNumber(
-      options.delay ??
-        options.delay_seconds ??
-        delayMin,
-      delayMin,
-    ),
-    min: delayMin,
-    max: delayMax,
-  };
 }
 
 async function loadBlacklist() {
@@ -503,23 +469,24 @@ async function loadStats() {
   const response = await api.getStats();
   const stats = response.stats || response.data || response;
 
+  const messagesByAccount = Array.isArray(stats.messagesByAccount)
+    ? stats.messagesByAccount
+    : Array.isArray(stats.messages_by_account)
+      ? stats.messages_by_account
+      : [];
+
   state.stats = {
     messages: toNumber(
       stats.messages ??
         stats.messagesCount ??
         stats.messages_count,
     ),
-    referrals: toNumber(
-      stats.referrals ??
-        stats.referralsCount ??
-        stats.referrals_count,
-    ),
-    income: toNumber(stats.income),
     accounts: toNumber(
       stats.accounts ??
         stats.accountsCount ??
         stats.accounts_count,
     ),
+    messagesByAccount,
   };
 }
 
@@ -532,7 +499,6 @@ async function loadAllData() {
   const results = await Promise.allSettled([
     loadDashboard(),
     loadAccounts(),
-    loadOptions(),
     loadBlacklist(),
     loadPhotoExceptions(),
     loadExamples(),
@@ -571,8 +537,6 @@ function renderPanel() {
   }
 
   const {
-    balance,
-    subscription,
     accountsUsed,
     accountsLimit,
     messages,
@@ -587,16 +551,6 @@ function renderPanel() {
     <div class="stat-card">
       <strong>${messages}</strong>
       <span>Сообщения</span>
-    </div>
-
-    <div class="stat-card">
-      <strong>${formatCurrency(balance)}</strong>
-      <span>Баланс</span>
-    </div>
-
-    <div class="stat-card">
-      <strong>${subscription ? 'Да' : 'Нет'}</strong>
-      <span>Подписка</span>
     </div>
   `;
 
@@ -632,7 +586,7 @@ function renderPanel() {
                 class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"
                 title="${isOnline ? 'Подключён и слушает сообщения' : '��е подключён'}"
               ></span>
-              ${escapeHtml(account.phone)}
+              ${escapeHtml(formatPhone(account.phone))}
             </strong>
             <span class="badge ${aiEnabled ? 'success' : 'warn'}">
               ${escapeHtml(account.status || (aiEnabled ? 'AI включен' : 'Остановлен'))}
@@ -705,7 +659,7 @@ function renderAccounts() {
           return `
             <div class="account-item">
               <div class="account-item__head">
-                <strong>${escapeHtml(account.phone)}</strong>
+                <strong>${escapeHtml(formatPhone(account.phone))}</strong>
                 <span class="badge ${aiEnabled ? 'success' : 'warn'}">
                   ${escapeHtml(account.status || (aiEnabled ? 'AI включен' : 'Остановлен'))}
                 </span>
@@ -772,7 +726,7 @@ function renderAccounts() {
         .map(
           (account) => `
             <option value="${account.id}">
-              ${escapeHtml(account.phone)}
+              ${escapeHtml(formatPhone(account.phone))}
             </option>
           `,
         )
@@ -857,8 +811,8 @@ function renderLearn() {
   if (!state.examples.length) {
     elements.learnList.innerHTML = `
       <div class="empty-state">
-        <h3>Диалоги появятся после первых AI-ответов</h3>
-        <p>Сохраняйте удачные сценарии, чтобы улучшать ответы.</p>
+        <h3>Примеров пока нет</h3>
+        <p>Сохраните фразу ниже, и бот будет опираться на неё в ответах этого аккаунта.</p>
       </div>
     `;
 
@@ -879,11 +833,20 @@ function renderLearn() {
         item.reply ??
         '';
 
+      const exampleId = item.id ?? item.example_id ?? '';
+
       return `
         <div class="lesson-item">
           <div class="lesson-item__head">
             <strong>${escapeHtml(getExampleAccountName(item))}</strong>
-            <span class="badge badge-soft">Пример</span>
+            <button
+              class="btn btn-danger small"
+              type="button"
+              data-action="delete-example"
+              data-id="${escapeHtml(exampleId)}"
+            >
+              Удалить
+            </button>
           </div>
 
           <p>
@@ -945,16 +908,6 @@ function renderBlacklist() {
 
   elements.optionsPreview.innerHTML = `
     <div class="option-item">
-      <strong>Задержка</strong>
-      <p>${state.options.delay} сек</p>
-    </div>
-
-    <div class="option-item">
-      <strong>Диапазон</strong>
-      <p>${state.options.min}–${state.options.max} сек</p>
-    </div>
-
-    <div class="option-item">
       <strong>Blacklist</strong>
       <p>${blacklistHtml}</p>
     </div>
@@ -1003,18 +956,6 @@ function renderPhotoExceptions() {
 }
 
 function renderOptions() {
-  if (elements.delayInput) {
-    elements.delayInput.value = state.options.delay;
-  }
-
-  if (elements.minInput) {
-    elements.minInput.value = state.options.min;
-  }
-
-  if (elements.maxInput) {
-    elements.maxInput.value = state.options.max;
-  }
-
   renderBlacklist();
   renderPhotoExceptions();
 }
@@ -1024,20 +965,17 @@ function renderStats() {
     return;
   }
 
+  const counts = new Map(
+    (state.stats.messagesByAccount || []).map((row) => [
+      String(row.id),
+      toNumber(row.messages),
+    ]),
+  );
+
   elements.statsCards.innerHTML = `
     <div class="stat-card">
       <strong>${state.stats.messages}</strong>
       <span>Сообщения</span>
-    </div>
-
-    <div class="stat-card">
-      <strong>${state.stats.referrals}</strong>
-      <span>Рефералы</span>
-    </div>
-
-    <div class="stat-card">
-      <strong>${formatCurrency(state.stats.income)}</strong>
-      <span>Доход</span>
     </div>
 
     <div class="stat-card">
@@ -1050,15 +988,17 @@ function renderStats() {
     ? state.accounts
         .map((account) => {
           const aiEnabled = isAiEnabled(account);
+          const messageCount = counts.get(String(account.id)) || 0;
 
           return `
             <div class="account-item">
               <div class="account-item__head">
-                <strong>${escapeHtml(account.phone)}</strong>
+                <strong>${escapeHtml(formatPhone(account.phone))}</strong>
                 <span class="badge badge-soft">
                   ${escapeHtml(account.status || (aiEnabled ? 'AI включен' : 'Остановлен'))}
                 </span>
               </div>
+              <p>${messageCount} сообщ.</p>
             </div>
           `;
         })
@@ -1389,28 +1329,16 @@ async function saveExample(event) {
 }
 
 /**
- * Сохранение минимальной и максимальной задержки.
+ * Удаление примера из вкладки «Учить». После удаления бот больше его не использует.
  */
-async function handleSaveOptions() {
-  const delayMin = toNumber(elements.minInput?.value, 15);
-  const delayMax = toNumber(elements.maxInput?.value, 25);
-
-  if (delayMin < 0 || delayMax < 0) {
-    notify('Задержка не может быть отрицательной');
-    return;
-  }
-
-  if (delayMin > delayMax) {
-    notify('Минимум должен быть меньше или равен максимуму');
-    return;
-  }
+async function deleteExample(id) {
+  if (id === null || id === undefined || id === '') return;
 
   try {
-    await api.saveDelay(delayMin, delayMax);
-    await loadOptions();
-
-    renderOptions();
-    notify('Настройки сохранены');
+    await api.deleteExample(id);
+    await loadExamples();
+    render();
+    notify('Пример удалён');
   } catch (error) {
     handleRequestError(error);
   }
@@ -1575,25 +1503,6 @@ async function handleClearPhotoExceptions() {
   }
 }
 
-function updateOptionsPreview() {
-  state.options.delay = toNumber(
-    elements.delayInput?.value,
-    state.options.delay,
-  );
-
-  state.options.min = toNumber(
-    elements.minInput?.value,
-    state.options.min,
-  );
-
-  state.options.max = toNumber(
-    elements.maxInput?.value,
-    state.options.max,
-  );
-
-  renderBlacklist();
-}
-
 /**
  * Обновление всех данных по кнопке "Обновить".
  */
@@ -1709,7 +1618,7 @@ function handleDetails(accountId) {
       <div class="modal-card__header">
         <div>
           <p class="modal-card__eyebrow">Аккаунт</p>
-          <h3 class="modal-card__title">${escapeHtml(account.phone || '')}</h3>
+          <h3 class="modal-card__title">${escapeHtml(formatPhone(account.phone))}</h3>
         </div>
         <button class="modal-close" type="button" aria-label="Закрыть" data-modal-close>×</button>
       </div>
@@ -1742,23 +1651,27 @@ function handleDetails(accountId) {
         <div class="modal-delay">
           <input
             id="modal-delay-min"
-            type="number"
-            min="1"
-            max="60"
-            value="${Number(account.reply_delay_min) || 3}"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            enterkeyhint="done"
+            autocomplete="off"
+            value="${shownDelayPair(account.reply_delay_min, account.reply_delay_max)[0]}"
             aria-label="Минимальная задержка в секундах"
           />
           <span class="modal-delay__sep">—</span>
           <input
             id="modal-delay-max"
-            type="number"
-            min="1"
-            max="60"
-            value="${Number(account.reply_delay_max) || 8}"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            enterkeyhint="done"
+            autocomplete="off"
+            value="${shownDelayPair(account.reply_delay_min, account.reply_delay_max)[1]}"
             aria-label="Максимальная задержка в секундах"
           />
         </div>
-        <small class="modal-field__hint">Бот ответит через случайное время в этом диапазоне (1–60 сек). Например 10 и 20 — ответ придёт через 10–20 се��унд.</small>
+        <small class="modal-field__hint">Случайная пауза перед ответом, 8–90 секунд. Короткие значения вроде 3–8 больше не используются.</small>
       </div>
 
       <label class="modal-field">
@@ -1817,13 +1730,13 @@ function handleDetails(accountId) {
     saveButton.addEventListener('click', async () => {
       // Диапазон задержки: ограничиваем 1..60 и упорядочиваем min <= max.
       const clamp = (v, def) => {
-        const n = Math.round(Number(v));
-        if (!Number.isFinite(n)) return def;
-        return Math.min(60, Math.max(1, n));
+        const n = Math.round(Number(String(v || '').replace(/\D/g, '')));
+        if (!Number.isFinite(n) || n === 0) return def;
+        return Math.min(90, Math.max(8, n));
       };
 
-      let delayMin = clamp(delayMinInput?.value, 3);
-      let delayMax = clamp(delayMaxInput?.value, 8);
+      let delayMin = clamp(delayMinInput?.value, 25);
+      let delayMax = clamp(delayMaxInput?.value, 50);
       if (delayMin > delayMax) {
         [delayMin, delayMax] = [delayMax, delayMin];
       }
@@ -1868,16 +1781,6 @@ function bindEvents() {
     elements.clearPhotoExceptions.addEventListener('click', handleClearPhotoExceptions);
   }
 
-  [
-    elements.delayInput,
-    elements.minInput,
-    elements.maxInput,
-  ]
-    .filter(Boolean)
-    .forEach((input) => {
-      input.addEventListener('input', updateOptionsPreview);
-    });
-
   document.addEventListener('click', (event) => {
     const target = event.target.closest('button, [data-action]');
 
@@ -1898,21 +1801,11 @@ function bindEvents() {
       return;
     }
 
-    if (action === 'topup') {
-      notify('Оплата будет подключена позже');
-      return;
-    }
-
     if (action === 'logout') {
       if (tg && typeof tg.close === 'function') {
         tg.close();
       }
 
-      return;
-    }
-
-    if (action === 'save-options' || action === 'save-delay') {
-      handleSaveOptions();
       return;
     }
 
@@ -1953,6 +1846,11 @@ function bindEvents() {
 
     if (action === 'delete-photo-exception') {
       deletePhotoExceptionItem(id);
+      return;
+    }
+
+    if (action === 'delete-example') {
+      deleteExample(id);
       return;
     }
 
