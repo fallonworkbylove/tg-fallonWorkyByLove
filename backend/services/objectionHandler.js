@@ -228,7 +228,7 @@ async function sendSilencePings({ getAccountSettings, isWithinWorkingHours, isAu
     if (!isWithinWorkingHours()) return;
 
     const [rows] = await db.execute(`
-      SELECT cm.account_id, cm.peer_id, cm.peer_username, MAX(cm.created_at) AS last_at
+      SELECT cm.account_id, cm.peer_id, MAX(cm.peer_username) AS peer_username, MAX(cm.created_at) AS last_at
       FROM conversation_messages cm
       GROUP BY cm.account_id, cm.peer_id
       HAVING last_at <= (NOW() - INTERVAL 2 DAY) AND last_at >= (NOW() - INTERVAL 3 DAY)
