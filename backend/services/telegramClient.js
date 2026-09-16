@@ -908,13 +908,25 @@ function withWorkProblemLine(text) {
   return `${body}\n${line}`;
 }
 
-function pickWorkMentionAt(scheduledAt, now = Date.now()) {
-  const until = scheduledAt.getTime() - now;
-  if (until <= 3 * 60 * 1000) return new Date(now);
-  const hi = Math.min(NFT_WORK_MENTION_MAX_MS, until - 3 * 60 * 1000);
-  const lo = Math.min(NFT_WORK_MENTION_MIN_MS, hi);
-  const before = lo + Math.floor(Math.random() * (hi - lo + 1));
+function pickWorkMentionAt(scheduledAt) {
+  const span = NFT_WORK_MENTION_MAX_MS - NFT_WORK_MENTION_MIN_MS;
+  const before = NFT_WORK_MENTION_MIN_MS + Math.floor(Math.random() * (span + 1));
   return new Date(scheduledAt.getTime() - before);
+}
+
+function isWorkMentionWindow(scheduledAt, now = Date.now()) {
+  const until = scheduledAt.getTime() - now;
+  return until >= NFT_WORK_MENTION_MIN_MS && until <= NFT_WORK_MENTION_MAX_MS;
+}
+
+async function loadArchiveFlags(client) {
+  const flags = new Map();
+  const dialogs = await client.getDialogs({ limit: 400 });
+  for (const dialog of dialogs) {
+    if (!dialog.isUser || !dialog.entity || dialog.entity.bot || dialog.entity.self) continue;
+    flags.set(String(dialog.entity.id), !!dialog.archived);
+  }
+  return flags;
 }
 
 async function addNftScheduleColumn(name, definition) {
@@ -1096,9 +1108,7 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
     const plan = await getOrCreateNftVoiceAt(accountId, peerId);
     const now = Date.now();
     if (now < plan.scheduledAt.getTime()) {
-      const sayWorkProblem = !plan.workMentionSent
-        && plan.workMentionAt
-        && now >= plan.workMentionAt.getTime();
+      const sayWorkProblem = !plan.workMentionSent && isWorkMentionWindow(plan.scheduledAt, now);
       return {
         hint:
           'Голосовое с просьбой ещё НЕ отправляй и не анонсируй. Не пиши, что возишься с токеном, ' +
@@ -2854,6 +2864,16 @@ async function tickNftWorkMentions(accountId) {
     const settings = await getAccountSettings(accountId);
     if (!settings || !settings.is_autoreply_enabled) return;
     await ensureNftScheduleTable();
+    let archiveFlags;
+    try {
+      archiveFlags = await loadArchiveFlags(client);
+    } catch (err) {
+      console.error(
+        `[${accountLabel(accountId)}] Не смог проверить архив — фразу про работу не шлю:`,
+        err.errorMessage || err.message,
+      );
+      return;
+    }
     const [rows] = await db.execute(
       `SELECT peer_id, scheduled_at, work_mention_at FROM nft_voice_schedule
        WHERE account_id = ? AND work_mention_sent = 0`,
@@ -2863,17 +2883,10 @@ async function tickNftWorkMentions(accountId) {
     for (const row of rows) {
       const peerId = String(row.peer_id);
       const scheduledAt = new Date(row.scheduled_at);
-      if (scheduledAt.getTime() <= now) continue;
-      let workMentionAt = row.work_mention_at ? new Date(row.work_mention_at) : null;
-      if (!workMentionAt) {
-        workMentionAt = pickWorkMentionAt(scheduledAt, now);
-        await db.execute(
-          `UPDATE nft_voice_schedule SET work_mention_at = ?
-           WHERE account_id = ? AND peer_id = ? AND work_mention_at IS NULL`,
-          [workMentionAt, accountId, peerId],
-        );
-      }
-      if (workMentionAt.getTime() > now) continue;
+      if (!isWorkMentionWindow(scheduledAt, now)) continue;
+      const ageHours = await getDialogAgeHours(accountId, peerId);
+      if (ageHours == null || ageHours < NFT_VOICE_AFTER_HOURS) continue;
+      if (archiveFlags.get(peerId) !== false) continue;
       if (processingInFlight.has(bufferKey(accountId, peerId))) continue;
       if (await isPeerBlacklisted(accountId, peerId)) continue;
       if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) continue;
@@ -2924,6 +2937,16 @@ async function tickNftDueVoices(accountId) {
     if (!settings || !settings.is_autoreply_enabled) return;
     const nftPath = path.join(VOICES_DIR, NFT_VOICE_FILE);
     if (!fs.existsSync(nftPath)) return;
+    let archiveFlags;
+    try {
+      archiveFlags = await loadArchiveFlags(client);
+    } catch (err) {
+      console.error(
+        `[${accountLabel(accountId)}] Не смог проверить архив — NFT-голосовое не шлю:`,
+        err.errorMessage || err.message,
+      );
+      return;
+    }
 
     const [rows] = await db.execute(
       `SELECT peer_id,
@@ -2947,6 +2970,7 @@ async function tickNftDueVoices(accountId) {
       if (await isPeerBlacklisted(accountId, peerId)) continue;
       if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) continue;
       if (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE)) continue;
+      if (archiveFlags.get(peerId) !== false) continue;
 
       const plan = await getOrCreateNftVoiceAt(accountId, peerId);
       if (Date.now() < plan.scheduledAt.getTime()) continue;
