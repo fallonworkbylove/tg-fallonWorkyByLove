@@ -8,8 +8,9 @@ const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 
 // Окно отправки: каждому написавшему за день собеседнику уходит 1 фото
 // в случайный момент внутри этого диапазона (часы, 24ч формат).
+// Конец в 15:00: с 16:00 до 22:00 в тех же диалогах уходит голосовое NFT-кампании.
 const WINDOW_START_HOUR = 13;
-const WINDOW_END_HOUR = 20;
+const WINDOW_END_HOUR = 15;
 
 // Случайная подпись к фото — придаёт сообщению живой, неформальный тон.
 const CAPTIONS = [
@@ -102,7 +103,7 @@ function randomTimeBetween(from, to) {
 /**
  * Находит всех собеседников, которые сегодня писали хотя бы одно сообщение
  * (по всем аккаунтам), и планирует каждому из них ровно одну отправку фото
- * на случайное время внутри окна 13:00–20:00 (если ещё не запланировано).
+ * на случайное время внутри окна 13:00–15:00 (если ещё не запланировано).
  */
 async function schedulePendingSends() {
   await ensureSchema();
@@ -162,11 +163,23 @@ async function schedulePendingSends() {
 async function sendDuePhotos() {
   await ensureSchema();
 
+  const windowEnd = new Date();
+  windowEnd.setHours(WINDOW_END_HOUR, 0, 0, 0);
+
+  // Старые планы (окно было до 20:00) после 15:00 не отправляем: это время NFT-голосового.
+  await db.execute(
+    `UPDATE daily_photo_sends
+     SET sent_at = NOW()
+     WHERE send_date = CURDATE() AND sent_at IS NULL AND scheduled_at >= ?`,
+    [windowEnd],
+  );
+
   const [due] = await db.execute(`
     SELECT id, account_id, peer_id, peer_username
     FROM daily_photo_sends
     WHERE send_date = CURDATE() AND sent_at IS NULL AND scheduled_at <= NOW()
-  `);
+      AND scheduled_at < ?
+  `, [windowEnd]);
 
   for (const row of due) {
     try {
@@ -271,7 +284,7 @@ let schedulerStarted = false;
 
 /**
  * Запускает фоновый планировщик: каждую минуту проверяет новых написавших
- * сегодня собеседников (планирует им случайное время в окне 13:00–20:00)
+ * сегодня собеседников (планирует им случайное время в окне 13:00–15:00)
  * и отправляет тем, у кого это время уже наступило.
  */
 function startDailyPhotoScheduler() {

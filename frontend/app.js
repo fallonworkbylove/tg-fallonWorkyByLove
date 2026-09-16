@@ -1458,21 +1458,6 @@ async function clearBlacklist() {
 }
 
 /**
- * Удаление одного элемента blacklist.
- */
-async function deleteBlacklistItem(itemId) {
-  try {
-    await api.deleteBlacklistItem(itemId);
-    await loadBlacklist();
-
-    renderBlacklist();
-    notify('User ID удалён из blacklist');
-  } catch (error) {
-    handleRequestError(error);
-  }
-}
-
-/**
  * Сохранение (обновление) промпта аккаунта.
  */
 async function handleSavePrompt(id, prompt, replyDelayMin, replyDelayMax, mediaChatLink) {

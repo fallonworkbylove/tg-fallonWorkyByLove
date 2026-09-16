@@ -61,6 +61,16 @@ function accountLabel(accountId) {
   return accountLabels.get(String(accountId)) || `ID ${accountId}`;
 }
 
+function accountKey(accountId) {
+  const n = Number(accountId);
+  return Number.isInteger(n) ? n : accountId;
+}
+
+function accountKey(accountId) {
+  const n = Number(accountId);
+  return Number.isInteger(n) ? n : accountId;
+}
+
 async function cacheAccountLabel(client, accountId) {
   try {
     const me = await client.getMe();
@@ -384,6 +394,15 @@ function loginKey(userId, phone) {
  * Ш��г 1: создаём клиент и просим Telegram отправить код.
  */
 async function startLogin(userId, phone) {
+  const key = loginKey(userId, phone);
+  const previous = pendingLogins.get(key);
+  if (previous?.client) {
+    try {
+      await previous.client.disconnect();
+    } catch (_) {}
+    pendingLogins.delete(key);
+  }
+
   const client = new TelegramClient(
     new StringSession(''),
     apiId,
@@ -395,7 +414,7 @@ async function startLogin(userId, phone) {
 
   const { phoneCodeHash } = await client.sendCode({ apiId, apiHash }, phone);
 
-  pendingLogins.set(loginKey(userId, phone), { client, phoneCodeHash });
+  pendingLogins.set(key, { client, phoneCodeHash });
 
   return { sent: true };
 }
@@ -462,6 +481,7 @@ async function confirmPassword(userId, phone, password) {
  * Возвращает true при успехе, false при ошибке.
  */
 async function activateAccount(accountId, sessionString) {
+  accountId = accountKey(accountId);
   // Если уже активен — ничего не делаем
   if (activeClients.has(accountId)) return true;
 
@@ -559,6 +579,7 @@ async function activateAccount(accountId, sessionString) {
  * Останавливает клиент и убирает из пула.
  */
 async function deactivateAccount(accountId) {
+  accountId = accountKey(accountId);
   // Останавливаем периодический скан непрочитанных диалогов.
   const timer = scanTimers.get(accountId);
   if (timer) {
@@ -583,8 +604,26 @@ async function deactivateAccount(accountId) {
       deferredDialogs.delete(key);
     }
   }
-  
+
+  for (const [key, entry] of messageBuffers) {
+    if (!key.startsWith(prefix)) continue;
+    clearTimeout(entry.timer);
+    messageBuffers.delete(key);
+  }
+  for (const key of processingInFlight) {
+    if (key.startsWith(prefix)) processingInFlight.delete(key);
+  }
+  for (const key of lastReplyAt.keys()) {
+    if (key.startsWith(prefix)) lastReplyAt.delete(key);
+  }
+  for (const key of voiceSendInFlight) {
+    if (key.startsWith(prefix)) voiceSendInFlight.delete(key);
+  }
+  scanInFlight.delete(accountId);
+  greetingInFlight.delete(accountId);
+
   const client = activeClients.get(accountId);
+  activeClients.delete(accountId);
   if (!client) return;
 
   try {
@@ -592,22 +631,20 @@ async function deactivateAccount(accountId) {
   } catch (err) {
     console.error(`Ошибка отключения аккаунта ${accountId}:`, err.message);
   }
-
-  activeClients.delete(accountId);
 }
 
 /**
  * Возвра����ает живой к��иент по accountId (или undefined).
  */
 function getActiveClient(accountId) {
-  return activeClients.get(accountId);
+  return activeClients.get(accountKey(accountId));
 }
 
 /**
  * Проверяет, активен ли аккаунт.
  */
 function isActive(accountId) {
-  return activeClients.has(accountId);
+  return activeClients.has(accountKey(accountId));
 }
 
 // ---------------------------------------------------------------------------
@@ -625,6 +662,23 @@ async function getAccountSettings(accountId) {
   [accountId],
   );
   return rows[0] || null;
+}
+
+async function isPeerBlacklisted(accountId, peerId) {
+  try {
+    const [rows] = await db.execute(
+      `SELECT b.id
+       FROM blacklist b
+       INNER JOIN accounts a ON a.user_id = b.user_id
+       WHERE a.id = ? AND CAST(b.user_telegram_id AS CHAR) = ?
+       LIMIT 1`,
+      [accountId, String(peerId)],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    console.error(`[${accountLabel(accountId)}] Не удалось проверить blacklist:`, err.message);
+    return false;
+  }
 }
 
 /** Пауза на указанное число миллисекунд. */
@@ -788,11 +842,13 @@ function voiceTag(fileName) {
  * (например, если человек второй раз нап��сал «сво»).
  */
   async function wasVoiceSent(accountId, peerId, fileName) {
+    const likeName = String(fileName).replace(/[\\%_]/g, '\\$&');
     const [rows] = await db.execute(
       `SELECT id FROM conversation_messages
-       WHERE account_id = ? AND peer_id = ? AND content = ?
+       WHERE account_id = ? AND peer_id = ?
+         AND (content = ? OR content LIKE ? ESCAPE '\\\\')
        LIMIT 1`,
-      [accountId, peerId, voiceTag(fileName)],
+      [accountId, peerId, voiceTag(fileName), `%: ${likeName}]`],
     );
     return rows.length > 0;
   }
@@ -1180,7 +1236,7 @@ function parseDurationOverTwoWeeks(text) {
   const explicitMore = /(больше|более|свыше|дольше|давно)/.test(t);
 
   // Годы и полгода — заведомо больше 2 недель.
-  if (/(год|года|годи|ле��)/.test(t)) return true;
+  if (/(год|года|годи|лет)/.test(t)) return true;
   if (/(полгода|пол года)/.test(t)) return true;
 
   // Месяцы — тоже больше 2 недель.
@@ -1197,7 +1253,7 @@ function parseDurationOverTwoWeeks(text) {
   }
 
   // Дни: больше 14 дней.
-  if (/(день|дня|дн��й|дн\b|сутк)/.test(t)) {
+  if (/(день|дня|дней|дн\b|сутк)/.test(t)) {
     if (num !== null && num > 14) return true;
     return false;
   }
@@ -1337,6 +1393,8 @@ async function handleIncomingMessage(accountId, event) {
       ? sender.username || sender.firstName || peerId
       : peerId;
 
+    if (await isPeerBlacklisted(accountId, peerId)) return;
+
     // Фильтр 3: извлекаем текст. Голосовые расшифровываем (Whisper),
     // фото распознаём (vision) — так бот «слышит» и «видит» сообщения.
     // Для чатов из списка исключений распознавание фото пропускается.
@@ -1465,6 +1523,7 @@ async function fireReengage(accountId, peerId) {
   if (!client) return;
   const settings = await getAccountSettings(accountId);
   if (!settings || !settings.is_autoreply_enabled) return;
+  if (await isPeerBlacklisted(accountId, peerId)) return;
   // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем
   // согласие ДО отключения автоответа. Голосовые собеседника уже расшифрованы
   // в текст на этапе extractIncomingText, так ��то распознаётся и голосовой,
@@ -1679,6 +1738,11 @@ async function processBufferedMessages(
       console.log(
         `[${accountLabel(accountId)}] Сообщение от ${senderName} получено, но ав��оответчик выключен.`,
       );
+      return;
+    }
+
+    if (await isPeerBlacklisted(accountId, peerId)) {
+      console.log(`[${accountLabel(accountId)}] ${senderName} в blacklist — не отвечаю.`);
       return;
     }
     // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем
@@ -2168,6 +2232,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
       if (!sender || sender.bot || sender.self) continue;
 
       const peerId = String(sender.id);
+      if (await isPeerBlacklisted(accountId, peerId)) continue;
 
       // Если это сообщение сей��ас ��опит live-обработчик — не вмешиваемся.
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
@@ -2319,6 +2384,7 @@ async function sendGreetings(accountId, kind) {
       if (!sender || sender.bot || sender.self) continue;
 
       const peerId = String(sender.id);
+      if (await isPeerBlacklisted(accountId, peerId)) continue;
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
       // По диалогу с активной паузой занятости приветствие не шлём.
       if (deferredDialogs.has(bufferKey(accountId, peerId))) continue;

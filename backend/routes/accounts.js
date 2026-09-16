@@ -1,11 +1,18 @@
 const express = require('express');
 const db = require('../db');
-const { startLogin, confirmCode, confirmPassword, isActive } = require('../services/telegramClient');
+const { startLogin, confirmCode, confirmPassword, isActive, activateAccount, deactivateAccount } = require('../services/telegramClient');
 
 const router = express.Router();
 function getUserId(req) { return req.dbUser ? req.dbUser.id : 1; }
 
-const ACCOUNTS_LIMIT = 10;
+async function getAccountLimit(userId) {
+  const [[user]] = await db.execute(
+    'SELECT account_limit FROM users WHERE id = ? LIMIT 1',
+    [userId],
+  );
+  const limit = Number(user?.account_limit);
+  return Number.isFinite(limit) && limit > 0 ? limit : 10;
+}
 
 // Получить все аккаунты текущего demo-пользователя.
 router.get('/', async (req, res) => {
@@ -45,14 +52,15 @@ router.get('/conversations', async (req, res) => {
     const userId = getUserId(req);
 
     const [rows] = await db.execute(
-      `SELECT cm.account_id, cm.peer_id, cm.peer_username,
+      `SELECT cm.account_id, cm.peer_id,
+              MAX(cm.peer_username) AS peer_username,
               COUNT(*) AS message_count,
               MAX(cm.created_at) AS last_at,
-              a.phone AS account_phone
+              MAX(a.phone) AS account_phone
        FROM conversation_messages cm
        JOIN accounts a ON a.id = cm.account_id
        WHERE a.user_id = ?
-       GROUP BY cm.account_id, cm.peer_id, cm.peer_username, a.phone
+       GROUP BY cm.account_id, cm.peer_id
        ORDER BY last_at DESC`,
       [userId],
     );
@@ -107,10 +115,11 @@ router.post('/', async (req, res) => {
       [getUserId(req)],
     );
 
-    if (Number(countRow.total) >= ACCOUNTS_LIMIT) {
+    const limit = await getAccountLimit(getUserId(req));
+    if (Number(countRow.total) >= limit) {
       return res.status(400).json({
         success: false,
-        error: `Нельзя добавить больше ${ACCOUNTS_LIMIT} аккаунтов`,
+        error: `Нельзя добавить больше ${limit} аккаунтов`,
       });
     }
 
@@ -191,9 +200,14 @@ router.post('/connect/code', async (req, res) => {
     }
 
     // Успех -> сохраняем session_string (и промпт) в базу
-    await saveSession(getUserId(req), phone, result.sessionString, prompt);
-    return res.json({ success: true, status: 'connected' });
+    const accountId = await saveSession(getUserId(req), phone, result.sessionString, prompt);
+    await deactivateAccount(accountId);
+    const online = await activateAccount(accountId, result.sessionString);
+    return res.json({ success: true, status: 'connected', is_online: online });
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ success: false, error: error.message });
+    }
     console.error('Connect code error:', error);
     return res.status(500).json({ success: false, error: 'Неверный код или ошибка входа' });
   }
@@ -211,9 +225,14 @@ router.post('/connect/password', async (req, res) => {
 
     const result = await confirmPassword(getUserId(req), phone, password);
 
-    await saveSession(getUserId(req), phone, result.sessionString, prompt);
-    return res.json({ success: true, status: 'connected' });
+    const accountId = await saveSession(getUserId(req), phone, result.sessionString, prompt);
+    await deactivateAccount(accountId);
+    const online = await activateAccount(accountId, result.sessionString);
+    return res.json({ success: true, status: 'connected', is_online: online });
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ success: false, error: error.message });
+    }
     console.error('Connect password error:', error);
     return res.status(500).json({ success: false, error: 'Неверный пароль или ошибка входа' });
   }
@@ -374,6 +393,7 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
     }
 
+    await deactivateAccount(req.params.id);
     return res.json({ success: true });
   } catch (error) {
     console.error('Delete account error:', error);
@@ -402,13 +422,26 @@ async function saveSession(userId, phone, sessionString, prompt = '') {
         [sessionString, 'Подключен', existing.id, userId],
       );
     }
-  } else {
-    await db.execute(
-      `INSERT INTO accounts (user_id, phone, session_string, status, is_autoreply_enabled, prompt)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [userId, phone, sessionString, 'Подключен', false, prompt || ''],
-    );
+    return existing.id;
   }
+
+  const limit = await getAccountLimit(userId);
+  const [[countRow]] = await db.execute(
+    'SELECT COUNT(*) AS total FROM accounts WHERE user_id = ?',
+    [userId],
+  );
+  if (Number(countRow.total) >= limit) {
+    const error = new Error(`Нельзя добавить больше ${limit} аккаунтов`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const [result] = await db.execute(
+    `INSERT INTO accounts (user_id, phone, session_string, status, is_autoreply_enabled, prompt)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [userId, phone, sessionString, 'Подключен', false, prompt || ''],
+  );
+  return result.insertId;
 }
 
 module.exports = router;

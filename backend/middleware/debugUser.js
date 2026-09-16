@@ -8,11 +8,11 @@ module.exports = function debugUser(req, res, next) {
   const shouldLog = process.env.NODE_ENV === 'development' || req.headers['x-debug'] === '1';
 
   if (shouldLog) {
-    console.log('DEBUG req.user:', util.inspect(req.user, { depth: 5 }));
+    console.log('DEBUG req.dbUser:', util.inspect(req.dbUser, { depth: 5 }));
   }
 
-  if (req.user) {
-    const userId = req.user.id || req.user.user_id || req.user.userId || 'unknown';
+  if (req.dbUser) {
+    const userId = req.dbUser.id || 'unknown';
     try {
       res.setHeader('X-Debug-User', String(userId));
     } catch (e) {
