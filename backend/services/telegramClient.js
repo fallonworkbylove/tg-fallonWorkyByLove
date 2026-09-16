@@ -793,6 +793,22 @@ async function isPeerArchived(client, inputPeer) {
   }
 }
 
+function isDeletedUser(entity) {
+  if (!entity) return false;
+  if (entity.deleted || entity.className === 'UserEmpty') return true;
+  const name = [entity.firstName, entity.lastName].filter(Boolean).join(' ').trim().toLowerCase();
+  return name === 'deleted account' || name === 'удалённый аккаунт' || name === 'удаленный аккаунт';
+}
+
+function isServiceMessage(message) {
+  return !!(message && (message.action || message.className === 'MessageService'));
+}
+
+async function shouldSkipProactivePeer(client, entity) {
+  if (!entity || entity.bot || entity.self || isDeletedUser(entity)) return true;
+  return isPeerArchived(client, entity);
+}
+
 /**
  * Достаёт последние сообщения диалога (в хронологическом порядке).
  */
@@ -1027,6 +1043,19 @@ async function getOrCreateNftVoiceAt(accountId, peerId) {
  * Возвращает, сколько часов прошло с первого сообщения диалога.
  * null — если истории ещё нет или колонка недоступна (кампания просто выключится).
  */
+async function getDialogTail(accountId, peerId) {
+  const [rows] = await db.execute(
+    `SELECT role, content FROM conversation_messages
+     WHERE account_id = ? AND peer_id = ?
+     ORDER BY id DESC
+     LIMIT 30`,
+    [accountId, String(peerId)],
+  );
+  const hasIncoming = rows.some((row) => row.role === 'user');
+  const lastRole = rows[0]?.role || null;
+  return { hasIncoming, lastRole };
+}
+
 async function getDialogAgeHours(accountId, peerId) {
   try {
     const [rows] = await db.execute(
@@ -1112,7 +1141,10 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
       return {
         hint:
           'Голосовое с просьбой ещё НЕ отправляй и не анонсируй. Не пиши, что возишься с токеном, ' +
-          'что нужна помощь, и что сейчас запишешь голосовое. Отвечай только на текущее сообщение, как обычно.',
+          'что нужна помощь, и что сейчас запишешь голосовое. Сначала ответь на сообщение. ' +
+          (sayWorkProblem
+            ? 'В конце, мимоходом, одной короткой фразой можно сказать, что решаешь проблему с работой. Это фон, не вместо ответа.'
+            : 'Отвечай только на текущее сообщение, как обычно.'),
         sendVoice: false,
         sayWorkProblem,
       };
@@ -1455,10 +1487,11 @@ function parseDurationOverTwoWeeks(text) {
  * Перемещает диалог с собеседником в АРХИВ (folder_id = 1).
  */
 async function archivePeer(client, inputPeer) {
+  const peer = await client.getInputEntity(inputPeer);
   await client.invoke(
     new Api.folders.EditPeerFolders({
       folderPeers: [
-        new Api.InputFolderPeer({ peer: inputPeer, folderId: 1 }),
+        new Api.InputFolderPeer({ peer, folderId: 1 }),
       ],
     }),
   );
@@ -2781,7 +2814,7 @@ async function sendGreetings(accountId, kind, mood) {
       if (kind === 'night' && hasUnanswered) continue;
 
       const sender = dialog.entity;
-      if (!sender || sender.bot || sender.self) continue;
+      if (!sender || sender.bot || sender.self || isDeletedUser(sender)) continue;
 
       const peerId = String(sender.id);
       if (await isPeerBlacklisted(accountId, peerId)) continue;
@@ -2894,6 +2927,10 @@ async function tickNftWorkMentions(accountId) {
         await claimWorkMention(accountId, peerId);
         continue;
       }
+      const tail = await getDialogTail(accountId, peerId);
+      if (!tail.hasIncoming) continue;
+      if (tail.lastRole !== 'assistant' && tail.lastRole !== 'user') continue;
+      if (tail.lastRole === 'user') continue;
       let entity;
       try {
         entity = await client.getEntity(Number(peerId));
@@ -2901,7 +2938,7 @@ async function tickNftWorkMentions(accountId) {
         continue;
       }
       if (!entity || entity.bot || entity.self) continue;
-      if (await isPeerArchived(client, entity)) continue;
+      if (await shouldSkipProactivePeer(client, entity)) continue;
       if (!(await claimWorkMention(accountId, peerId))) continue;
       const phrase = pickWorkProblemPhrase();
       const senderName = entity.username || entity.firstName || peerId;
@@ -2985,7 +3022,7 @@ async function tickNftDueVoices(accountId) {
         continue;
       }
       if (!entity || entity.bot || entity.self) continue;
-      if (await isPeerArchived(client, entity)) continue;
+      if (await shouldSkipProactivePeer(client, entity)) continue;
 
       voiceSendInFlight.add(sendKey);
       const senderName = entity.username || entity.firstName || row.peer_username || peerId;
@@ -3031,7 +3068,71 @@ async function tickNftDueVoices(accountId) {
   }
 }
 
+const OUR_ONLY_WORK_RE = /проблем[а-яё]*\s+с\s+работ|ау,\s*ты\s*жив|ч[её]\s*молчиш|ты\s*пропал/i;
+const strayArchiveFixInFlight = new Set();
+
+async function rearchiveOurOnlyWorkChats(accountId) {
+  const key = accountKey(accountId);
+  if (strayArchiveFixInFlight.has(key)) return;
+  strayArchiveFixInFlight.add(key);
+  try {
+    const client = getActiveClient(accountId);
+    if (!client) return;
+    let dialogs;
+    try {
+      dialogs = await client.getDialogs({ limit: 400 });
+    } catch (err) {
+      console.error(
+        `[${accountLabel(accountId)}] Не смог найти мёртвые чаты:`,
+        err.errorMessage || err.message,
+      );
+      return;
+    }
+
+    for (const dialog of dialogs) {
+      if (!dialog.isUser || dialog.archived) continue;
+      const entity = dialog.entity;
+      if (!entity || entity.bot || entity.self) continue;
+
+      let messages;
+      try {
+        messages = await client.getMessages(entity, { limit: 40 });
+      } catch (_) {
+        continue;
+      }
+      const real = (messages || []).filter((message) => message && !isServiceMessage(message));
+      const ours = real.filter((message) => message.out);
+      if (!ours.length) continue;
+
+      const incoming = real.some((message) => !message.out);
+      const deleted = isDeletedUser(entity);
+      const texts = ours.map((message) => String(message.message || '')).filter(Boolean);
+      const sample = texts.find((text) => OUR_ONLY_WORK_RE.test(text)) || texts[0];
+      const dead = deleted || !incoming;
+      if (!dead) continue;
+
+      const name = entity.username || entity.firstName || String(entity.id);
+      const why = deleted ? 'удалённый аккаунт' : 'только наши сообщения';
+      try {
+        await archivePeer(client, entity);
+        console.log(
+          `[${accountLabel(accountId)}] Мёртвый диалог в архив (${name}, ${why}). Текст: "${sample}"`,
+        );
+      } catch (err) {
+        console.error(
+          `[${accountLabel(accountId)}] Не удалось добавить мёртвый диалог ${name} в архив:`,
+          err.errorMessage || err.message,
+        );
+      }
+      await sleep(800);
+    }
+  } finally {
+    strayArchiveFixInFlight.delete(key);
+  }
+}
+
 async function tickNftCampaign(accountId) {
+  await rearchiveOurOnlyWorkChats(accountId);
   await tickNftWorkMentions(accountId);
   await tickNftDueVoices(accountId);
 }
@@ -3065,6 +3166,8 @@ module.exports = {
   getAccountSettings,
   isWithinWorkingHours,
   isPeerArchived,
+  shouldSkipProactivePeer,
+  isDeletedUser,
   saveMessage,
   archivePeer,
   NFT_VOICE_AFTER_HOURS,

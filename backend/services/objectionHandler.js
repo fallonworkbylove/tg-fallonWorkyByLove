@@ -252,6 +252,8 @@ async function sendSilencePings({ getAccountSettings, isWithinWorkingHours, isAu
         if (!client) continue;
 
         const entity = await client.getEntity(row.peer_username || row.peer_id);
+        const { shouldSkipProactivePeer } = require('./telegramClient');
+        if (await shouldSkipProactivePeer(client, entity)) continue;
         const text = SILENCE_PINGS[Math.floor(Math.random() * SILENCE_PINGS.length)];
         await client.sendMessage(entity, { message: text });
         await saveMessage(row.account_id, row.peer_id, row.peer_username, 'assistant', text);
@@ -349,6 +351,8 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
         if (!client) continue;
 
         const entity = await client.getEntity(row.peer_username || row.peer_id);
+        const { shouldSkipProactivePeer } = require('./telegramClient');
+        if (await shouldSkipProactivePeer(client, entity)) continue;
 
         try {
           await client.invoke(
