@@ -1842,7 +1842,10 @@ async function fireReengage(accountId, peerId) {
     // диалога для подмешивания в промпт текущего ответа.
     const learningStage = learningDb.detectStage({ objectionHint, nftHint: nft.hint, historyLength: history.length });
     await learningDb.scoreAndLearn(accountId, peerId, text);
-    const learningSnippet = await learningDb.buildLearningSnippet(learningStage);
+    const [learningSnippet, manualSnippet] = await Promise.all([
+      learningDb.buildLearningSnippet(learningStage),
+      learningDb.buildManualTrainingSnippet(accountId, text),
+    ]);
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
 
@@ -1850,6 +1853,7 @@ async function fireReengage(accountId, peerId) {
       mediaEnabled,
       campaignHint: nft.hint,
       learningSnippet,
+      manualSnippet,
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
       memoryHint: dueMemory?.hint,
@@ -2252,7 +2256,10 @@ async function processBufferedMessages(
     // диалога для подмешивания в промпт текущего ответа.
     const learningStage = learningDb.detectStage({ objectionHint, nftHint: nft.hint, historyLength: history.length });
     await learningDb.scoreAndLearn(accountId, peerId, text);
-    const learningSnippet = await learningDb.buildLearningSnippet(learningStage);
+    const [learningSnippet, manualSnippet] = await Promise.all([
+      learningDb.buildLearningSnippet(learningStage),
+      learningDb.buildManualTrainingSnippet(accountId, text),
+    ]);
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
 
@@ -2261,6 +2268,7 @@ async function processBufferedMessages(
       noMediaExcuse,
       campaignHint: nft.hint,
       learningSnippet,
+      manualSnippet,
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
       memoryHint: dueMemory?.hint,

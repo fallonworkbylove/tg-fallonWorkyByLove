@@ -446,6 +446,82 @@ async function buildLearningSnippet(stage = 'general') {
   return snippet;
 }
 
+function tokensOf(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я0-9\s]/gi, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length >= 2);
+}
+
+function exampleScore(incoming, clientMessage) {
+  const incomingNorm = tokensOf(incoming).join(' ');
+  const exampleNorm = tokensOf(clientMessage).join(' ');
+  if (!incomingNorm || !exampleNorm) return 0;
+  if (incomingNorm.includes(exampleNorm) || exampleNorm.includes(incomingNorm)) return 1;
+  const incomingSet = new Set(tokensOf(incoming));
+  let hits = 0;
+  for (const word of tokensOf(clientMessage)) {
+    if (incomingSet.has(word)) hits += 1;
+  }
+  return hits / tokensOf(clientMessage).length;
+}
+
+/**
+ * Примеры из вкладки «Учить» (training_examples). Это прямые указания
+ * владельца, не статистика реакций. Похожие на текущую реплику идут первыми,
+ * остальные недавние — чтобы заметка тоже влияла на тон.
+ */
+async function buildManualTrainingSnippet(accountId, incomingText) {
+  try {
+    const [rows] = await db.execute(
+      `SELECT client_message, correct_answer, note
+       FROM training_examples
+       WHERE account_id = ?
+       ORDER BY id DESC
+       LIMIT 24`,
+      [accountId],
+    );
+    if (!rows.length) return '';
+
+    const matched = rows
+      .map((row) => ({ row, score: exampleScore(incomingText, row.client_message) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score);
+    const picked = [];
+    const used = new Set();
+    for (const item of matched) {
+      if (picked.length >= 6) break;
+      picked.push(item.row);
+      used.add(item.row);
+    }
+    for (const row of rows) {
+      if (picked.length >= 6) break;
+      if (matched.length && picked.length >= 4) break;
+      if (used.has(row)) continue;
+      picked.push(row);
+      used.add(row);
+    }
+    if (!picked.length) return '';
+
+    let snippet = '\n\n=== ПРИМЕРЫ ИЗ ВКЛАДКИ «УЧИТЬ» ===\n';
+    snippet += 'Это прямые указания владельца, не статистика. ';
+    snippet += 'Если реплика собеседника похожа на «Человек», отвечай в том же смысле и тоне, что «Ответ». ';
+    snippet += 'Не копируй дословно, если ситуация чуть другая, но суть бери отсюда. Заметку соблюдай.\n';
+    for (const row of picked) {
+      snippet += `Человек: «${String(row.client_message || '').slice(0, 180)}»\n`;
+      snippet += `Ответ: «${String(row.correct_answer || '').slice(0, 220)}»\n`;
+      if (row.note) snippet += `Заметка: ${String(row.note).slice(0, 160)}\n`;
+      snippet += '\n';
+    }
+    return snippet;
+  } catch (err) {
+    console.error('[learningDb] Не удалось прочитать примеры из вкладки «Учить»:', err.message);
+    return '';
+  }
+}
+
 module.exports = {
   LEARNING_ENABLED,
   STAGES,
@@ -453,6 +529,7 @@ module.exports = {
   recordBotReply,
   scoreAndLearn,
   buildLearningSnippet,
+  buildManualTrainingSnippet,
   getBestPatterns,
   getWorstPatterns,
   pinPattern,
