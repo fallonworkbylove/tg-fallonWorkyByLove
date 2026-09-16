@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../db');
-const { getActiveClient, isPeerArchived, NFT_VOICE_AFTER_HOURS } = require('./telegramClient');
+const { getActiveClient, isPeerArchived, isNeverContact, NFT_VOICE_AFTER_HOURS } = require('./telegramClient');
 
 // Разрешённые расширения для готовых фото.
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
@@ -200,6 +200,13 @@ async function sendDuePhotos() {
       // Собеседник выбирается по сохранённому Telegram ID. Имя контакта не
       // является идентификатором и может совпадать у нескольких пользователей.
       const entity = await resolvePeerEntity(client, row.peer_id, row.peer_username);
+      if (isNeverContact(entity) || isNeverContact(row.peer_username)) {
+        await db.execute(
+          'UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?',
+          [row.id],
+        );
+        continue;
+      }
 
       // Архивные диалоги не ��олучают готовые ежедневные фотографии.
       if (await isPeerArchived(client, entity)) {

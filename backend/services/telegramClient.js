@@ -793,6 +793,14 @@ async function isPeerArchived(client, inputPeer) {
   }
 }
 
+function isNeverContact(entityOrUsername) {
+  const raw = typeof entityOrUsername === 'string'
+    ? entityOrUsername
+    : entityOrUsername && entityOrUsername.username;
+  const name = String(raw || '').replace(/^@/, '').trim().toLowerCase();
+  return name === 'telegram';
+}
+
 function isDeletedUser(entity) {
   if (!entity) return false;
   if (entity.deleted || entity.className === 'UserEmpty') return true;
@@ -805,7 +813,7 @@ function isServiceMessage(message) {
 }
 
 async function shouldSkipProactivePeer(client, entity) {
-  if (!entity || entity.bot || entity.self || isDeletedUser(entity)) return true;
+  if (!entity || entity.bot || entity.self || isDeletedUser(entity) || isNeverContact(entity)) return true;
   return isPeerArchived(client, entity);
 }
 
@@ -1608,7 +1616,7 @@ async function handleIncomingMessage(accountId, event) {
     const sender = await message.getSender();
 
     // Фильтр 2: игнорируем ботов
-    if (sender && sender.bot) return;
+    if (sender && (sender.bot || isNeverContact(sender))) return;
 
     const peerId = sender ? String(sender.id) : String(message.senderId);
     const peerUsername = sender ? sender.username : null;
@@ -1948,6 +1956,7 @@ async function processBufferedMessages(
   // внутри своей человеческой пау��ы перед ��тветом), второй параллельный
   // вызов (из скана непрочитанных или рассылки приветствий) пропускаем,
   // а не запускаем вторую генерацию ответа на то же сообщение.
+  if (isNeverContact(sender) || isNeverContact(senderName)) return;
   const inFlightKey = bufferKey(accountId, peerId);
   if (processingInFlight.has(inFlightKey)) {
     console.log(
@@ -2476,7 +2485,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
       }
 
       const sender = dialog.entity;
-      if (!sender || sender.bot || sender.self) continue;
+      if (!sender || sender.bot || sender.self || isNeverContact(sender)) continue;
 
       const peerId = String(sender.id);
       if (await isPeerBlacklisted(accountId, peerId)) continue;
@@ -2814,7 +2823,7 @@ async function sendGreetings(accountId, kind, mood) {
       if (kind === 'night' && hasUnanswered) continue;
 
       const sender = dialog.entity;
-      if (!sender || sender.bot || sender.self || isDeletedUser(sender)) continue;
+      if (!sender || sender.bot || sender.self || isDeletedUser(sender) || isNeverContact(sender)) continue;
 
       const peerId = String(sender.id);
       if (await isPeerBlacklisted(accountId, peerId)) continue;
@@ -3166,6 +3175,7 @@ module.exports = {
   getAccountSettings,
   isWithinWorkingHours,
   isPeerArchived,
+  isNeverContact,
   shouldSkipProactivePeer,
   isDeletedUser,
   saveMessage,
