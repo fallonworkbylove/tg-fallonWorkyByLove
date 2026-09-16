@@ -880,6 +880,135 @@ const NFT_VOICE_FILE = 'nft.ogg';
 // NFT-голосовое разрешено только с третьего дня общения.
 // Первые 48 часов после самого раннего сообщения всегда исключены.
 const NFT_VOICE_AFTER_HOURS = 48;
+const NFT_VOICE_LEAD_MIN_MS = 60 * 60 * 1000;
+const NFT_VOICE_LEAD_MAX_MS = 2 * 60 * 60 * 1000;
+// Одно сообщение «проблему с работой решаю» примерно за 30 минут до голосового.
+const NFT_WORK_MENTION_MIN_MS = 10 * 60 * 1000;
+const NFT_WORK_MENTION_MAX_MS = 50 * 60 * 1000;
+const WORK_PROBLEM_PHRASES = [
+  'проблему с работой решаю',
+  'щас проблему с работой решаю',
+  'минутку, проблему с работой решаю',
+  'занята, проблему с работой решаю',
+];
+
+let nftScheduleReady = false;
+const nftWorkMentionInFlight = new Set();
+
+function pickWorkProblemPhrase() {
+  return WORK_PROBLEM_PHRASES[Math.floor(Math.random() * WORK_PROBLEM_PHRASES.length)];
+}
+
+function withWorkProblemLine(text) {
+  const line = pickWorkProblemPhrase();
+  const body = String(text || '').trim();
+  if (!body) return line;
+  if (/проблем[а-яё]*\s+с\s+работ/i.test(body)) return body;
+  return `${body}\n${line}`;
+}
+
+function pickWorkMentionAt(scheduledAt, now = Date.now()) {
+  const until = scheduledAt.getTime() - now;
+  if (until <= 3 * 60 * 1000) return new Date(now);
+  const hi = Math.min(NFT_WORK_MENTION_MAX_MS, until - 3 * 60 * 1000);
+  const lo = Math.min(NFT_WORK_MENTION_MIN_MS, hi);
+  const before = lo + Math.floor(Math.random() * (hi - lo + 1));
+  return new Date(scheduledAt.getTime() - before);
+}
+
+async function addNftScheduleColumn(name, definition) {
+  try {
+    await db.execute(`ALTER TABLE nft_voice_schedule ADD COLUMN ${name} ${definition}`);
+  } catch (err) {
+    if (err.errno !== 1060 && err.code !== 'ER_DUP_FIELDNAME') throw err;
+  }
+}
+
+async function ensureNftScheduleTable() {
+  if (nftScheduleReady) return;
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS nft_voice_schedule (
+      account_id INT NOT NULL,
+      peer_id VARCHAR(64) NOT NULL,
+      scheduled_at DATETIME NOT NULL,
+      work_mention_at DATETIME NULL,
+      work_mention_sent TINYINT NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (account_id, peer_id)
+    )
+  `);
+  await addNftScheduleColumn('work_mention_at', 'DATETIME NULL');
+  await addNftScheduleColumn('work_mention_sent', 'TINYINT NOT NULL DEFAULT 0');
+  nftScheduleReady = true;
+}
+
+async function claimWorkMention(accountId, peerId) {
+  const [res] = await db.execute(
+    `UPDATE nft_voice_schedule
+     SET work_mention_sent = 1
+     WHERE account_id = ? AND peer_id = ? AND work_mention_sent = 0`,
+    [accountId, String(peerId)],
+  );
+  return res.affectedRows > 0;
+}
+
+async function releaseWorkMention(accountId, peerId) {
+  await db.execute(
+    `UPDATE nft_voice_schedule SET work_mention_sent = 0
+     WHERE account_id = ? AND peer_id = ?`,
+    [accountId, String(peerId)],
+  );
+}
+
+async function getOrCreateNftVoiceAt(accountId, peerId) {
+  await ensureNftScheduleTable();
+  const [[existing]] = await db.execute(
+    `SELECT scheduled_at, work_mention_at, work_mention_sent
+     FROM nft_voice_schedule
+     WHERE account_id = ? AND peer_id = ? LIMIT 1`,
+    [accountId, peerId],
+  );
+  if (existing?.scheduled_at) {
+    const scheduledAt = new Date(existing.scheduled_at);
+    let workMentionAt = existing.work_mention_at ? new Date(existing.work_mention_at) : null;
+    if (!workMentionAt) {
+      workMentionAt = pickWorkMentionAt(scheduledAt);
+      await db.execute(
+        `UPDATE nft_voice_schedule SET work_mention_at = ?
+         WHERE account_id = ? AND peer_id = ? AND work_mention_at IS NULL`,
+        [workMentionAt, accountId, String(peerId)],
+      );
+    }
+    return {
+      scheduledAt,
+      workMentionAt,
+      workMentionSent: Number(existing.work_mention_sent) === 1,
+    };
+  }
+
+  const delay = NFT_VOICE_LEAD_MIN_MS
+    + Math.floor(Math.random() * (NFT_VOICE_LEAD_MAX_MS - NFT_VOICE_LEAD_MIN_MS + 1));
+  const scheduledAt = new Date(Date.now() + delay);
+  const workMentionAt = pickWorkMentionAt(scheduledAt);
+  await db.execute(
+    `INSERT INTO nft_voice_schedule
+       (account_id, peer_id, scheduled_at, work_mention_at)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE scheduled_at = scheduled_at`,
+    [accountId, String(peerId), scheduledAt, workMentionAt],
+  );
+  const [[row]] = await db.execute(
+    `SELECT scheduled_at, work_mention_at, work_mention_sent
+     FROM nft_voice_schedule
+     WHERE account_id = ? AND peer_id = ? LIMIT 1`,
+    [accountId, peerId],
+  );
+  return {
+    scheduledAt: new Date(row.scheduled_at),
+    workMentionAt: row.work_mention_at ? new Date(row.work_mention_at) : workMentionAt,
+    workMentionSent: Number(row?.work_mention_sent) === 1,
+  };
+}
 
 /**
  * Возвращает, сколько часов прошло с первого сообщения диалога.
@@ -963,13 +1092,24 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
       // предлагаем, автоответ для этого собеседника отключён.
       return { hint: null, sendVoice: false };
     }
+    const plan = await getOrCreateNftVoiceAt(accountId, peerId);
+    const now = Date.now();
+    if (now < plan.scheduledAt.getTime()) {
+      const sayWorkProblem = !plan.workMentionSent
+        && plan.workMentionAt
+        && now >= plan.workMentionAt.getTime();
+      return {
+        hint:
+          'Голосовое с просьбой ещё НЕ отправляй и не анонсируй. Не пиши, что возишься с токеном, ' +
+          'что нужна помощь, и что сейчас запишешь голосовое. Отвечай только на текущее сообщение, как обычно.',
+        sendVoice: false,
+        sayWorkProblem,
+      };
+    }
     return {
       hint:
-        'Вы уже общаетесь третий день. Ты уже рассказывала, что зарабатываешь на NFT. ' +
-        'Сейчас тебе нужна небольшая помощь с одним токеном. Ответь коротко и по-человечески: ' +
-        'скажи, что как раз возишься с токеном и не уверена, что делаешь правильно, и что сейчас ' +
-        'запишешь голосовое и объяснишь. Не проси денег, н�� давай ссылок, не объясняй детали текстом — ' +
-        'детали будут в голосовом. Одна-две короткие фразы, без давления.',
+        'Сейчас уйдёт голосовое. Не пиши, что возишься с токеном. ' +
+        'Одна короткая живая фраза без денег и ссылок, детали будут в голосовом. Можно почти без текста.',
       sendVoice: true,
     };
   }
@@ -1533,6 +1673,7 @@ async function fireReengage(accountId, peerId) {
   // Ночью не пишем — непрочитанное подхватит утренний скан/приветствие.
   if (!isWithinWorkingHours()) return;
 
+  let workMentionClaimed = false;
   try {
     const mediaLink =
       typeof settings.media_chat_link === 'string'
@@ -1593,6 +1734,11 @@ async function fireReengage(accountId, peerId) {
     if (!outText && rawMediaType && !mediaType) {
       const fillers = ['да по делам)', 'та так, по своим)', 'ничего особенного)', 'да ничё такого)'];
       outText = fillers[Math.floor(Math.random() * fillers.length)];
+    }
+
+    if (nft.sayWorkProblem && await claimWorkMention(accountId, peerId)) {
+      workMentionClaimed = true;
+      outText = withWorkProblemLine(outText);
     }
 
     // Небольшая «естественная» пауза перед отправкой — как будто отвлеклась
@@ -1684,6 +1830,7 @@ async function fireReengage(accountId, peerId) {
       }
     }
   } catch (e) {
+    if (workMentionClaimed) await releaseWorkMention(accountId, peerId).catch(() => {});
     console.error(
       `[${accountLabel(accountId)}] Не удалось отправить отложенный ответ ${senderName}:`,
       e.errorMessage || e.message,
@@ -1727,6 +1874,7 @@ async function processBufferedMessages(
       return;
     }
 
+  let workMentionClaimed = false;
   try {
     // Проверяем настройки аккаунта: автоответчик должен быть включён.
     const settings = await getAccountSettings(accountId);
@@ -2002,6 +2150,11 @@ async function processBufferedMessages(
       outText = fillers[Math.floor(Math.random() * fillers.length)];
     }
 
+    if (nft.sayWorkProblem && await claimWorkMention(accountId, peerId)) {
+      workMentionClaimed = true;
+      outText = withWorkProblemLine(outText);
+    }
+
     // 5. Держим случайную паузу с индикатором «печатает...» — так ответ
     // выглядит ��ивым, а не мгновенным. Длительность индикатора зависит от
     // длины итогового текста, чтобы длинные сообщения «печатались» дольше.
@@ -2137,6 +2290,7 @@ async function processBufferedMessages(
       }
     }
   } catch (err) {
+    if (workMentionClaimed) await releaseWorkMention(accountId, peerId).catch(() => {});
     console.error(
       `Ошибка обработки сообщения (аккаунт ${accountId}):`,
       err.message,
@@ -2636,7 +2790,81 @@ async function sendGreetings(accountId, kind, mood) {
  * Проверяет переход через границу рабочих часов и шлёт приветствие.
  * Вызыва��тся по таймеру раз �� минуту.
  */
+async function tickNftWorkMentions(accountId) {
+  const key = accountKey(accountId);
+  if (nftWorkMentionInFlight.has(key)) return;
+  nftWorkMentionInFlight.add(key);
+  try {
+    const client = getActiveClient(accountId);
+    if (!client) return;
+    const settings = await getAccountSettings(accountId);
+    if (!settings || !settings.is_autoreply_enabled) return;
+    await ensureNftScheduleTable();
+    const [rows] = await db.execute(
+      `SELECT peer_id, scheduled_at, work_mention_at FROM nft_voice_schedule
+       WHERE account_id = ? AND work_mention_sent = 0`,
+      [accountId],
+    );
+    const now = Date.now();
+    for (const row of rows) {
+      const peerId = String(row.peer_id);
+      const scheduledAt = new Date(row.scheduled_at);
+      if (scheduledAt.getTime() <= now) continue;
+      let workMentionAt = row.work_mention_at ? new Date(row.work_mention_at) : null;
+      if (!workMentionAt) {
+        workMentionAt = pickWorkMentionAt(scheduledAt, now);
+        await db.execute(
+          `UPDATE nft_voice_schedule SET work_mention_at = ?
+           WHERE account_id = ? AND peer_id = ? AND work_mention_at IS NULL`,
+          [workMentionAt, accountId, peerId],
+        );
+      }
+      if (workMentionAt.getTime() > now) continue;
+      if (processingInFlight.has(bufferKey(accountId, peerId))) continue;
+      if (await isPeerBlacklisted(accountId, peerId)) continue;
+      if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) continue;
+      if (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE)) {
+        await claimWorkMention(accountId, peerId);
+        continue;
+      }
+      let entity;
+      try {
+        entity = await client.getEntity(Number(peerId));
+      } catch (_) {
+        continue;
+      }
+      if (!entity || entity.bot || entity.self) continue;
+      if (await isPeerArchived(client, entity)) continue;
+      if (!(await claimWorkMention(accountId, peerId))) continue;
+      const phrase = pickWorkProblemPhrase();
+      const senderName = entity.username || entity.firstName || peerId;
+      try {
+        await sleep(1500 + Math.random() * 2500);
+        await client.sendMessage(entity, { message: phrase });
+        await saveMessage(accountId, peerId, senderName, 'assistant', phrase);
+        console.log(
+          `[${accountLabel(accountId)}] Перед NFT-голосовым для ${senderName}: "${phrase}"`,
+        );
+      } catch (err) {
+        await releaseWorkMention(accountId, peerId);
+        console.error(
+          `[${accountLabel(accountId)}] Не удалось написать про работу ${senderName}:`,
+          err.errorMessage || err.message,
+        );
+      }
+    }
+  } finally {
+    nftWorkMentionInFlight.delete(key);
+  }
+}
+
   function checkWorkBoundary(accountId) {
+    tickNftWorkMentions(accountId).catch((err) => {
+      console.error(
+        `[${accountLabel(accountId)}] Фраза про работу перед голосовым:`,
+        err.message,
+      );
+    });
     const currentPeriodId = timeStyle.getTimeStyle(getWorkZoneHour()).id;
     const previousPeriodId = workStateByAccount.get(accountId);
     if (previousPeriodId === undefined) {
