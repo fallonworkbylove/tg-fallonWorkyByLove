@@ -691,15 +691,28 @@ function pickReplyDelayMs(settings) {
   const clamp = (n, def) => {
     const v = Number(n);
     if (!Number.isFinite(v)) return def;
-    return Math.min(60, Math.max(1, Math.round(v)));
+    return Math.min(90, Math.max(8, Math.round(v)));
   };
 
-  let min = clamp(settings.reply_delay_min, 3);
-  let max = clamp(settings.reply_delay_max, 8);
+  let min = clamp(settings && settings.reply_delay_min, 25);
+  let max = clamp(settings && settings.reply_delay_max, 50);
+  // Старые дефолты 3–8 секунд слишком быстрые: абзац улетал в ту же минуту.
+  if (min <= 8 && max <= 15) {
+    min = 25;
+    max = 50;
+  }
   if (min > max) [min, max] = [max, min];
 
   const seconds = min + Math.random() * (max - min);
   return Math.round(seconds * 1000);
+}
+
+/**
+ * Пауза перед отправкой текста: настроенное «подумала» плюс набор.
+ * Длинное сообщение не должно появляться за несколько секунд.
+ */
+function delayBeforeSendMs(settings, text) {
+  return pickReplyDelayMs(settings) + computeTypingMs(text);
 }
 
 /**
@@ -710,10 +723,11 @@ function pickReplyDelayMs(settings) {
  * набора на смартфоне), итог ограничивается разумными рамками 1.2-9 сек.
  */
 function computeTypingMs(text) {
-  const MIN_MS = 1200;
-  const MAX_MS = 9000;
+  const MIN_MS = 4000;
+  const MAX_MS = 40000;
   const len = (text || '').length;
-  const charsPerSec = 14 + Math.random() * 8;
+  // 4–7 символов/сек — набор на телефоне с паузами, не скорость печати.
+  const charsPerSec = 4 + Math.random() * 3;
   const ms = (len / charsPerSec) * 1000;
   return Math.min(MAX_MS, Math.max(MIN_MS, Math.round(ms)));
 }
@@ -1869,7 +1883,7 @@ async function fireReengage(accountId, peerId) {
     // Небольшая «естественная» пауза перед отправкой — как будто отвлеклась
     // на пару мин��т, но всё-таки вернулась ответить на вопрос. Длительность
     // индикатора «печатает...» зависит от длины итогового текста.
-    const delayMs = pickReplyDelayMs(settings);
+    const delayMs = delayBeforeSendMs(settings, outText);
     console.log(
       `[${accountLabel(accountId)}] Пауз�� ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
     );
@@ -2169,10 +2183,11 @@ async function processBufferedMessages(
     // Например, на «что ищ��шь здесь?» отвечаем заранее заданным текстом.
     const fixedReply = findTextReplyForText(text);
     if (fixedReply) {
+      const textDelayMs = forcedDelayMs != null ? forcedDelayMs : delayBeforeSendMs(settings, fixedReply);
       console.log(
-        `[${accountLabel(accountId)}] Пауза ${Math.round(delayMs / 1000)}с перед фиксированным ответом для ${senderName}.`,
+        `[${accountLabel(accountId)}] Пауза ${Math.round(textDelayMs / 1000)}с перед фиксированным ответом для ${senderName}.`,
       );
-      await waitBeforeReply(client, sender, delayMs, computeTypingMs(fixedReply));
+      await waitBeforeReply(client, sender, textDelayMs, computeTypingMs(fixedReply));
   await client.sendMessage(sender, { message: fixedReply });
   lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
   await saveMessage(accountId, peerId, senderName, 'assistant', fixedReply);
@@ -2289,10 +2304,11 @@ async function processBufferedMessages(
     // 5. Держим случайную паузу с индикатором «печатает...» — так ответ
     // выглядит ��ивым, а не мгновенным. Длительность индикатора зависит от
     // длины итогового текста, чтобы длинные сообщения «печатались» дольше.
+    const textDelayMs = forcedDelayMs != null ? forcedDelayMs : delayBeforeSendMs(settings, outText);
     console.log(
-      `[${accountLabel(accountId)}] Пауза ${Math.round(delayMs / 1000)}с перед ответом для ${senderName}.`,
+      `[${accountLabel(accountId)}] Пауза ${Math.round(textDelayMs / 1000)}с перед ответом для ${senderName}.`,
     );
-    await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
+    await waitBeforeReply(client, sender, textDelayMs, computeTypingMs(outText));
 
     if (outText) {
   await client.sendMessage(sender, { message: outText });
