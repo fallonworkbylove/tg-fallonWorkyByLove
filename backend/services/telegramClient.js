@@ -1526,28 +1526,57 @@ async function shouldAskHowLong(accountId, peerId) {
  *   - фото -> скачивается и описывается через vision.
  * Для голосовых и фото результат помечается тегом, чтобы AI понимал контекст.
  */
+async function quotedTextOf(accountId, message) {
+  const reply = message && message.replyTo;
+  if (!reply) return '';
+  const inline = typeof reply.quoteText === 'string' ? reply.quoteText.trim() : '';
+  if (inline) return inline.slice(0, 180);
+
+  const replyId = reply.replyToMsgId || message.replyToMsgId;
+  if (!replyId) return '';
+  const client = getActiveClient(accountId);
+  if (!client) return '';
+  try {
+    const found = await client.getMessages(message.peerId, { ids: [replyId] });
+    const original = Array.isArray(found) ? found[0] : found;
+    return String(original && original.message || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  } catch (_) {
+    return '';
+  }
+}
+
+function withQuote(text, quote) {
+  const body = String(text || '').trim();
+  const cited = String(quote || '').replace(/\s+/g, ' ').trim();
+  if (!cited) return body;
+  if (!body) return `[ответ на «${cited}»]`;
+  return `[ответ на «${cited}»]: ${body}`;
+}
+
 async function extractIncomingText(accountId, message, peerId, peerUsername) {
-  // 1. Обычный текст (или по��пись отсутствует у медиа).
+  const quote = await quotedTextOf(accountId, message);
+  const attach = (text) => withQuote(text, quote);
+  // 1. Обычный текст (или подпись отсутствует у медиа).
   const rawText = message.message || '';
 
   // 2. Голо��овое или ауди�� — скачиваем и расшифровываем через Whisper.
   if (message.voice || message.audio) {
     const client = getActiveClient(accountId);
-    if (!client) return rawText;
+    if (!client) return attach(rawText);
 
     try {
       const buffer = await client.downloadMedia(message, {});
       if (buffer && buffer.length) {
         const transcript = await transcribeAudio(buffer);
         if (transcript) {
-          return rawText ? `${rawText}\n[Голосовое]: ${transcript}` : `[Голосовое]: ${transcript}`;
+          return attach(rawText ? `${rawText}\n[Голосовое]: ${transcript}` : `[Голосовое]: ${transcript}`);
         }
       }
     } catch (e) {
       console.error(`[${accountLabel(accountId)}] Не удалось расшифровать го��осовое:`, e.message);
     }
 
-    return rawText;
+    return attach(rawText);
   }
 
   // 3. Фото — распознаём соде��жимое, кр��ме чатов из списка исключений
@@ -1558,11 +1587,11 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
       console.log(
         `[${accountLabel(accountId)}] Распознавание фото отключено для этого чата — пропускаю.`,
       );
-      return rawText;
+      return attach(rawText);
     }
 
     const client = getActiveClient(accountId);
-    if (!client) return rawText;
+    if (!client) return attach(rawText);
 
     try {
       const inputPeer = await message.getInputSender();
@@ -1570,7 +1599,7 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
         console.log(
           `[${accountLabel(accountId)}] Собеседник в архиве — не распознаю фото.`,
         );
-        return rawText;
+        return attach(rawText);
       }
     } catch (e) {
       console.error('Не удалось проверить архив перед распознаванием фото:', e.message);
@@ -1585,17 +1614,17 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
             `[${accountLabel(accountId)}] Фото распознано: "${description}"`,
           );
           const caption = rawText ? ` Подпись: "${rawText}".` : '';
-          return `[фото от собеседника]: ${description}.${caption}`;
+          return attach(`[фото от собеседника]: ${description}.${caption}`);
         }
       }
     } catch (e) {
       console.error('Не удалось скачать/распознать фото:', e.message);
     }
-    return rawText;
+    return attach(rawText);
   }
 
-  // 4. Прочее — возвращае�� текст как есть.
-  return rawText;
+  // 4. Прочее — возвращаем текст вместе с цитатой, если человек ответил на неё.
+  return attach(rawText);
 }
 
 /**
