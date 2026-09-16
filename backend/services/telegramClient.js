@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+require('./relaxGramJsPing');
 const { TelegramClient, Api } = require('telegram');
 const { ConnectionTCPFull } = require('telegram/network');
 const { StringSession } = require('telegram/sessions');
