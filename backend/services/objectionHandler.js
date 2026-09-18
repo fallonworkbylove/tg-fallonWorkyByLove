@@ -1,5 +1,6 @@
 /**
- * ОБРАБОТКА ВОЗРАЖЕНИЙ + напоминание при молчании 2-3 дня.
+ * ОБРАБОТКА ВОЗРАЖЕНИЙ + архив молчащих диалогов и короткое голосовое
+ * «как проходит день» в первые сутки знакомства.
  *
  * Детекция возражений — ключевыми словами по входящему тексту (текст уже
  * расшифрован из голосовых на этапе extractIncomingText в telegramClient.js).
@@ -94,46 +95,32 @@ function detectHint(text) {
 }
 
 // ---------------------------------------------------------------------------
-// НАПОМИНАНИЕ ПРИ МОЛЧАНИИ 2-3 ДНЯ: «привет, чё молчиш)»
+// МОЛЧАНИЕ: архив через 2 дня без ответа собеседника + голосовое в первые сутки
 // ---------------------------------------------------------------------------
 
 let schemaReady = null;
 
 async function ensureSchema() {
   if (schemaReady) return schemaReady;
-  schemaReady = Promise.all([
-    db.execute(`
-      CREATE TABLE IF NOT EXISTS silence_pings (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        account_id INT NOT NULL,
-        peer_id VARCHAR(64) NOT NULL,
-        last_message_at DATETIME NOT NULL,
-        pinged_at DATETIME NOT NULL,
-        UNIQUE KEY uniq_account_peer_last (account_id, peer_id, last_message_at)
-      )
-    `),
-    db.execute(`
-      CREATE TABLE IF NOT EXISTS silence_voice_daily (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        account_id INT NOT NULL,
-        peer_id VARCHAR(64) NOT NULL,
-        sent_date DATE NOT NULL,
-        sent TINYINT NOT NULL,
-        decided_at DATETIME NOT NULL,
-        UNIQUE KEY uniq_account_peer_day (account_id, peer_id, sent_date)
-      )
-    `),
-  ]);
+  schemaReady = db.execute(`
+    CREATE TABLE IF NOT EXISTS silence_voice_daily (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      account_id INT NOT NULL,
+      peer_id VARCHAR(64) NOT NULL,
+      sent_date DATE NOT NULL,
+      sent TINYINT NOT NULL,
+      decided_at DATETIME NOT NULL,
+      UNIQUE KEY uniq_account_peer_day (account_id, peer_id, sent_date)
+    )
+  `);
   return schemaReady;
 }
-
-const SILENCE_PINGS = ['привет, чё молчиш)', 'ау, ты живой?)', 'привет) ты пропал'];
 
 // Готовое голосовое «как проходит день» — если собеседник не отвечает
 // 2-4 часа, раз в сутки бросаем монетку (50%) и, если выпало «отправить»,
 // шлём голосовое. Только в первые 2 дня знакомства (до старта NFT-кампании
 // на 3-й день — см. NFT_VOICE_AFTER_HOURS в telegramClient.js), чтобы не
-// конфликтовать с NFT-голосовым и напоминаниями.
+// конфликтовать с NFT-голосовым.
 const SILENCE_VOICE_FILE = 'kak_prohodit_den.ogg';
 // Возраст диалога, до которого действует это напоминание (первые 2 дня).
 const SILENCE_VOICE_MAX_DIALOG_AGE_HOURS = 48;
@@ -184,17 +171,17 @@ async function resolveArchiveEntity(client, peerId, peerUsername) {
 async function archiveSilentDialogs() {
   try {
     const { getActiveClient, archivePeer } = require('./telegramClient');
+    // Собеседник не писал двое суток — сразу в архив, без текстовых пингов.
     const [rows] = await db.execute(`
       SELECT
         cm.account_id,
         cm.peer_id,
         MAX(cm.peer_username) AS peer_username,
-        MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END) AS last_incoming_at,
-        MAX(cm.created_at) AS last_message_at
+        MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END) AS last_incoming_at
       FROM conversation_messages cm
       GROUP BY cm.account_id, cm.peer_id
-      HAVING last_incoming_at <= (NOW() - INTERVAL 2 DAY)
-        AND last_message_at > last_incoming_at
+      HAVING last_incoming_at IS NOT NULL
+        AND last_incoming_at <= (NOW() - INTERVAL 2 DAY)
     `);
 
     for (const row of rows) {
@@ -206,7 +193,7 @@ async function archiveSilentDialogs() {
         if (await archivePeer(client, entity)) {
           console.log(
             `[Аккаунт ${row.account_id}] Диалог ${row.peer_username || row.peer_id} ` +
-              'перемещён в архив после 2 дней без ответа.',
+              'перемещён в архив после 2 дней без ответа собеседника.',
           );
         }
       } catch (err) {
@@ -221,58 +208,6 @@ async function archiveSilentDialogs() {
   }
 }
 
-async function sendSilencePings({ getAccountSettings, isWithinWorkingHours, isAutoreplyDisabledForPeer, saveMessage }) {
-  const { getActiveClient } = require('./telegramClient');
-  try {
-    await ensureSchema();
-    if (!isWithinWorkingHours()) return;
-
-    const [rows] = await db.execute(`
-      SELECT cm.account_id, cm.peer_id, MAX(cm.peer_username) AS peer_username, MAX(cm.created_at) AS last_at
-      FROM conversation_messages cm
-      GROUP BY cm.account_id, cm.peer_id
-      HAVING last_at <= (NOW() - INTERVAL 2 DAY) AND last_at >= (NOW() - INTERVAL 3 DAY)
-    `);
-
-    for (const row of rows) {
-      try {
-        // Уже отвечал оператор вручную (после nft-голосового) — ИИ сюда не лезет.
-        if (await isAutoreplyDisabledForPeer(row.account_id, row.peer_id)) continue;
-
-        const settings = await getAccountSettings(row.account_id);
-        if (!settings || !settings.is_autoreply_enabled) continue;
-
-        const [[already]] = await db.execute(
-          `SELECT id FROM silence_pings WHERE account_id = ? AND peer_id = ? AND last_message_at = ? LIMIT 1`,
-          [row.account_id, row.peer_id, row.last_at],
-        );
-        if (already) continue;
-
-        const client = getActiveClient(row.account_id);
-        if (!client) continue;
-
-        const entity = await client.getEntity(row.peer_username || row.peer_id);
-        const { shouldSkipProactivePeer } = require('./telegramClient');
-        if (await shouldSkipProactivePeer(client, entity)) continue;
-        const text = SILENCE_PINGS[Math.floor(Math.random() * SILENCE_PINGS.length)];
-        await client.sendMessage(entity, { message: text });
-        await saveMessage(row.account_id, row.peer_id, row.peer_username, 'assistant', text);
-
-        await db.execute(
-          `INSERT INTO silence_pings (account_id, peer_id, last_message_at, pinged_at) VALUES (?, ?, ?, NOW())`,
-          [row.account_id, row.peer_id, row.last_at],
-        );
-
-        console.log(`[Аккаунт ${row.account_id}] Напоминание о молчании отправлено ${row.peer_username || row.peer_id}.`);
-      } catch (err) {
-        console.error(`[Аккаунт ${row.account_id}] Ошибка отправки напоминания о молчании:`, err.message);
-      }
-    }
-  } catch (err) {
-    console.error('[objectionHandler] Ошибка планировщика напоминаний о молчании:', err.message);
-  }
-}
-
 /**
  * Раз в сутки на диалог: если собеседник молчит 2-4 часа, бросаем монетку
  * (50%) и, если выпало «отправить», шлём голосовое «как проходит день».
@@ -281,7 +216,12 @@ async function sendSilencePings({ getAccountSettings, isWithinWorkingHours, isAu
  * должны пересекаться.
  */
 async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHours, isAutoreplyDisabledForPeer, saveMessage }) {
-  const { getActiveClient } = require('./telegramClient');
+  const {
+    getActiveClient,
+    shouldSkipProactivePeer,
+    isPermanentSendError,
+    retireUnreachablePeer,
+  } = require('./telegramClient');
   const { Api } = require('telegram');
   try {
     await ensureSchema();
@@ -295,7 +235,7 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
       return;
     }
 
-    // ВАЖНО: молчание считаем с��рого от last_incoming_at — последнего
+    // ВАЖНО: молчание считаем строго от last_incoming_at — последнего
     // сообщения САМОГО СОБЕСЕДНИКА. last_message_at (последнее сообщение в
     // диалоге вообще) сюда брать нельзя: он включает и собственные голосовые
     // напоминания бота, из-за чего каждое отправленное напоминание сдвигало
@@ -318,6 +258,8 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
     `);
 
     for (const row of rows) {
+      let entity = null;
+      const client = getActiveClient(row.account_id);
       try {
         if (await isAutoreplyDisabledForPeer(row.account_id, row.peer_id)) continue;
 
@@ -347,11 +289,9 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
 
         if (!shouldSend) continue;
 
-        const client = getActiveClient(row.account_id);
         if (!client) continue;
 
-        const entity = await client.getEntity(row.peer_username || row.peer_id);
-        const { shouldSkipProactivePeer } = require('./telegramClient');
+        entity = await client.getEntity(row.peer_username || Number(row.peer_id) || row.peer_id);
         if (await shouldSkipProactivePeer(client, entity)) continue;
 
         try {
@@ -374,6 +314,15 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
           `[Аккаунт ${row.account_id}] Ошибка отправки голосового напоминания ${row.peer_username || row.peer_id}:`,
           err.message,
         );
+        if (client && isPermanentSendError(err)) {
+          await retireUnreachablePeer(
+            client,
+            row.account_id,
+            row.peer_id,
+            entity,
+            err.errorMessage || err.message || 'unreachable',
+          );
+        }
       }
     }
   } catch (err) {
@@ -384,17 +333,18 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
 let schedulerStarted = false;
 
 /**
- * Запускает фоновый планировщик напоминаний при молчании 2-3 дня. Принимает
- * зависимости из telegramClient.js, чтобы не создавать циклический require.
+ * Фоновый цикл: архив после 2 дней без входящих и голосовое в первые сутки.
+ * Зависимости из telegramClient.js, чтобы не было циклического require.
  */
 function startSilenceScheduler(deps) {
   if (schedulerStarted) return;
   schedulerStarted = true;
 
   const tick = () => {
-    sendSilencePings(deps).catch((err) => console.error('[objectionHandler] silence tick error:', err.message));
-    sendSilenceVoiceReminders(deps).catch((err) => console.error('[objectionHandler] silence voice tick error:', err.message));
-    archiveSilentDialogs(deps).catch((err) => console.error('[objectionHandler] archive tick error:', err.message));
+    archiveSilentDialogs(deps)
+      .catch((err) => console.error('[objectionHandler] archive tick error:', err.message))
+      .then(() => sendSilenceVoiceReminders(deps))
+      .catch((err) => console.error('[objectionHandler] silence voice tick error:', err.message));
   };
   tick();
   setInterval(tick, 30 * 60 * 1000);

@@ -805,39 +805,110 @@ async function waitBeforeReply(client, peer, delayMs, typingMs = 10000) {
 }
 
 /**
- * Проверяет, лежит ли диалог с эт��м собеседником в АРХИВЕ.
+ * Проверяет, лежит ли диалог с этим собеседником в АРХИВЕ.
  *
  * В Telegram архив — это системная папка с folder_id = 1. Мы запрашиваем
- * диалог конкретного собеседника и смо��рим, в какой папке он находится.
+ * диалог конкретного собеседника и смотрим, в какой папке он находится.
  * Если в архивной (folderId === 1) — значит пользователь спрятал собеседника
  * и автоответчик отвечать ему не должен.
  *
- * Возвращает true, если диалог в архиве (ну��но ПРОПУСТИТ�� ответ).
- * При любой ошибке возвращает false — в спорных случаях бот всё же ответит,
- * чтобы не «проглотить» со��бщение реального че��овека.
+ * Возвращает true, если диалог в архиве (нужно ПРОПУСТИТЬ ответ).
+ * При любой ошибке возвращает true — в спорных случаях лучше не писать,
+ * чем случайно написать человеку из архива.
  */
 async function isPeerArchived(client, inputPeer) {
   try {
+    // GetPeerDialogs ждёт InputPeer. Сырой User/entity без access_hash
+    // часто даёт пустой ответ или диалог без folderId — из-за этого раньше
+    // архивные чаты проходили проверку и получали silence/NFT.
+    const peer = await client.getInputEntity(inputPeer);
     const result = await client.invoke(
       new Api.messages.GetPeerDialogs({
-        peers: [new Api.InputDialogPeer({ peer: inputPeer })],
+        peers: [new Api.InputDialogPeer({ peer })],
       }),
     );
 
     const dialog = result && result.dialogs && result.dialogs[0];
-    // Если Telegram не вернул диалог, безопаснее не отвечать, чем случайно
-    // написать пользователю из ар��ива.
     if (!dialog) return true;
+    if (dialog.className === 'DialogFolder') return true;
 
     // folderId === 1 -> архив. undefined/0 -> основной список.
-    return dialog.folderId === 1;
+    return Number(dialog.folderId) === 1;
   } catch (err) {
     console.error(
-      'Не удалось опре��елить папку диалога — ответ заблокирован для безопа��но��ти:',
+      'Не удалось определить папку диалога — ответ заблокирован для безопасности:',
       err.errorMessage || err.message,
     );
     return true;
   }
+}
+
+const PERMANENT_SEND_ERROR_CODES = [
+  'CHAT_WRITE_FORBIDDEN',
+  'USER_IS_BLOCKED',
+  'USER_BANNED_IN_CHANNEL',
+  'PEER_ID_INVALID',
+  'USER_PRIVACY_RESTRICTED',
+  'INPUT_USER_DEACTIVATED',
+  'USER_DEACTIVATED',
+  'USER_DEACTIVATED_BAN',
+];
+
+function isPermanentSendError(err) {
+  const message = `${err && err.errorMessage ? err.errorMessage : ''} ${err && err.message ? err.message : ''}`;
+  return PERMANENT_SEND_ERROR_CODES.some((code) => message.includes(code));
+}
+
+/**
+ * Собеседник недоступен (блок, удалён, закрыл ЛС): в архив и больше не трогаем
+ * silence / NFT / автоответ по этому peer.
+ */
+async function retireUnreachablePeer(client, accountId, peerId, entity, reason = 'unreachable') {
+  const name =
+    (entity && (entity.username || entity.firstName)) ||
+    String(peerId);
+  const why = String(reason || 'unreachable');
+
+  if (client && entity) {
+    try {
+      await archivePeer(client, entity);
+    } catch (err) {
+      console.error(
+        `[${accountLabel(accountId)}] Не удалось архивировать ${name} (${why}):`,
+        err.errorMessage || err.message,
+      );
+    }
+  }
+
+  try {
+    await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, why);
+  } catch (_) {}
+
+  try {
+    await claimWorkMention(accountId, peerId);
+  } catch (_) {}
+
+  try {
+    await ensureNftScheduleTable();
+    await db.execute(
+      `INSERT INTO nft_voice_schedule
+         (account_id, peer_id, scheduled_at, work_mention_at, work_mention_sent)
+       VALUES (?, ?, NOW(), NOW(), 1)
+       ON DUPLICATE KEY UPDATE work_mention_sent = 1`,
+      [accountId, String(peerId)],
+    );
+  } catch (_) {}
+
+  console.log(
+    `[${accountLabel(accountId)}] Диалог ${name} снят с рассылок (${why}).`,
+  );
+}
+
+async function shouldSkipProactivePeer(client, entity) {
+  if (!entity || entity.bot || entity.self || isDeletedUser(entity) || isNeverContact(entity)) {
+    return true;
+  }
+  return isPeerArchived(client, entity);
 }
 
 function isNeverContact(entityOrUsername) {
@@ -857,11 +928,6 @@ function isDeletedUser(entity) {
 
 function isServiceMessage(message) {
   return !!(message && (message.action || message.className === 'MessageService'));
-}
-
-async function shouldSkipProactivePeer(client, entity) {
-  if (!entity || entity.bot || entity.self || isDeletedUser(entity) || isNeverContact(entity)) return true;
-  return isPeerArchived(client, entity);
 }
 
 /**
@@ -2730,6 +2796,12 @@ const MORNING_BY_KIND = {
     'не спалось, уже встала',
     'глаза сами открылись, доброе',
   ],
+  normal: [
+    'доброе утро, как спалось)',
+    'утро доброе, соскучилась',
+    'привееет, с добрым утром',
+    'доброе, проснулась и сразу про тебя',
+  ],
   oversleep: [
     'проспала жесть, только встала',
     'заспалась, доброе',
@@ -2857,13 +2929,32 @@ function crossedMinute(lastMin, nowMin, target) {
 
 function rollDailyLife(dateKey) {
   const wake = weightedRoll(WAKE_ROLLS);
-  const sleep = weightedRoll(SLEEP_ROLLS);
+  let sleep = weightedRoll(SLEEP_ROLLS);
+  const wakeMin = randInt(wake.from, wake.to);
+  let sleepMin = randInt(sleep.from, sleep.to);
+  let sleepKind = sleep.id;
+
+  // Сон всегда заметно позже подъёма (минимум ~8 часов «бодрствования»),
+  // иначе выпадало «встала в 13:00 / легла в 22:05» слишком коротко
+  // или подъём оказывался после сна в одном дне.
+  let guard = 0;
+  while (sleepMin - wakeMin < 8 * 60 && guard < 10) {
+    sleep = weightedRoll(SLEEP_ROLLS);
+    sleepMin = randInt(sleep.from, sleep.to);
+    sleepKind = sleep.id;
+    guard += 1;
+  }
+  if (sleepMin - wakeMin < 8 * 60) {
+    sleepMin = wakeMin + 8 * 60 + randInt(30, 180);
+    sleepKind = sleepMin >= 26 * 60 ? 'three_am' : sleepMin >= 24 * 60 ? 'late' : 'half_past';
+  }
+
   return {
     dateKey,
-    wakeMin: randInt(wake.from, wake.to),
-    sleepMin: randInt(sleep.from, sleep.to),
+    wakeMin,
+    sleepMin,
     wakeKind: wake.id,
-    sleepKind: sleep.id,
+    sleepKind,
     morningSent: false,
     nightSent: false,
     lastMin: null,
@@ -2907,18 +2998,34 @@ function tickDailyLife(accountId) {
   const lastMin = life.lastMin;
   if (!life.morningSent && crossedMinute(lastMin, now.minutes, life.wakeMin)) {
     life.morningSent = true;
-    sendGreetings(accountId, 'morning', life.wakeKind).catch(() => {});
+    sendGreetings(accountId, 'morning', life.wakeKind).catch((err) => {
+      console.error(
+        `[${accountLabel(accountId)}] Ошибка рассылки доброго утра:`,
+        err.message,
+      );
+    });
   }
 
   const sameDaySleep = life.sleepMin < 24 * 60 ? life.sleepMin : null;
   if (!life.nightSent && sameDaySleep != null && crossedMinute(lastMin, now.minutes, sameDaySleep)) {
     life.nightSent = true;
-    sendGreetings(accountId, 'night', life.sleepKind).catch(() => {});
+    sendGreetings(accountId, 'night', life.sleepKind).catch((err) => {
+      console.error(
+        `[${accountLabel(accountId)}] Ошибка рассылки спокойной ночи:`,
+        err.message,
+      );
+    });
   }
 
   if (life.carryNight && !life.carryNight.sent && crossedMinute(lastMin, now.minutes, life.carryNight.min)) {
     life.carryNight.sent = true;
-    sendGreetings(accountId, 'night', life.carryNight.kind).catch(() => {});
+    life.nightSent = true;
+    sendGreetings(accountId, 'night', life.carryNight.kind).catch((err) => {
+      console.error(
+        `[${accountLabel(accountId)}] Ошибка рассылки спокойной ночи (после полуночи):`,
+        err.message,
+      );
+    });
   }
 
   life.lastMin = now.minutes;
@@ -2955,6 +3062,14 @@ async function sendGreetings(accountId, kind, mood) {
       : (MORNING_BY_KIND[mood] || MORNING_GREETINGS);
     let sent = 0;
 
+    // Чтобы антифлуд не бил всегда по одним и тем же «хвостовым» диалогам.
+    for (let i = dialogs.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = dialogs[i];
+      dialogs[i] = dialogs[j];
+      dialogs[j] = tmp;
+    }
+
     for (const dialog of dialogs) {
       if (sent >= GREETING_MAX_DIALOGS) break;
 
@@ -2963,10 +3078,10 @@ async function sendGreetings(accountId, kind, mood) {
 
       const message = dialog.message;
       if (!message) continue;
-      // Только недавняя активность (��ы правда общалис��).
+      // Только недавняя активность (мы правда общались).
       if (!message.date || message.date < recentThreshold) continue;
 
-      // Есть ли непрочитанный вопрос (после��нее сообщение — ИХ, входящее).
+      // Есть ли непрочитанный вопрос (последнее сообщение — ИХ, входящее).
       const hasUnanswered = !message.out;
 
       // Ночью пишем «спокойной ночи» ТОЛЬКО тем, где последнее слово за нами
@@ -2980,16 +3095,23 @@ async function sendGreetings(accountId, kind, mood) {
 
       const peerId = String(sender.id);
       if (await isPeerBlacklisted(accountId, peerId)) continue;
+      if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) continue;
+      if (await shouldSkipProactivePeer(client, sender)) continue;
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
       // По диалогу с активной паузой занятости приветствие не шлём.
       if (deferredDialogs.has(bufferKey(accountId, peerId))) continue;
-      // Диалог уже обраб��тывается (генерация ответа/пауза) — не мешаем ему.
+      // Диалог уже обрабатывается (генерация ответа/пауза) — не мешаем ему.
       if (processingInFlight.has(bufferKey(accountId, peerId))) continue;
+
+      // Не пишем «доброе/спокойной» в чаты, где от человека не было ни одного
+      // входящего — только наши рассылки.
+      const tail = await getDialogTail(accountId, peerId);
+      if (!tail.hasIncoming) continue;
 
       const senderName = sender.username || sender.firstName || peerId;
       const phrase = pickRandom(phrases);
       try {
-        // Небольшая человеческая пауза между от��равками (антифлуд).
+        // Небольшая человеческая пауза между отправками (антифлуд).
         await sleep(2000 + Math.random() * 4000);
         await client.sendMessage(sender, { message: phrase });
         await saveMessage(accountId, peerId, senderName, 'assistant', phrase);
@@ -2999,6 +3121,15 @@ async function sendGreetings(accountId, kind, mood) {
           `[${accountLabel(accountId)}] Не удалось отправить приветствие ${senderName}:`,
           e.errorMessage || e.message,
         );
+        if (isPermanentSendError(e)) {
+          await retireUnreachablePeer(
+            client,
+            accountId,
+            peerId,
+            sender,
+            e.errorMessage || e.message || 'unreachable',
+          );
+        }
         continue;
       }
 
@@ -3117,6 +3248,15 @@ async function tickNftWorkMentions(accountId) {
           `[${accountLabel(accountId)}] Не удалось написать про работу ${senderName}:`,
           err.errorMessage || err.message,
         );
+        if (isPermanentSendError(err)) {
+          await retireUnreachablePeer(
+            client,
+            accountId,
+            peerId,
+            entity,
+            err.errorMessage || err.message || 'unreachable',
+          );
+        }
       }
     }
   } finally {
@@ -3221,6 +3361,15 @@ async function tickNftDueVoices(accountId) {
           `[${accountLabel(accountId)}] Не удалось отправить NFT-голосовое ${senderName}:`,
           err.errorMessage || err.message,
         );
+        if (isPermanentSendError(err)) {
+          await retireUnreachablePeer(
+            client,
+            accountId,
+            peerId,
+            entity,
+            err.errorMessage || err.message || 'unreachable',
+          );
+        }
       } finally {
         voiceSendInFlight.delete(sendKey);
       }
@@ -3332,6 +3481,8 @@ module.exports = {
   isNeverContact,
   shouldSkipProactivePeer,
   isDeletedUser,
+  isPermanentSendError,
+  retireUnreachablePeer,
   saveMessage,
   archivePeer,
   NFT_VOICE_AFTER_HOURS,
