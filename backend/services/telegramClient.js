@@ -332,11 +332,11 @@ const DEFER_MIN_HISTORY = 4;
 const DEFER_INTERRUPT_DELAY_MS = 2 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
-// РАБОЧИЕ ЧАСЫ (бот отвечает только днём/вечером, ночью молчит).
-// По умолчанию 09:00–23:00 по Москве. Можно переопределить в .env:
-//   WORK_START_HOUR=9   WORK_END_HOUR=23   WORK_TIMEZONE=Europe/Moscow
-// Ночью бот НЕ отвечает; входящие остаются непрочитанными и будут дочитаны
-// утром скан-функцией scanUnansweredDialogs (ответит на накопленное).
+// РАБОЧИЕ ЧАСЫ / РЕЖИМ ДНЯ.
+// Глобальный запасной диапазон 09:00–23:00 по Москве (WORK_* в .env).
+// Если передан accountId — отвечает с подъёма до сна из режима дня
+// (например до 01:34), а не обрывается ровно в 23:00.
+// Вне бодрствования бот НЕ отвечает; входящие дочитываются после подъёма.
 // ---------------------------------------------------------------------------
 const WORK_START_HOUR = Number.parseInt(process.env.WORK_START_HOUR, 10) || 9;
 const WORK_END_HOUR = Number.parseInt(process.env.WORK_END_HOUR, 10) || 23;
@@ -353,26 +353,81 @@ function getWorkZoneHour() {
     const hourPart = parts.find((p) => p.type === 'hour');
     if (hourPart) return Number.parseInt(hourPart.value, 10) % 24;
   } catch (_) {
-    // Некорректный часовой пояс — запасной ва��иа��т: М��К = UTC+3.
+    // Некорректный часовой пояс — запасной вариант: МСК = UTC+3.
   }
   return (new Date().getUTCHours() + 3) % 24;
 }
 
-// true, если сейчас рабочее время (бот должен отвечать).
-function isWithinWorkingHours() {
+function isWithinGlobalWorkingHours() {
   const hour = getWorkZoneHour();
   if (WORK_START_HOUR <= WORK_END_HOUR) {
     return hour >= WORK_START_HOUR && hour < WORK_END_HOUR;
   }
-  // На случай «ночного» расписания через полночь (напр. 22–6).
   return hour >= WORK_START_HOUR || hour < WORK_END_HOUR;
+}
+
+/**
+ * Бодрствует ли аккаунт сейчас.
+ * С accountId — по её подъёму/сну; без него — глобальные 09–23.
+ */
+function isWithinWorkingHours(accountId) {
+  if (accountId == null || accountId === '') {
+    return isWithinGlobalWorkingHours();
   }
 
-  // Отдельное окно NFT-кампании: 16:00–21:00 по Москве.
-  function isWithinNftCampaignHours() {
+  try {
+    const life = ensureDailyLife(accountId);
+    const { minutes } = moscowClock();
+    const wake = Number(life.wakeMin) || WORK_START_HOUR * 60;
+    const sleep = Number(life.sleepMin) || WORK_END_HOUR * 60;
+
+    if (sleep < 24 * 60) {
+      // Сон в тот же календарный день: бодрствует [подъём, сон).
+      return minutes >= wake && minutes < sleep;
+    }
+
+    // Сон после полуночи (напр. 01:34): бодрствует с подъёма до сна,
+    // включая вечер и кусок ночи до sleepToday.
+    const sleepToday = sleep - 24 * 60;
+    if (minutes >= wake) return true;
+    if (minutes < sleepToday) return true;
+    return false;
+  } catch (_) {
+    return isWithinGlobalWorkingHours();
+  }
+}
+
+/**
+ * Стиль времени для промпта с учётом режима дня аккаунта.
+ * Пока она ещё не «легла» по своему сну — не подсовываем «ты спишь».
+ */
+function getAccountTimeStyle(accountId) {
+  const info = timeStyle.getTimeStyle();
+  const awake = isWithinWorkingHours(accountId);
+  if (!awake) {
+    return { ...info, isSleep: true, isNight: true };
+  }
+  if (info.isSleep) {
+    return {
+      ...info,
+      id: 'late_evening',
+      isSleep: false,
+      isNight: true,
+      delayMultiplier: Math.max(Number(info.delayMultiplier) || 1, 1.4),
+      hint:
+        `${String(info.hint || '').replace(/\s*Ты спишь\.[^.]*/i, '')} ` +
+        'Уже поздно, скоро спать — отвечай короче и спокойнее, можно сказать что скоро отключишься. ' +
+        'Не пиши, что уже спишь.',
+    };
+  }
+  return info;
+}
+
+// Отдельное окно NFT-кампании: 16:00–21:00 по Москве.
+function isWithinNftCampaignHours() {
   const hour = getWorkZoneHour();
   return hour >= 16 && hour < 21;
-  }
+}
 
   function bufferKey(accountId, peerId) {
   return `${accountId}:${peerId}`;
@@ -1974,8 +2029,8 @@ async function fireReengage(accountId, peerId) {
   // После отправки голосового с просьбой о помощи автоответ для э��ого
   // конкретного собеседника отключён — дальше ве��ёт оператор вр��чную.
   if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) return;
-  // Ночью не пишем — непрочитанное подхватит утренний скан/приветствие.
-  if (!isWithinWorkingHours()) return;
+  // Вне её режима дня не пишем — непрочитанное подхватит после подъёма.
+  if (!isWithinWorkingHours(accountId)) return;
 
   let workMentionClaimed = false;
   try {
@@ -1992,9 +2047,9 @@ async function fireReengage(accountId, peerId) {
 
     // Динамический тайм-менеджм��нт + Mood Engine + Memory Triggers +
     // обработка возражений/анти-детект — см. соответствующие модули.
-    const timeInfo = timeStyle.getTimeStyle();
+    const timeInfo = getAccountTimeStyle(accountId);
     if (timeInfo.isSleep) {
-      console.log(`[${accountLabel(accountId)}] Ночь — пропускаем ответ ${senderName}`);
+      console.log(`[${accountLabel(accountId)}] Спит по режиму дня — пропускаем ответ ${senderName}`);
       return;
     }
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, text);
@@ -2233,11 +2288,13 @@ async function processBufferedMessages(
       return;
     }
 
-    // Фильтр 5: рабочие часы. Вне рабочего времени НЕ отвечаем и НЕ сохраняем —
-    // сообщение остаётся непрочитанным и будет дочитано утром скан-ф��нкцией.
-    if (!isWithinWorkingHours()) {
+    // Фильтр 5: режим дня аккаунта. Вне бодрствования НЕ отвечаем —
+    // сообщение останется непрочитанным и дочитается после подъёма.
+    if (!isWithinWorkingHours(accountId)) {
+      const life = ensureDailyLife(accountId);
       console.log(
-        `[${accountLabel(accountId)}] Сообщение от ${senderName} получено ночью (вне ${WORK_START_HOUR}:00–${WORK_END_HOUR}:00) — отвечу утром.`,
+        `[${accountLabel(accountId)}] Сообщение от ${senderName} получено во сне ` +
+          `(режим ${formatClock(life.wakeMin)}–${formatClock(life.sleepMin)}) — отвечу после подъёма.`,
       );
       return;
     }
@@ -2406,9 +2463,9 @@ async function processBufferedMessages(
 
     // Динамический тайм-менеджмент + Mood Engine + Memory Triggers +
     // обработка возражений/анти-детект — см. соответствующие модули.
-    const timeInfo = timeStyle.getTimeStyle();
+    const timeInfo = getAccountTimeStyle(accountId);
     if (timeInfo.isSleep) {
-      console.log(`[${accountLabel(accountId)}] Ночь — пропускаем ответ ${senderName}`);
+      console.log(`[${accountLabel(accountId)}] Спит по режиму дня — пропускаем ответ ${senderName}`);
       return;
     }
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, contextualText);
@@ -2665,8 +2722,8 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
     const client = getActiveClient(accountId);
     if (!client) return;
 
-    // ��не рабочих часов не сканируем — дочитаем утром.
-    if (!isWithinWorkingHours()) return;
+    // Вне режима дня не сканируем — дочитаем после подъёма.
+    if (!isWithinWorkingHours(accountId)) return;
 
     // Автоответчик должен быть включён.
     const settings = await getAccountSettings(accountId);

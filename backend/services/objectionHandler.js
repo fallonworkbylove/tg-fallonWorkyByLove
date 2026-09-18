@@ -225,7 +225,6 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
   const { Api } = require('telegram');
   try {
     await ensureSchema();
-    if (!isWithinWorkingHours()) return;
 
     const voicePath = path.join(VOICES_DIR, SILENCE_VOICE_FILE);
     if (!fs.existsSync(voicePath)) {
@@ -265,6 +264,7 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
 
         const settings = await getAccountSettings(row.account_id);
         if (!settings || !settings.is_autoreply_enabled) continue;
+        if (!isWithinWorkingHours(row.account_id)) continue;
 
         // Решение (бросок монетки) принимается максимум один раз в
         // календарные сутки на диалог — вне зависимости от того, сколько
