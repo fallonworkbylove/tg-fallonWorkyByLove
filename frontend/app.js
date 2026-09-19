@@ -1147,6 +1147,88 @@ async function profilesRequest(action, { method = 'GET', body = null, query = {}
   return data;
 }
 
+function setProfilePhotoStatus(message, isError = false) {
+  const el = document.getElementById('profile-photo-status');
+  if (!el) return;
+  if (!message) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  el.hidden = false;
+  el.textContent = message;
+  el.style.color = isError ? '#fca5a5' : '';
+}
+
+async function uploadProfilePhotoFile(file) {
+  if (!file) return null;
+
+  const maxBytes = 5 * 1024 * 1024;
+  if (file.size > maxBytes) {
+    throw new Error('Файл больше 5 МБ');
+  }
+
+  const initData = tg?.initData || '';
+  const workerId = getWorkerTelegramId();
+  const url = new URL(PROFILES_API);
+  url.searchParams.set('action', 'upload_photo');
+
+  const form = new FormData();
+  form.append('photo', file, file.name || 'photo.jpg');
+  if (workerId) form.append('worker_id', String(workerId));
+  if (initData) form.append('initData', initData);
+
+  const headers = { Accept: 'application/json' };
+  if (initData) {
+    headers.Authorization = `Bearer ${initData}`;
+    headers['X-Telegram-Init-Data'] = initData;
+  }
+  if (workerId) headers['X-Worker-Id'] = String(workerId);
+
+  const response = await fetch(url.toString(), {
+    method: 'POST',
+    headers,
+    body: form,
+  });
+
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (_) {
+    data = null;
+  }
+
+  if (!response.ok) {
+    throw new Error((data && data.error) || `HTTP ${response.status}`);
+  }
+
+  return data?.photo_url || null;
+}
+
+async function handleProfilePhotoFileChange(event) {
+  const input = event.target;
+  const file = input?.files?.[0];
+  if (!file) return;
+
+  setProfilePhotoStatus('Загрузка фото…');
+  showProfilesError('');
+
+  try {
+    const photoUrl = await uploadProfilePhotoFile(file);
+    if (!photoUrl) throw new Error('Сервер не вернул ссылку');
+    const urlInput = document.getElementById('profile-photo');
+    if (urlInput) urlInput.value = photoUrl;
+    updateProfilePhotoPreview();
+    setProfilePhotoStatus('Фото загружено ✅');
+    showAppSnackbar('Фото загружено ✅');
+  } catch (err) {
+    setProfilePhotoStatus(`Не удалось загрузить: ${err.message}`, true);
+    showProfilesError(`Загрузка фото: ${err.message}`);
+  } finally {
+    if (input) input.value = '';
+  }
+}
+
 function showProfilesError(message) {
   const el = document.getElementById('profiles-error');
   if (!el) return;
@@ -1269,6 +1351,9 @@ function showProfileForm(profile = null) {
   document.getElementById('profile-tg').value = profile?.tg_link || '';
   document.getElementById('profile-photo').value = profile?.photo_url || '';
   document.getElementById('profile-active').checked = profile ? Number(profile.active) === 1 : true;
+  const fileInput = document.getElementById('profile-photo-file');
+  if (fileInput) fileInput.value = '';
+  setProfilePhotoStatus('');
   updateProfilePhotoPreview();
   card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -1280,6 +1365,9 @@ function hideProfileForm() {
   document.getElementById('profile-form')?.reset();
   const activeInput = document.getElementById('profile-active');
   if (activeInput) activeInput.checked = true;
+  const fileInput = document.getElementById('profile-photo-file');
+  if (fileInput) fileInput.value = '';
+  setProfilePhotoStatus('');
   updateProfilePhotoPreview();
 }
 
@@ -1388,6 +1476,7 @@ function bindProfileEvents() {
   document.getElementById('profile-cancel')?.addEventListener('click', hideProfileForm);
   document.getElementById('profile-form')?.addEventListener('submit', saveProfileForm);
   document.getElementById('profile-photo')?.addEventListener('input', updateProfilePhotoPreview);
+  document.getElementById('profile-photo-file')?.addEventListener('change', handleProfilePhotoFileChange);
 
   document.getElementById('profiles-list')?.addEventListener('click', (event) => {
     const button = event.target.closest('[data-profile-action]');

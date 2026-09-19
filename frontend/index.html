@@ -249,7 +249,12 @@
                 <input id="profile-tg" type="url" placeholder="https://t.me/username" />
               </label>
               <label>
-                <span>Фото (URL)</span>
+                <span>Фото</span>
+                <input id="profile-photo-file" type="file" accept="image/jpeg,image/png,image/webp,image/*" />
+              </label>
+              <p id="profile-photo-status" class="form-hint" hidden></p>
+              <label>
+                <span>Или ссылка на фото (URL)</span>
                 <input id="profile-photo" type="url" placeholder="https://..." />
               </label>
               <div class="profile-photo-preview-wrap">
@@ -282,6 +287,6 @@
     <div id="app-snackbar" class="app-snackbar" hidden>Сохранено ✅</div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=15"></script>
+    <script src="app.js?v=16"></script>
     </body>
     </html>

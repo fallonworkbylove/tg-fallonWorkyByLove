@@ -454,6 +454,80 @@ try {
 
             json_response(['success' => true, 'id' => (int) $pdo->lastInsertId()]);
 
+        // 3b) Загрузка фото анкеты (multipart/form-data, поле photo).
+        case 'upload_photo':
+            if ($method !== 'POST') {
+                json_response(['error' => 'method not allowed'], 405);
+            }
+
+            $worker = require_worker($pdo, $body);
+
+            if (empty($_FILES['photo']) || !is_array($_FILES['photo'])) {
+                json_response(['error' => 'photo file required'], 400);
+            }
+
+            $file = $_FILES['photo'];
+            if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+                json_response(['error' => 'upload failed'], 400);
+            }
+
+            $maxBytes = 5 * 1024 * 1024; // 5 MB
+            if (($file['size'] ?? 0) <= 0 || ($file['size'] ?? 0) > $maxBytes) {
+                json_response(['error' => 'file too large (max 5MB)'], 400);
+            }
+
+            $tmp = (string) ($file['tmp_name'] ?? '');
+            if ($tmp === '' || !is_uploaded_file($tmp)) {
+                json_response(['error' => 'invalid upload'], 400);
+            }
+
+            $mime = '';
+            if (class_exists('finfo')) {
+                $finfo = new finfo(FILEINFO_MIME_TYPE);
+                $mime = (string) $finfo->file($tmp);
+            }
+            if ($mime === '' || $mime === 'application/octet-stream') {
+                $imageInfo = @getimagesize($tmp);
+                $mime = is_array($imageInfo) && !empty($imageInfo['mime'])
+                    ? (string) $imageInfo['mime']
+                    : (string) ($file['type'] ?? '');
+            }
+
+            $allowed = [
+                'image/jpeg' => 'jpg',
+                'image/png'  => 'png',
+                'image/webp' => 'webp',
+            ];
+            if (!isset($allowed[$mime])) {
+                json_response(['error' => 'only jpeg, png, webp allowed'], 400);
+            }
+
+            $dir = __DIR__ . '/uploads/profiles';
+            if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
+                json_response(['error' => 'cannot create upload dir'], 500);
+            }
+
+            $filename = 'w' . preg_replace('/\D+/', '', (string) $worker['id'])
+                . '_' . date('YmdHis') . '_' . bin2hex(random_bytes(4))
+                . '.' . $allowed[$mime];
+            $dest = $dir . '/' . $filename;
+
+            if (!move_uploaded_file($tmp, $dest)) {
+                json_response(['error' => 'save failed'], 500);
+            }
+            @chmod($dest, 0644);
+
+            $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+                || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+            $scheme = $https ? 'https' : 'http';
+            $host = $_SERVER['HTTP_HOST'] ?? 'loverussian.duckdns.org';
+            $photoUrl = $scheme . '://' . $host . '/uploads/profiles/' . $filename;
+
+            json_response([
+                'success'   => true,
+                'photo_url' => $photoUrl,
+            ]);
+
         // 4) +1 к кликам (публично, для кнопки на лендинге).
         case 'increment_click':
             if ($method !== 'POST') {
