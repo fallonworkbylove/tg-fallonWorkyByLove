@@ -871,8 +871,13 @@ body.keyboard-open .app-shell {
   height: 20px;
 }
 
-.profile-photo-preview-wrap {
-  min-height: 0;
+.profile-share-link {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #93c5fd;
+  word-break: break-all;
+  line-height: 1.35;
 }
 
 .app-snackbar {

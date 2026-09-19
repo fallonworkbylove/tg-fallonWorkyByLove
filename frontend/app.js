@@ -1109,6 +1109,21 @@ function landingLinkForProfile(id) {
   return `${landingBaseUrl()}?profile=${profileId}`;
 }
 
+/** Короткая clck.plus (или fallback на лендинг). */
+function profileShareLink(profileOrId) {
+  const profile =
+    profileOrId && typeof profileOrId === 'object'
+      ? profileOrId
+      : (state.profiles || []).find((item) => Number(item.id) === Number(profileOrId));
+
+  if (profile) {
+    const short = String(profile.short_url || '').trim();
+    if (short) return short;
+    if (profile.id) return landingLinkForProfile(profile.id);
+  }
+  return landingLinkForProfile(profileOrId);
+}
+
 function getWorkerTelegramId() {
   const user = getTelegramUser();
   return user?.id ? Number(user.id) : null;
@@ -1427,6 +1442,7 @@ function renderProfiles() {
     .map((profile) => {
       const active = Number(profile.active) === 1;
       const photo = String(profile.photo_url || '').trim();
+      const share = profileShareLink(profile);
       const thumb = photo
         ? `<img class="profile-thumb" src="${escapeHtml(photo)}" alt="" loading="lazy" />`
         : `<div class="profile-thumb profile-thumb-fallback">👤</div>`;
@@ -1442,10 +1458,12 @@ function renderProfiles() {
                 ${active ? '🟢 Активна' : '🔴 Выключена'}
                 · переходы: <strong>${Number(profile.clicks) || 0}</strong>
               </p>
+              <p class="profile-share-link" title="${escapeHtml(share)}">${escapeHtml(share)}</p>
             </div>
           </div>
           <div class="action-row" style="margin-top:10px;">
             <button class="btn btn-secondary" type="button" data-profile-action="copy" data-id="${profile.id}">Ссылка</button>
+            <button class="btn btn-secondary" type="button" data-profile-action="reshort" data-id="${profile.id}">Обновить ссылку</button>
             <button class="btn btn-primary" type="button" data-profile-action="edit" data-id="${profile.id}">Изменить</button>
             <button class="btn btn-danger" type="button" data-profile-action="delete" data-id="${profile.id}">Удалить</button>
           </div>
@@ -1542,10 +1560,24 @@ async function saveProfileForm(event) {
   if (submit) submit.disabled = true;
 
   try {
-    await profilesRequest('save_profile', { method: 'POST', body: payload });
-    showAppSnackbar('Сохранено ✅');
+    const saved = await profilesRequest('save_profile', { method: 'POST', body: payload });
+    const short = String(saved?.short_url || saved?.profile?.short_url || '').trim();
+    if (saved?.clck_error) {
+      showAppSnackbar(short ? 'Сохранено (шорт без clck)' : 'Сохранено ✅');
+    } else {
+      showAppSnackbar(short ? 'Сохранено · ссылка готова ✅' : 'Сохранено ✅');
+    }
     hideProfileForm();
     await loadProfiles();
+    if (short && tg && typeof tg.showPopup === 'function') {
+      try {
+        tg.showPopup({
+          title: 'Ссылка анкеты',
+          message: short,
+          buttons: [{ type: 'close', text: 'OK' }],
+        });
+      } catch (_) {}
+    }
   } catch (err) {
     showProfilesError(`Сохранение не удалось: ${err.message}`);
   } finally {
@@ -1569,7 +1601,8 @@ async function deleteProfileById(id) {
 }
 
 async function copyProfileLink(id) {
-  const link = landingLinkForProfile(id);
+  const profile = (state.profiles || []).find((item) => Number(item.id) === Number(id));
+  const link = profileShareLink(profile || id);
   const copied = await copyTextRobust(link);
 
   if (copied) {
@@ -1582,7 +1615,7 @@ async function copyProfileLink(id) {
   if (tg && typeof tg.showPopup === 'function') {
     try {
       tg.showPopup({
-        title: copied ? 'Ссылка скопирована' : 'Ссылка на лендинг',
+        title: copied ? 'Ссылка скопирована' : 'Ссылка на анкету',
         message: link,
         buttons: [{ type: 'close', text: 'OK' }],
       });
@@ -1595,7 +1628,46 @@ async function copyProfileLink(id) {
       return;
     } catch (_) {}
   }
-  window.prompt('Ссылка на лендинг:', link);
+  window.prompt('Ссылка на анкету:', link);
+}
+
+async function refreshProfileShortLink(id) {
+  showProfilesError('');
+  try {
+    const data = await profilesRequest('refresh_short_link', {
+      method: 'POST',
+      query: { id },
+      body: { id },
+    });
+    if (data?.profile) {
+      const idx = (state.profiles || []).findIndex((item) => Number(item.id) === Number(id));
+      if (idx >= 0) state.profiles[idx] = data.profile;
+      else await loadProfiles();
+      renderProfiles();
+    } else {
+      await loadProfiles();
+    }
+    const link = String(data?.short_url || data?.profile?.short_url || '').trim();
+    if (data?.clck_error) {
+      showAppSnackbar(link || 'Ссылка обновлена (без clck)');
+    } else {
+      showAppSnackbar('Короткая ссылка обновлена ✅');
+    }
+    if (link) {
+      await copyTextRobust(link);
+      if (tg && typeof tg.showPopup === 'function') {
+        try {
+          tg.showPopup({
+            title: 'Новая ссылка',
+            message: link,
+            buttons: [{ type: 'close', text: 'OK' }],
+          });
+        } catch (_) {}
+      }
+    }
+  } catch (err) {
+    showProfilesError(`Не удалось обновить ссылку: ${err.message}`);
+  }
 }
 
 function bindProfileEvents() {
@@ -1620,6 +1692,7 @@ function bindProfileEvents() {
     if (action === 'edit' && profile) showProfileForm(profile);
     if (action === 'delete') deleteProfileById(id);
     if (action === 'copy') copyProfileLink(id);
+    if (action === 'reshort') refreshProfileShortLink(id);
   });
 }
 
