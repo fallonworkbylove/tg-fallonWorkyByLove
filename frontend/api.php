@@ -146,28 +146,53 @@ function telegram_init_data(?array $body = null): ?string
 
 /**
  * Проверка подписи initData по документации Telegram WebApp.
+ * Важно исключать и hash, и signature (новое поле Telegram).
  */
 function validate_telegram_init_data(string $initData, string $botToken): bool
 {
-    parse_str($initData, $data);
-    if (!is_array($data) || empty($data['hash'])) {
+    $botToken = trim($botToken);
+    if ($botToken === '' || $initData === '') {
         return false;
     }
 
-    $checkHash = (string) $data['hash'];
-    unset($data['hash']);
-    ksort($data);
+    $params = [];
+    $hash = null;
 
+    foreach (explode('&', $initData) as $chunk) {
+        if ($chunk === '') {
+            continue;
+        }
+        $parts = explode('=', $chunk, 2);
+        $key = urldecode($parts[0]);
+        $value = isset($parts[1]) ? urldecode($parts[1]) : '';
+
+        if ($key === 'hash') {
+            $hash = $value;
+            continue;
+        }
+        // Поле signature не входит в data-check-string
+        if ($key === 'signature') {
+            continue;
+        }
+
+        $params[$key] = $value;
+    }
+
+    if ($hash === null || $hash === '') {
+        return false;
+    }
+
+    ksort($params);
     $pairs = [];
-    foreach ($data as $key => $value) {
+    foreach ($params as $key => $value) {
         $pairs[] = $key . '=' . $value;
     }
     $dataCheckString = implode("\n", $pairs);
 
     $secretKey = hash_hmac('sha256', $botToken, 'WebAppData', true);
-    $calculated = bin2hex(hash_hmac('sha256', $dataCheckString, $secretKey, true));
+    $calculated = hash_hmac('sha256', $dataCheckString, $secretKey);
 
-    return hash_equals($calculated, $checkHash);
+    return hash_equals($calculated, $hash);
 }
 
 /**
