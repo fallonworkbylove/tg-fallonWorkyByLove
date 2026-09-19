@@ -17,6 +17,7 @@ const DB_CHARSET = 'utf8mb4';
 // false = не проверяем HMAC (часто ломается из‑за токена/.env у php-fpm).
 // Достаточно user.id из initData + запись в workers. Mini App и так только в Telegram.
 const STRICT_TELEGRAM_AUTH = false;
+const BOT_TOKEN = ''; // нужно только если STRICT_TELEGRAM_AUTH = true
 
 /**
  * Читает KEY=VALUE из .env файла.
