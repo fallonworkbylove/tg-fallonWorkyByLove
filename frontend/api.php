@@ -527,8 +527,20 @@ try {
             }
 
             $file = $_FILES['photo'];
-            if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-                json_response(['error' => 'upload failed'], 400);
+            $uploadError = (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE);
+            if ($uploadError !== UPLOAD_ERR_OK) {
+                $uploadErrors = [
+                    UPLOAD_ERR_INI_SIZE   => 'file exceeds php upload_max_filesize',
+                    UPLOAD_ERR_FORM_SIZE  => 'file too large',
+                    UPLOAD_ERR_PARTIAL    => 'partial upload',
+                    UPLOAD_ERR_NO_FILE    => 'no file',
+                    UPLOAD_ERR_NO_TMP_DIR => 'no tmp dir',
+                    UPLOAD_ERR_CANT_WRITE => 'php cannot write temp file',
+                    UPLOAD_ERR_EXTENSION  => 'blocked by extension',
+                ];
+                json_response([
+                    'error' => $uploadErrors[$uploadError] ?? ('upload error ' . $uploadError),
+                ], 400);
             }
 
             $maxBytes = 20 * 1024 * 1024; // 20 MB
@@ -565,8 +577,16 @@ try {
             }
 
             $dir = __DIR__ . '/uploads/profiles';
-            if (!is_dir($dir) && !mkdir($dir, 0755, true) && !is_dir($dir)) {
-                json_response(['error' => 'cannot create upload dir'], 500);
+            if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
+                json_response(['error' => 'cannot create upload dir: ' . $dir], 500);
+            }
+            @chmod($dir, 0775);
+
+            if (!is_writable($dir)) {
+                json_response([
+                    'error' => 'upload dir not writable (fix permissions for php-fpm user)',
+                    'dir'   => $dir,
+                ], 500);
             }
 
             $filename = 'w' . preg_replace('/\D+/', '', (string) $worker['id'])
@@ -574,8 +594,18 @@ try {
                 . '.' . $allowed[$mime];
             $dest = $dir . '/' . $filename;
 
-            if (!move_uploaded_file($tmp, $dest)) {
-                json_response(['error' => 'save failed'], 500);
+            $saved = @move_uploaded_file($tmp, $dest);
+            if (!$saved) {
+                $saved = @copy($tmp, $dest);
+                if ($saved) {
+                    @unlink($tmp);
+                }
+            }
+            if (!$saved || !is_file($dest)) {
+                json_response([
+                    'error' => 'save failed (check uploads/profiles permissions)',
+                    'dir'   => $dir,
+                ], 500);
             }
             @chmod($dest, 0644);
 
