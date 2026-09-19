@@ -1163,9 +1163,9 @@ function setProfilePhotoStatus(message, isError = false) {
 async function uploadProfilePhotoFile(file) {
   if (!file) return null;
 
-  const maxBytes = 5 * 1024 * 1024;
+  const maxBytes = 20 * 1024 * 1024;
   if (file.size > maxBytes) {
-    throw new Error('Файл больше 5 МБ');
+    throw new Error('Файл больше 20 МБ');
   }
 
   const initData = tg?.initData || '';

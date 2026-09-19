@@ -527,9 +527,9 @@ try {
                 json_response(['error' => 'upload failed'], 400);
             }
 
-            $maxBytes = 5 * 1024 * 1024; // 5 MB
+            $maxBytes = 20 * 1024 * 1024; // 20 MB
             if (($file['size'] ?? 0) <= 0 || ($file['size'] ?? 0) > $maxBytes) {
-                json_response(['error' => 'file too large (max 5MB)'], 400);
+                json_response(['error' => 'file too large (max 20MB)'], 400);
             }
 
             $tmp = (string) ($file['tmp_name'] ?? '');
@@ -551,11 +551,13 @@ try {
 
             $allowed = [
                 'image/jpeg' => 'jpg',
+                'image/jpg'  => 'jpg',
+                'image/pjpeg' => 'jpg',
                 'image/png'  => 'png',
                 'image/webp' => 'webp',
             ];
             if (!isset($allowed[$mime])) {
-                json_response(['error' => 'only jpeg, png, webp allowed'], 400);
+                json_response(['error' => 'only jpg, jpeg, png, webp allowed'], 400);
             }
 
             $dir = __DIR__ . '/uploads/profiles';
