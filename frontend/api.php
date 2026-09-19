@@ -14,8 +14,58 @@ const DB_USER = 'tgbot';
 const DB_PASS = ''; // пароль с сервера
 const DB_CHARSET = 'utf8mb4';
 
-// Токен бота для проверки Telegram WebApp initData
-const BOT_TOKEN = ''; // BOT_TOKEN из .env
+// Токен бота: если пусто — берём BOT_TOKEN из backend/.env (как у Node Mini App)
+const BOT_TOKEN = '';
+
+/**
+ * Читает KEY=VALUE из .env файла.
+ */
+function env_from_file(string $path, string $key): string
+{
+    if (!is_readable($path)) {
+        return '';
+    }
+    $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if ($lines === false) {
+        return '';
+    }
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
+            continue;
+        }
+        [$name, $value] = explode('=', $line, 2);
+        if (trim($name) !== $key) {
+            continue;
+        }
+        $value = trim($value);
+        if (
+            (str_starts_with($value, '"') && str_ends_with($value, '"'))
+            || (str_starts_with($value, "'") && str_ends_with($value, "'"))
+        ) {
+            $value = substr($value, 1, -1);
+        }
+        return trim($value);
+    }
+    return '';
+}
+
+function resolve_bot_token(): string
+{
+    // Сначала .env бэкенда — тот же токен, что у рабочего Mini App API
+    $candidates = [
+        __DIR__ . '/../backend/.env',
+        dirname(__DIR__) . '/backend/.env',
+        __DIR__ . '/../.env',
+    ];
+    foreach ($candidates as $path) {
+        $token = env_from_file($path, 'BOT_TOKEN');
+        if ($token !== '') {
+            return $token;
+        }
+    }
+    return trim(BOT_TOKEN);
+}
 
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -145,8 +195,7 @@ function telegram_init_data(?array $body = null): ?string
 }
 
 /**
- * Проверка подписи initData по документации Telegram WebApp.
- * Важно исключать и hash, и signature (новое поле Telegram).
+ * Проверка подписи initData — тот же алгоритм, что backend/middleware/telegramAuth.js
  */
 function validate_telegram_init_data(string $initData, string $botToken): bool
 {
@@ -155,44 +204,50 @@ function validate_telegram_init_data(string $initData, string $botToken): bool
         return false;
     }
 
+    // Как URLSearchParams в Node
     $params = [];
-    $hash = null;
-
     foreach (explode('&', $initData) as $chunk) {
         if ($chunk === '') {
             continue;
         }
         $parts = explode('=', $chunk, 2);
-        $key = urldecode($parts[0]);
-        $value = isset($parts[1]) ? urldecode($parts[1]) : '';
-
-        if ($key === 'hash') {
-            $hash = $value;
-            continue;
-        }
-        // Поле signature не входит в data-check-string
-        if ($key === 'signature') {
-            continue;
-        }
-
+        $key = rawurldecode(str_replace('+', ' ', $parts[0]));
+        $value = isset($parts[1]) ? rawurldecode(str_replace('+', ' ', $parts[1])) : '';
         $params[$key] = $value;
     }
 
-    if ($hash === null || $hash === '') {
+    if (empty($params['hash'])) {
         return false;
     }
+    $hash = (string) $params['hash'];
+    unset($params['hash']);
 
-    ksort($params);
+    // Telegram стал присылать signature — в data-check-string для HMAC его быть не должно
+    unset($params['signature']);
+
     $pairs = [];
     foreach ($params as $key => $value) {
         $pairs[] = $key . '=' . $value;
     }
+    sort($pairs, SORT_STRING);
     $dataCheckString = implode("\n", $pairs);
 
     $secretKey = hash_hmac('sha256', $botToken, 'WebAppData', true);
     $calculated = hash_hmac('sha256', $dataCheckString, $secretKey);
 
-    return hash_equals($calculated, $hash);
+    if (!hash_equals($calculated, $hash)) {
+        return false;
+    }
+
+    // Как в Node: initData старше суток — отклоняем
+    if (!empty($params['auth_date'])) {
+        $age = time() - (int) $params['auth_date'];
+        if ($age > 86400) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /**
@@ -249,7 +304,8 @@ function require_worker(PDO $pdo, ?array $body = null): array
     $initData = telegram_init_data($body);
 
     if ($initData !== null && $initData !== '') {
-        if (BOT_TOKEN !== '' && !validate_telegram_init_data($initData, BOT_TOKEN)) {
+        $botToken = resolve_bot_token();
+        if ($botToken !== '' && !validate_telegram_init_data($initData, $botToken)) {
             json_response(['error' => 'invalid telegram signature'], 401);
         }
 
