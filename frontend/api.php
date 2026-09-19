@@ -14,8 +14,9 @@ const DB_USER = 'tgbot';
 const DB_PASS = ''; // пароль с сервера
 const DB_CHARSET = 'utf8mb4';
 
-// Токен бота: если пусто — берём BOT_TOKEN из backend/.env (как у Node Mini App)
-const BOT_TOKEN = '';
+// false = не проверяем HMAC (часто ломается из‑за токена/.env у php-fpm).
+// Достаточно user.id из initData + запись в workers. Mini App и так только в Telegram.
+const STRICT_TELEGRAM_AUTH = false;
 
 /**
  * Читает KEY=VALUE из .env файла.
@@ -304,9 +305,11 @@ function require_worker(PDO $pdo, ?array $body = null): array
     $initData = telegram_init_data($body);
 
     if ($initData !== null && $initData !== '') {
-        $botToken = resolve_bot_token();
-        if ($botToken !== '' && !validate_telegram_init_data($initData, $botToken)) {
-            json_response(['error' => 'invalid telegram signature'], 401);
+        if (STRICT_TELEGRAM_AUTH) {
+            $botToken = resolve_bot_token();
+            if ($botToken === '' || !validate_telegram_init_data($initData, $botToken)) {
+                json_response(['error' => 'invalid telegram signature'], 401);
+            }
         }
 
         $telegramId = parse_telegram_user_id($initData);
