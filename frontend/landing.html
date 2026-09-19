@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LoveStory — знакомство с Алиной</title>
+  <meta name="description" content="Алина ищет серьёзного мужчину. Напиши ей в Telegram." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0d0d1a;
+      --card: #1a1a2e;
+      --card-soft: #22223a;
+      --text: #f5f5f7;
+      --muted: #a0a0b8;
+      --accent: #e94560;
+      --accent-hot: #ff2e63;
+      --border: rgba(255, 255, 255, 0.08);
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+      --radius: 22px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: "Montserrat", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Фон с лёгким градиентом и сеткой */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(233, 69, 96, 0.22), transparent 55%),
+        radial-gradient(ellipse 50% 40% at 100% 50%, rgba(255, 46, 99, 0.08), transparent 50%),
+        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: auto, auto, 28px 28px, 28px 28px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .wrap {
+      position: relative;
+      z-index: 1;
+      width: min(920px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    /* ---------- Хедер ---------- */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(14px);
+      background: rgba(13, 13, 26, 0.82);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header__inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 0;
+      width: min(920px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .logo {
+      font-weight: 800;
+      font-size: 1.15rem;
+      letter-spacing: 0.02em;
+      text-decoration: none;
+      color: var(--text);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .logo span {
+      background: linear-gradient(135deg, var(--accent-hot), var(--accent));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .counter-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      font-size: 0.86rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .counter-pill strong {
+      color: var(--accent-hot);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ---------- Общие секции ---------- */
+    section {
+      padding: 56px 0;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(28px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+
+    .reveal.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .section-title {
+      font-size: clamp(1.4rem, 4vw, 1.85rem);
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .section-lead {
+      color: var(--muted);
+      margin-bottom: 28px;
+      max-width: 42ch;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    /* ---------- Hero ---------- */
+    .hero {
+      padding-top: 36px;
+      padding-bottom: 40px;
+    }
+
+    .hero__card {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 28px;
+      padding: 22px;
+      overflow: hidden;
+    }
+
+    @media (min-width: 720px) {
+      .hero__card {
+        grid-template-columns: 280px 1fr;
+        align-items: center;
+        padding: 28px;
+        gap: 36px;
+      }
+    }
+
+    .hero__photo {
+      position: relative;
+      border-radius: 20px;
+      overflow: hidden;
+      aspect-ratio: 1 / 1;
+      background: var(--card-soft);
+      border: 1px solid var(--border);
+    }
+
+    .hero__photo img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .hero__photo-fallback {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 0.85rem;
+      background: linear-gradient(145deg, #252545, #1a1a2e);
+    }
+
+    .hero__photo-fallback[hidden] {
+      display: none;
+    }
+
+    .hero h1 {
+      font-size: clamp(1.45rem, 4.5vw, 2rem);
+      line-height: 1.25;
+      font-weight: 800;
+      margin-bottom: 12px;
+    }
+
+    .hero p {
+      color: var(--muted);
+      margin-bottom: 24px;
+      font-size: 1rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: none;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      text-decoration: none;
+      border-radius: 999px;
+      padding: 14px 22px;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn-primary {
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent-hot), var(--accent));
+      box-shadow: 0 10px 30px rgba(233, 69, 96, 0.35);
+    }
+
+    .btn-primary:hover {
+      filter: brightness(1.06);
+      box-shadow: 0 14px 36px rgba(255, 46, 99, 0.45);
+    }
+
+    .btn-pulse {
+      animation: pulse 2.2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        box-shadow: 0 10px 30px rgba(233, 69, 96, 0.35);
+        transform: scale(1);
+      }
+      50% {
+        box-shadow: 0 14px 40px rgba(255, 46, 99, 0.55);
+        transform: scale(1.03);
+      }
+    }
+
+    .btn-full {
+      width: 100%;
+    }
+
+    /* ---------- Форма ---------- */
+    .lead-form {
+      padding-top: 8px;
+    }
+
+    .form-card {
+      padding: 24px;
+    }
+
+    .form-card h2 {
+      margin-bottom: 6px;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 14px;
+      margin-top: 20px;
+    }
+
+    label {
+      display: grid;
+      gap: 8px;
+      font-size: 0.88rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--border);
+      background: #121225;
+      color: var(--text);
+      border-radius: 14px;
+      padding: 14px 16px;
+      font: inherit;
+      font-size: 16px; /* без зума на iOS */
+      outline: none;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.2);
+    }
+
+    input.is-invalid {
+      border-color: var(--accent-hot);
+    }
+
+    .form-error {
+      color: var(--accent-hot);
+      font-size: 0.85rem;
+      min-height: 1.2em;
+      margin-top: 10px;
+    }
+
+    .form-hint {
+      margin-top: 12px;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .form-success {
+      display: none;
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(233, 69, 96, 0.12);
+      border: 1px solid rgba(233, 69, 96, 0.35);
+      color: #ffd0da;
+      font-size: 0.92rem;
+    }
+
+    .form-success.is-shown {
+      display: block;
+    }
+
+    /* ---------- Обо мне ---------- */
+    .about-card {
+      padding: 24px;
+    }
+
+    .about-emojis {
+      font-size: 1.6rem;
+      letter-spacing: 0.2em;
+      margin-bottom: 14px;
+    }
+
+    .about-card p {
+      color: #d7d7e8;
+      font-size: 1.02rem;
+    }
+
+    /* ---------- Отзывы ---------- */
+    .reviews-grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    @media (min-width: 720px) {
+      .reviews-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    .review {
+      padding: 18px;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .review__head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .review__avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid rgba(233, 69, 96, 0.45);
+      background: var(--card-soft);
+      flex-shrink: 0;
+    }
+
+    .review__name {
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+
+    .review__meta {
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .stars {
+      color: #ffb703;
+      letter-spacing: 2px;
+      font-size: 0.95rem;
+    }
+
+    .review__text {
+      color: #cfcfe0;
+      font-size: 0.92rem;
+      flex: 1;
+    }
+
+    /* ---------- Футер ---------- */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 0 40px;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .footer__inner {
+      display: grid;
+      gap: 10px;
+      text-align: center;
+    }
+
+    .footer a {
+      color: var(--accent-hot);
+      text-decoration: none;
+    }
+
+    .footer a:hover {
+      text-decoration: underline;
+    }
+
+    .footer__legal {
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+  <!-- ========== Хедер ========== -->
+  <header class="header">
+    <div class="header__inner">
+      <a class="logo" href="#top" aria-label="LoveStory">
+        💕 <span>LoveStory</span>
+      </a>
+      <div class="counter-pill" aria-live="polite">
+        Нас уже: <strong id="members-count">0</strong>
+      </div>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- ========== Герой ========== -->
+    <section class="hero wrap">
+      <div class="hero__card card reveal">
+        <div class="hero__photo">
+          <div class="hero__photo-fallback" id="photo-fallback">фото</div>
+          <img
+            src="https://i.pravatar.cc/400?u=alina"
+            alt="Алина"
+            width="400"
+            height="400"
+            loading="eager"
+            onerror="this.style.display='none'; document.getElementById('photo-fallback').hidden=false;"
+            onload="document.getElementById('photo-fallback').hidden=true;"
+          />
+        </div>
+        <div>
+          <h1>Меня зовут Алина, я ищу серьёзного мужчину 💋</h1>
+          <p>
+            Я трейдер, много времени провожу за графиками, но хочется тепла и уюта рядом с любимым
+          </p>
+          <a
+            class="btn btn-primary btn-pulse"
+            id="hero-telegram"
+            href="https://t.me/твой_бот_или_аккаунт"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Напиши мне в Telegram 💬
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== Форма захвата ========== -->
+    <section class="lead-form wrap" id="lead">
+      <div class="form-card card reveal">
+        <h2 class="section-title">Хочу познакомиться</h2>
+        <p class="section-lead">Оставь имя и контакт — и я напишу тебе в Telegram.</p>
+
+        <form id="lead-form" class="form-grid" novalidate>
+          <label>
+            Имя
+            <input
+              id="lead-name"
+              name="name"
+              type="text"
+              autocomplete="name"
+              placeholder="Как тебя зовут?"
+              required
+            />
+          </label>
+
+          <label>
+            Номер телефона или Telegram
+            <input
+              id="lead-contact"
+              name="contact"
+              type="text"
+              autocomplete="tel"
+              placeholder="+7… или @username"
+              required
+            />
+          </label>
+
+          <button class="btn btn-primary btn-full btn-pulse" type="submit">
+            Хочу познакомиться 🔥
+          </button>
+        </form>
+
+        <p class="form-error" id="form-error" aria-live="polite"></p>
+        <div class="form-success" id="form-success">
+          Спасибо! Сейчас открою Telegram…
+        </div>
+        <p class="form-hint">Нажимая кнопку, ты подтверждаешь, что тебе есть 18 лет.</p>
+      </div>
+    </section>
+
+    <!-- ========== Обо мне ========== -->
+    <section class="wrap" id="about">
+      <div class="about-card card reveal">
+        <div class="about-emojis" aria-hidden="true">💼📈💅</div>
+        <h2 class="section-title">Обо мне</h2>
+        <p>
+          Мне 24, живу в Москве, занимаюсь криптотрейдингом 3 года, ищу мужчину 25-40, успешного,
+          амбициозного, который знает чего хочет в жизни
+        </p>
+      </div>
+    </section>
+
+    <!-- ========== Отзывы ========== -->
+    <section class="wrap" id="reviews">
+      <h2 class="section-title reveal">Что говорят парни</h2>
+      <p class="section-lead reveal">Несколько историй знакомств</p>
+
+      <div class="reviews-grid">
+        <article class="review card reveal">
+          <div class="review__head">
+            <img class="review__avatar" src="https://i.pravatar.cc/96?u=dmitry34" alt="" width="48" height="48" loading="lazy" />
+            <div>
+              <div class="review__name">Дмитрий, 34</div>
+              <div class="stars" aria-label="5 из 5">★★★★★</div>
+            </div>
+          </div>
+          <p class="review__text">
+            «Познакомились с Алиной неделю назад, теперь вместе торгуем NFT. Она гений!»
+          </p>
+          <div class="review__meta">Москва</div>
+        </article>
+
+        <article class="review card reveal">
+          <div class="review__head">
+            <img class="review__avatar" src="https://i.pravatar.cc/96?u=alex29" alt="" width="48" height="48" loading="lazy" />
+            <div>
+              <div class="review__name">Александр, 29</div>
+              <div class="stars" aria-label="5 из 5">★★★★★</div>
+            </div>
+          </div>
+          <p class="review__text">
+            «Думал фейк, а оказалась реальная девушка. Красивая, умная, с ней есть о чём поговорить»
+          </p>
+          <div class="review__meta">Санкт-Петербург</div>
+        </article>
+
+        <article class="review card reveal">
+          <div class="review__head">
+            <img class="review__avatar" src="https://i.pravatar.cc/96?u=maxim31" alt="" width="48" height="48" loading="lazy" />
+            <div>
+              <div class="review__name">Максим, 31</div>
+              <div class="stars" aria-label="5 из 5">★★★★★</div>
+            </div>
+          </div>
+          <p class="review__text">
+            «Лучшее знакомство в жизни. Алина научила меня разбираться в крипте)»
+          </p>
+          <div class="review__meta">Казань</div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <!-- ========== Футер ========== -->
+  <footer class="footer">
+    <div class="footer__inner wrap">
+      <div>
+        Контакты:
+        <a href="mailto:support@lovestory.ru">support@lovestory.ru</a>
+      </div>
+      <div class="footer__legal">18+ | Все персонажи вымышлены</div>
+      <div>
+        Посещений:
+        <strong id="visits-count">0</strong>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // ===== Настройки: замени ссылку на свой Telegram =====
+    const TELEGRAM_URL = "https://t.me/твой_бот_или_аккаунт";
+    const MEMBERS_TARGET = 1247;
+
+    // Синхронизируем кнопки со ссылкой
+    const heroLink = document.getElementById("hero-telegram");
+    if (heroLink) heroLink.href = TELEGRAM_URL;
+
+    // ---------- Анимация счётчика «Нас уже» ----------
+    function animateCount(el, to, durationMs) {
+      const start = performance.now();
+      const from = 0;
+
+      function frame(now) {
+        const t = Math.min(1, (now - start) / durationMs);
+        // easeOutCubic
+        const eased = 1 - Math.pow(1 - t, 3);
+        const value = Math.round(from + (to - from) * eased);
+        el.textContent = value.toLocaleString("ru-RU");
+        if (t < 1) requestAnimationFrame(frame);
+      }
+
+      requestAnimationFrame(frame);
+    }
+
+    const membersEl = document.getElementById("members-count");
+    if (membersEl) {
+      // Стартуем после небольшой паузы, чтобы хедер успел отрисоваться
+      setTimeout(() => animateCount(membersEl, MEMBERS_TARGET, 1600), 200);
+    }
+
+    // ---------- Счётчик посещений (localStorage) ----------
+    const visitsKey = "lovestory_visits";
+    let visits = Number(localStorage.getItem(visitsKey) || 0);
+    if (!Number.isFinite(visits) || visits < 0) visits = 0;
+    visits += 1;
+    localStorage.setItem(visitsKey, String(visits));
+    const visitsEl = document.getElementById("visits-count");
+    if (visitsEl) visitsEl.textContent = visits.toLocaleString("ru-RU");
+
+    // ---------- Появление секций при скролле ----------
+    const revealNodes = document.querySelectorAll(".reveal");
+    if ("IntersectionObserver" in window) {
+      const io = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("is-visible");
+              io.unobserve(entry.target);
+            }
+          });
+        },
+        { threshold: 0.15, rootMargin: "0px 0px -40px 0px" }
+      );
+      revealNodes.forEach((node) => io.observe(node));
+    } else {
+      // Старые браузеры — показываем сразу
+      revealNodes.forEach((node) => node.classList.add("is-visible"));
+    }
+
+    // ---------- Форма: валидация, localStorage, редирект ----------
+    const form = document.getElementById("lead-form");
+    const nameInput = document.getElementById("lead-name");
+    const contactInput = document.getElementById("lead-contact");
+    const errorEl = document.getElementById("form-error");
+    const successEl = document.getElementById("form-success");
+
+    function setInvalid(input, invalid) {
+      input.classList.toggle("is-invalid", invalid);
+    }
+
+    function isValidContact(value) {
+      const v = value.trim();
+      if (!v) return false;
+      // Username Telegram: @name или name
+      if (/^@?[a-zA-Z][a-zA-Z0-9_]{3,31}$/.test(v)) return true;
+      // Телефон: минимум 10 цифр
+      const digits = v.replace(/\D/g, "");
+      return digits.length >= 10;
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      errorEl.textContent = "";
+      setInvalid(nameInput, false);
+      setInvalid(contactInput, false);
+
+      const name = nameInput.value.trim();
+      const contact = contactInput.value.trim();
+
+      let hasError = false;
+      if (!name) {
+        setInvalid(nameInput, true);
+        hasError = true;
+      }
+      if (!isValidContact(contact)) {
+        setInvalid(contactInput, true);
+        hasError = true;
+      }
+
+      if (hasError) {
+        errorEl.textContent = "Заполни имя и телефон или Telegram username.";
+        return;
+      }
+
+      // Сохраняем заявку локально
+      const lead = {
+        name,
+        contact,
+        createdAt: new Date().toISOString(),
+        page: location.href,
+      };
+      try {
+        const prev = JSON.parse(localStorage.getItem("lovestory_leads") || "[]");
+        const list = Array.isArray(prev) ? prev : [];
+        list.push(lead);
+        localStorage.setItem("lovestory_leads", JSON.stringify(list));
+        localStorage.setItem("lovestory_last_lead", JSON.stringify(lead));
+      } catch (_) {
+        // localStorage может быть недоступен — всё равно редиректим
+      }
+
+      successEl.classList.add("is-shown");
+      form.querySelector('button[type="submit"]').disabled = true;
+
+      // Редирект на Telegram через 1 секунду
+      setTimeout(() => {
+        window.location.href = TELEGRAM_URL;
+      }, 1000);
+    });
+  </script>
+</body>
+</html>
