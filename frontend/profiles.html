@@ -2,14 +2,14 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Анкеты</title>
+  <meta http-equiv="refresh" content="0; url=index.html" />
   <script>
-    localStorage.setItem('currentTab', 'profiles');
-    location.replace('index.html');
+    try { localStorage.setItem('currentTab', 'profiles'); } catch (e) {}
+    location.replace('index.html?v=14');
   </script>
+  <title>Анкеты</title>
 </head>
-<body>
-  <p>Переход в раздел «Анкеты»… <a href="index.html">Открыть</a></p>
+<body style="background:#111827;color:#f9fafb;font-family:sans-serif;padding:24px;">
+  <p>Открываем панель… <a href="index.html?v=14" style="color:#93c5fd;">перейти</a></p>
 </body>
 </html>

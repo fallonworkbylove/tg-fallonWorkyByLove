@@ -10,7 +10,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Telegram Mini App</title>
-    <link rel="stylesheet" href="styles.css?v=13" />
+    <link rel="stylesheet" href="styles.css?v=14" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -213,11 +213,15 @@
           <div class="section-card card">
             <div class="section-card__header">
               <h3>Мои анкеты</h3>
-              <button class="btn btn-primary small" id="profile-create-btn" type="button">➕ Создать</button>
+              <span class="badge badge-soft">Лендинг</span>
             </div>
-            <p>Профили для лендинга. Ссылка: landing.html?profile=ID</p>
+            <p>Создавайте анкеты и копируйте ссылку на лендинг для трафика.</p>
+            <div class="action-row" style="margin-top:10px;">
+              <button class="btn btn-primary" id="profile-create-btn" type="button">Создать анкету</button>
+              <button class="btn btn-secondary" id="profile-refresh-btn" type="button">Обновить</button>
+            </div>
             <p id="profiles-error" class="form-hint" hidden></p>
-            <div id="profiles-list" class="stack"></div>
+            <div id="profiles-list" class="stack" style="margin-top:12px;"></div>
           </div>
 
           <div class="section-card card" id="profile-form-card" hidden>
@@ -257,7 +261,7 @@
               </label>
               <div class="example-form__actions">
                 <button id="profile-cancel" class="btn btn-secondary" type="button">Отмена</button>
-                <button id="profile-submit" class="btn btn-primary" type="submit">Сохранить</button>
+                <button id="profile-submit" class="btn btn-primary" type="submit">Сохранить анкету</button>
               </div>
             </form>
           </div>
@@ -278,6 +282,6 @@
     <div id="app-snackbar" class="app-snackbar" hidden>Сохранено ✅</div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=13"></script>
+    <script src="app.js?v=14"></script>
     </body>
     </html>

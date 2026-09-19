@@ -1182,7 +1182,12 @@ function renderProfiles() {
 
   const items = state.profiles || [];
   if (!items.length) {
-    list.innerHTML = '<div class="card"><p>Пока нет анкет. Нажмите «Создать».</p></div>';
+    list.innerHTML = `
+      <div class="empty-state">
+        <h3>Анкет пока нет</h3>
+        <p>Создайте первую анкету, чтобы получить ссылку на лендинг.</p>
+      </div>
+    `;
     return;
   }
 
@@ -1191,28 +1196,28 @@ function renderProfiles() {
       const active = Number(profile.active) === 1;
       const photo = String(profile.photo_url || '').trim();
       const thumb = photo
-        ? `<img class="profile-thumb" src="${escapeHtml(photo)}" alt="" loading="lazy" onerror="this.classList.add('profile-thumb-fallback');this.removeAttribute('src');this.textContent='👤';" />`
+        ? `<img class="profile-thumb" src="${escapeHtml(photo)}" alt="" loading="lazy" />`
         : `<div class="profile-thumb profile-thumb-fallback">👤</div>`;
 
       return `
-        <article class="card" data-profile-id="${profile.id}">
+        <div class="card" data-profile-id="${profile.id}">
           <div class="profile-card-row">
             ${thumb}
             <div class="profile-card-meta">
               <h4>${escapeHtml(profile.name || 'Без имени')}, ${escapeHtml(profile.age || '—')}</h4>
               <p>${escapeHtml(profile.city || 'Город не указан')}</p>
-              <div class="profile-status">${active ? '🟢 Активна' : '🔴 Выключена'}</div>
+              <p style="margin-top:6px;">
+                ${active ? '🟢 Активна' : '🔴 Выключена'}
+                · переходы: <strong>${Number(profile.clicks) || 0}</strong>
+              </p>
             </div>
           </div>
-          <div class="profile-card-stats">
-            <span>Переходы: <strong>${Number(profile.clicks) || 0}</strong></span>
-            <button class="btn btn-secondary small" type="button" data-profile-action="copy" data-id="${profile.id}">Получить ссылку</button>
+          <div class="action-row" style="margin-top:10px;">
+            <button class="btn btn-secondary" type="button" data-profile-action="copy" data-id="${profile.id}">Ссылка</button>
+            <button class="btn btn-primary" type="button" data-profile-action="edit" data-id="${profile.id}">Изменить</button>
+            <button class="btn btn-danger" type="button" data-profile-action="delete" data-id="${profile.id}">Удалить</button>
           </div>
-          <div class="profile-card-actions">
-            <button class="btn btn-secondary small" type="button" data-profile-action="edit" data-id="${profile.id}">✏️ Изменить</button>
-            <button class="btn btn-danger small" type="button" data-profile-action="delete" data-id="${profile.id}">🗑 Удалить</button>
-          </div>
-        </article>
+        </div>
       `;
     })
     .join('');
@@ -1346,6 +1351,9 @@ async function copyProfileLink(id) {
 function bindProfileEvents() {
   document.getElementById('profile-create-btn')?.addEventListener('click', () => {
     showProfileForm(null);
+  });
+  document.getElementById('profile-refresh-btn')?.addEventListener('click', () => {
+    loadProfiles().catch((err) => console.error(err));
   });
   document.getElementById('profile-cancel')?.addEventListener('click', hideProfileForm);
   document.getElementById('profile-form')?.addEventListener('submit', saveProfileForm);
