@@ -202,8 +202,26 @@ const api = {
  * Начальное состояние не содержит тестовых данных.
  * После загрузки страницы значения заменяются данными backend.
  */
+const ALLOWED_TABS = [
+  'panel',
+  'accounts',
+  'learn',
+  'profiles',
+  'info',
+  'options',
+  'stats',
+];
+
+function resolveInitialTab() {
+  try {
+    const saved = localStorage.getItem('currentTab');
+    if (ALLOWED_TABS.includes(saved)) return saved;
+  } catch (_) {}
+  return 'panel';
+}
+
 const state = {
-  activeTab: localStorage.getItem('currentTab') || 'panel',
+  activeTab: resolveInitialTab(),
 
   dashboard: {
     accountsUsed: 0,
@@ -405,8 +423,12 @@ function getExampleAccountName(example) {
 }
 
 function setActiveTab(tabName) {
-  state.activeTab = tabName;
-  localStorage.setItem('currentTab', tabName);
+  const nextTab = ALLOWED_TABS.includes(tabName) ? tabName : 'panel';
+  state.activeTab = nextTab;
+
+  try {
+    localStorage.setItem('currentTab', nextTab);
+  } catch (_) {}
 
   const titles = {
     panel: 'Панель',
@@ -419,18 +441,21 @@ function setActiveTab(tabName) {
   };
 
   if (elements.pageTitle) {
-    elements.pageTitle.textContent = titles[tabName] || 'Панель';
+    elements.pageTitle.textContent = titles[nextTab] || 'Панель';
   }
 
-  elements.tabs.forEach((button) => {
-    button.classList.toggle('active', button.dataset.tab === tabName);
+  // Всегда берём актуальный DOM — кэш NodeList мог устареть.
+  document.querySelectorAll('.nav-btn').forEach((button) => {
+    const tab = button.dataset.tab;
+    if (!tab) return;
+    button.classList.toggle('active', tab === nextTab);
   });
 
-  elements.panels.forEach((panel) => {
-    panel.classList.toggle('active', panel.dataset.panel === tabName);
+  document.querySelectorAll('.tab-panel').forEach((panel) => {
+    panel.classList.toggle('active', panel.dataset.panel === nextTab);
   });
 
-  if (tabName === 'profiles') {
+  if (nextTab === 'profiles') {
     loadProfiles().catch((err) => {
       console.error('profiles load failed', err);
     });
@@ -1046,14 +1071,18 @@ function renderStats() {
 }
 
 function render() {
-  renderPanel();
-  renderAccounts();
-  renderConversations();
-  renderLearn();
-  renderOptions();
-  renderStats();
-  renderProfiles();
-  setActiveTab(state.activeTab);
+  try {
+    renderPanel();
+    renderAccounts();
+    renderConversations();
+    renderLearn();
+    renderOptions();
+    renderStats();
+    renderProfiles();
+  } catch (error) {
+    console.error('render failed', error);
+  }
+  setActiveTab(state.activeTab || 'panel');
 }
 
 /**
@@ -1249,7 +1278,8 @@ function hideProfileForm() {
   if (card) card.hidden = true;
   state.profileEditingId = null;
   document.getElementById('profile-form')?.reset();
-  document.getElementById('profile-active').checked = true;
+  const activeInput = document.getElementById('profile-active');
+  if (activeInput) activeInput.checked = true;
   updateProfilePhotoPreview();
 }
 
@@ -2273,9 +2303,15 @@ function bindEvents() {
  * и подтягиваем реальные данные из backend.
  */
 async function startApp() {
-  bindEvents();
-  render();
-  await loadAllData();
+  try {
+    bindEvents();
+    render();
+    await loadAllData();
+  } catch (error) {
+    console.error('startApp failed', error);
+    setActiveTab('panel');
+    notify(error?.message || 'Ошибка загрузки интерфейса');
+  }
 }
 
 /**
