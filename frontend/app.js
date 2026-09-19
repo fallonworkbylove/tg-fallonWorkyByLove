@@ -223,6 +223,9 @@ const state = {
     accounts: 0,
     messagesByAccount: [],
   },
+
+  profiles: [],
+  profileEditingId: null,
 };
 
 const elements = {
@@ -409,6 +412,7 @@ function setActiveTab(tabName) {
     panel: 'Панель',
     accounts: 'Аккаунты',
     learn: 'Учить',
+    profiles: 'Анкеты',
     info: 'Инфо',
     options: 'Опции',
     stats: 'Статы',
@@ -425,6 +429,12 @@ function setActiveTab(tabName) {
   elements.panels.forEach((panel) => {
     panel.classList.toggle('active', panel.dataset.panel === tabName);
   });
+
+  if (tabName === 'profiles') {
+    loadProfiles().catch((err) => {
+      console.error('profiles load failed', err);
+    });
+  }
 }
 
 /**
@@ -1042,7 +1052,316 @@ function render() {
   renderLearn();
   renderOptions();
   renderStats();
+  renderProfiles();
   setActiveTab(state.activeTab);
+}
+
+/**
+ * API анкет (PHP) — отдельно от Node /api.
+ */
+const PROFILES_API = new URL('api.php', window.location.href).toString();
+const LANDING_PAGE = new URL('landing.html', window.location.href).toString();
+
+function getWorkerTelegramId() {
+  const user = getTelegramUser();
+  return user?.id ? Number(user.id) : null;
+}
+
+async function profilesRequest(action, { method = 'GET', body = null, query = {} } = {}) {
+  const url = new URL(PROFILES_API);
+  url.searchParams.set('action', action);
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  });
+
+  const initData = tg?.initData || '';
+  const workerId = getWorkerTelegramId();
+  const headers = {
+    Accept: 'application/json',
+  };
+  if (initData) {
+    headers.Authorization = `Bearer ${initData}`;
+    headers['X-Telegram-Init-Data'] = initData;
+  }
+  if (workerId) {
+    headers['X-Worker-Id'] = String(workerId);
+  }
+
+  const options = { method, headers };
+  if (body != null) {
+    headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify({
+      ...body,
+      worker_id: body.worker_id ?? workerId,
+      initData: body.initData ?? initData,
+    });
+  }
+
+  const response = await fetch(url.toString(), options);
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (_) {
+    data = null;
+  }
+
+  if (!response.ok) {
+    const message = (data && data.error) || `HTTP ${response.status}`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.data = data;
+    throw error;
+  }
+
+  return data;
+}
+
+function showProfilesError(message) {
+  const el = document.getElementById('profiles-error');
+  if (!el) return;
+  if (!message) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  el.hidden = false;
+  el.textContent = message;
+}
+
+function showAppSnackbar(text) {
+  const el = document.getElementById('app-snackbar');
+  if (!el) return;
+  el.textContent = text || 'Сохранено ✅';
+  el.hidden = false;
+  clearTimeout(showAppSnackbar._timer);
+  showAppSnackbar._timer = setTimeout(() => {
+    el.hidden = true;
+  }, 2200);
+}
+
+function landingLinkForProfile(id) {
+  const join = LANDING_PAGE.includes('?') ? '&' : '?';
+  return `${LANDING_PAGE}${join}profile=${encodeURIComponent(id)}`;
+}
+
+async function loadProfiles() {
+  const workerId = getWorkerTelegramId();
+  showProfilesError('');
+
+  if (!workerId) {
+    showProfilesError('Нет Telegram user.id. Откройте Mini App из бота.');
+    state.profiles = [];
+    renderProfiles();
+    return;
+  }
+
+  try {
+    const data = await profilesRequest('get_worker_profiles', {
+      query: { worker_id: workerId },
+    });
+    state.profiles = Array.isArray(data) ? data : [];
+    renderProfiles();
+  } catch (err) {
+    state.profiles = [];
+    renderProfiles();
+    if (err.status === 403) {
+      showProfilesError('Воркер не найден в таблице workers. Добавьте свой Telegram id.');
+    } else if (err.status === 401) {
+      showProfilesError(`Ошибка авторизации: ${err.message}`);
+    } else {
+      showProfilesError(`Не удалось загрузить анкеты: ${err.message}`);
+    }
+  }
+}
+
+function renderProfiles() {
+  const list = document.getElementById('profiles-list');
+  if (!list) return;
+
+  const items = state.profiles || [];
+  if (!items.length) {
+    list.innerHTML = '<div class="card"><p>Пока нет анкет. Нажмите «Создать».</p></div>';
+    return;
+  }
+
+  list.innerHTML = items
+    .map((profile) => {
+      const active = Number(profile.active) === 1;
+      const photo = String(profile.photo_url || '').trim();
+      const thumb = photo
+        ? `<img class="profile-thumb" src="${escapeHtml(photo)}" alt="" loading="lazy" onerror="this.classList.add('profile-thumb-fallback');this.removeAttribute('src');this.textContent='👤';" />`
+        : `<div class="profile-thumb profile-thumb-fallback">👤</div>`;
+
+      return `
+        <article class="card" data-profile-id="${profile.id}">
+          <div class="profile-card-row">
+            ${thumb}
+            <div class="profile-card-meta">
+              <h4>${escapeHtml(profile.name || 'Без имени')}, ${escapeHtml(profile.age || '—')}</h4>
+              <p>${escapeHtml(profile.city || 'Город не указан')}</p>
+              <div class="profile-status">${active ? '🟢 Активна' : '🔴 Выключена'}</div>
+            </div>
+          </div>
+          <div class="profile-card-stats">
+            <span>Переходы: <strong>${Number(profile.clicks) || 0}</strong></span>
+            <button class="btn btn-secondary small" type="button" data-profile-action="copy" data-id="${profile.id}">Получить ссылку</button>
+          </div>
+          <div class="profile-card-actions">
+            <button class="btn btn-secondary small" type="button" data-profile-action="edit" data-id="${profile.id}">✏️ Изменить</button>
+            <button class="btn btn-danger small" type="button" data-profile-action="delete" data-id="${profile.id}">🗑 Удалить</button>
+          </div>
+        </article>
+      `;
+    })
+    .join('');
+}
+
+function showProfileForm(profile = null) {
+  const card = document.getElementById('profile-form-card');
+  const title = document.getElementById('profile-form-title');
+  if (!card) return;
+
+  card.hidden = false;
+  state.profileEditingId = profile?.id || null;
+  if (title) title.textContent = profile ? `Редактирование #${profile.id}` : 'Новая анкета';
+
+  document.getElementById('profile-id').value = profile?.id || '';
+  document.getElementById('profile-name').value = profile?.name || '';
+  document.getElementById('profile-age').value = profile?.age || '';
+  document.getElementById('profile-city').value = profile?.city || '';
+  document.getElementById('profile-bio').value = profile?.bio || '';
+  document.getElementById('profile-tg').value = profile?.tg_link || '';
+  document.getElementById('profile-photo').value = profile?.photo_url || '';
+  document.getElementById('profile-active').checked = profile ? Number(profile.active) === 1 : true;
+  updateProfilePhotoPreview();
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function hideProfileForm() {
+  const card = document.getElementById('profile-form-card');
+  if (card) card.hidden = true;
+  state.profileEditingId = null;
+  document.getElementById('profile-form')?.reset();
+  document.getElementById('profile-active').checked = true;
+  updateProfilePhotoPreview();
+}
+
+function updateProfilePhotoPreview() {
+  const input = document.getElementById('profile-photo');
+  const img = document.getElementById('profile-photo-preview');
+  if (!input || !img) return;
+  const url = input.value.trim();
+  if (!url) {
+    img.hidden = true;
+    img.removeAttribute('src');
+    return;
+  }
+  img.hidden = false;
+  img.src = url;
+}
+
+async function saveProfileForm(event) {
+  event.preventDefault();
+  showProfilesError('');
+
+  const name = document.getElementById('profile-name').value.trim();
+  const age = Number(document.getElementById('profile-age').value);
+  const city = document.getElementById('profile-city').value.trim();
+  const bio = document.getElementById('profile-bio').value.trim();
+  const tgLink = document.getElementById('profile-tg').value.trim();
+  const photoUrl = document.getElementById('profile-photo').value.trim();
+  const active = document.getElementById('profile-active').checked ? 1 : 0;
+  const idRaw = document.getElementById('profile-id').value.trim();
+  const id = idRaw ? Number(idRaw) : null;
+  const workerId = getWorkerTelegramId();
+
+  if (!name || !Number.isFinite(age) || age < 18 || age > 45) {
+    showProfilesError('Укажите имя и возраст 18–45.');
+    return;
+  }
+
+  const payload = {
+    name,
+    age,
+    city,
+    bio,
+    tg_link: tgLink,
+    photo_url: photoUrl,
+    active,
+    worker_id: workerId,
+  };
+  if (id) payload.id = id;
+
+  const submit = document.getElementById('profile-submit');
+  if (submit) submit.disabled = true;
+
+  try {
+    await profilesRequest('save_profile', { method: 'POST', body: payload });
+    showAppSnackbar('Сохранено ✅');
+    hideProfileForm();
+    await loadProfiles();
+  } catch (err) {
+    showProfilesError(`Сохранение не удалось: ${err.message}`);
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+async function deleteProfileById(id) {
+  if (!window.confirm(`Удалить анкету #${id}?`)) return;
+  try {
+    await profilesRequest('delete_profile', {
+      method: 'POST',
+      query: { id },
+      body: { id },
+    });
+    showAppSnackbar('Удалено ✅');
+    await loadProfiles();
+  } catch (err) {
+    showProfilesError(`Удаление не удалось: ${err.message}`);
+  }
+}
+
+async function copyProfileLink(id) {
+  const link = landingLinkForProfile(id);
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(link);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = link;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    showAppSnackbar('Ссылка скопирована ✅');
+  } catch (_) {
+    showAppSnackbar(link);
+  }
+}
+
+function bindProfileEvents() {
+  document.getElementById('profile-create-btn')?.addEventListener('click', () => {
+    showProfileForm(null);
+  });
+  document.getElementById('profile-cancel')?.addEventListener('click', hideProfileForm);
+  document.getElementById('profile-form')?.addEventListener('submit', saveProfileForm);
+  document.getElementById('profile-photo')?.addEventListener('input', updateProfilePhotoPreview);
+
+  document.getElementById('profiles-list')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-profile-action]');
+    if (!button) return;
+    const id = Number(button.dataset.id);
+    const action = button.dataset.profileAction;
+    const profile = state.profiles.find((item) => Number(item.id) === id);
+
+    if (action === 'edit' && profile) showProfileForm(profile);
+    if (action === 'delete') deleteProfileById(id);
+    if (action === 'copy') copyProfileLink(id);
+  });
 }
 
 /**
@@ -1828,6 +2147,8 @@ function bindEvents() {
       setActiveTab(button.dataset.tab);
     });
   });
+
+  bindProfileEvents();
 
   if (elements.accountForm) {
     elements.accountForm.addEventListener('submit', addAccount);

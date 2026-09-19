@@ -7,14 +7,15 @@
 declare(strict_types=1);
 
 // --- Настройки БД (поменяй под хостинг) ---
-const DB_HOST = '127.0.0.1';
-const DB_NAME = 'loverussian';
-const DB_USER = 'root';
-const DB_PASS = '';
+const DB_HOST = 'localhost';
+const DB_PORT = '3306';
+const DB_NAME = 'telegram_ai_miniapp';
+const DB_USER = 'tgbot';
+const DB_PASS = ''; // пароль с сервера
 const DB_CHARSET = 'utf8mb4';
 
-// Токен бота для проверки Telegram WebApp initData (оставьте пустым, чтобы только сверять workers.id)
-const BOT_TOKEN = '';
+// Токен бота для проверки Telegram WebApp initData
+const BOT_TOKEN = ''; // BOT_TOKEN из .env
 
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -47,7 +48,7 @@ function db(): PDO
         return $pdo;
     }
 
-    $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET;
+    $dsn = 'mysql:host=' . DB_HOST . ';port=' . DB_PORT . ';dbname=' . DB_NAME . ';charset=' . DB_CHARSET;
     $pdo = new PDO($dsn, DB_USER, DB_PASS, [
         PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
@@ -170,9 +171,9 @@ function validate_telegram_init_data(string $initData, string $botToken): bool
 }
 
 /**
- * user.id из initData (Telegram WebApp).
+ * user.id из initData (Telegram WebApp) как строка (BIGINT).
  */
-function parse_telegram_user_id(string $initData): ?int
+function parse_telegram_user_id(string $initData): ?string
 {
     parse_str($initData, $data);
     if (!is_array($data) || empty($data['user'])) {
@@ -180,29 +181,32 @@ function parse_telegram_user_id(string $initData): ?int
     }
 
     $user = json_decode((string) $data['user'], true);
-    if (!is_array($user) || empty($user['id'])) {
+    if (!is_array($user) || !isset($user['id'])) {
         return null;
     }
 
-    $id = (int) $user['id'];
-    return $id > 0 ? $id : null;
+    $id = (string) $user['id'];
+    return ctype_digit($id) && $id !== '0' ? $id : null;
 }
 
 /**
- * worker_id из query, body или заголовка X-Worker-Id.
+ * worker_id из query, body или заголовка X-Worker-Id (строка BIGINT).
  */
-function resolve_worker_id(?array $body = null): ?int
+function resolve_worker_id(?array $body = null): ?string
 {
     if (isset($_GET['worker_id']) && $_GET['worker_id'] !== '') {
-        return (int) $_GET['worker_id'];
+        $id = (string) $_GET['worker_id'];
+        return ctype_digit($id) ? $id : null;
     }
 
     if (is_array($body) && isset($body['worker_id']) && $body['worker_id'] !== '') {
-        return (int) $body['worker_id'];
+        $id = (string) $body['worker_id'];
+        return ctype_digit($id) ? $id : null;
     }
 
     if (!empty($_SERVER['HTTP_X_WORKER_ID'])) {
-        return (int) $_SERVER['HTTP_X_WORKER_ID'];
+        $id = (string) $_SERVER['HTTP_X_WORKER_ID'];
+        return ctype_digit($id) ? $id : null;
     }
 
     return null;
@@ -229,7 +233,7 @@ function require_worker(PDO $pdo, ?array $body = null): array
             json_response(['error' => 'unauthorized'], 401);
         }
 
-        // workers.id сопоставляется с Telegram user.id
+        // workers.id сопоставляется с Telegram user.id (BIGINT)
         $stmt = $pdo->prepare('SELECT id, login, token FROM workers WHERE id = :id LIMIT 1');
         $stmt->execute([':id' => $telegramId]);
         $worker = $stmt->fetch();
@@ -239,7 +243,7 @@ function require_worker(PDO $pdo, ?array $body = null): array
         }
 
         return [
-            'id'    => (int) $worker['id'],
+            'id'    => (string) $worker['id'],
             'login' => (string) $worker['login'],
             'token' => (string) $worker['token'],
         ];
@@ -248,7 +252,7 @@ function require_worker(PDO $pdo, ?array $body = null): array
     $workerId = resolve_worker_id($body);
     $token = bearer_token();
 
-    if ($workerId === null || $workerId <= 0 || $token === null || $token === '') {
+    if ($workerId === null || $workerId === '' || $token === null || $token === '') {
         json_response(['error' => 'unauthorized'], 401);
     }
 
@@ -261,7 +265,7 @@ function require_worker(PDO $pdo, ?array $body = null): array
     }
 
     return [
-        'id'    => (int) $worker['id'],
+        'id'    => (string) $worker['id'],
         'login' => (string) $worker['login'],
         'token' => (string) $worker['token'],
     ];
@@ -274,7 +278,7 @@ function profile_public(array $row): array
 {
     return [
         'id'         => (int) $row['id'],
-        'worker_id'  => (int) $row['worker_id'],
+        'worker_id'  => (string) $row['worker_id'],
         'name'       => $row['name'],
         'age'        => (int) $row['age'],
         'city'       => $row['city'],
@@ -333,8 +337,10 @@ try {
 
             $worker = require_worker($pdo);
             // worker_id в query должен совпадать с авторизованным
-            $requested = isset($_GET['worker_id']) ? (int) $_GET['worker_id'] : $worker['id'];
-            if ($requested !== $worker['id']) {
+            $requested = isset($_GET['worker_id']) && $_GET['worker_id'] !== ''
+                ? (string) $_GET['worker_id']
+                : (string) $worker['id'];
+            if ($requested !== (string) $worker['id']) {
                 json_response(['error' => 'forbidden'], 403);
             }
 

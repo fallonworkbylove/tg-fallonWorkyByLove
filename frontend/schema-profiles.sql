@@ -1,7 +1,7 @@
 -- Таблицы для анкет знакомств (MySQL)
 
 CREATE TABLE IF NOT EXISTS workers (
-  id INT NOT NULL PRIMARY KEY COMMENT 'Telegram user.id воркера',
+  id BIGINT NOT NULL PRIMARY KEY COMMENT 'Telegram user.id воркера',
   login VARCHAR(100) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   token VARCHAR(255) NOT NULL,
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS workers (
 
 CREATE TABLE IF NOT EXISTS profiles (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  worker_id INT NOT NULL,
+  worker_id BIGINT NOT NULL,
   name VARCHAR(100) NOT NULL,
   age INT NOT NULL,
   city VARCHAR(100) DEFAULT NULL,

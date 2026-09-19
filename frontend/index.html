@@ -10,7 +10,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Telegram Mini App</title>
-    <link rel="stylesheet" href="styles.css?v=12" />
+    <link rel="stylesheet" href="styles.css?v=13" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -208,20 +208,76 @@
             <div id="stats-accounts" class="stack"></div>
           </div>
         </section>
+
+        <section class="tab-panel" data-panel="profiles">
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Мои анкеты</h3>
+              <button class="btn btn-primary small" id="profile-create-btn" type="button">➕ Создать</button>
+            </div>
+            <p>Профили для лендинга. Ссылка: landing.html?profile=ID</p>
+            <p id="profiles-error" class="form-hint" hidden></p>
+            <div id="profiles-list" class="stack"></div>
+          </div>
+
+          <div class="section-card card" id="profile-form-card" hidden>
+            <h3 id="profile-form-title">Новая анкета</h3>
+            <form id="profile-form" class="form-grid">
+              <input type="hidden" id="profile-id" value="" />
+              <label>
+                <span>Имя</span>
+                <input id="profile-name" type="text" maxlength="100" required placeholder="Алина" />
+              </label>
+              <label>
+                <span>Возраст</span>
+                <input id="profile-age" type="number" min="18" max="45" required placeholder="23" />
+              </label>
+              <label>
+                <span>Город</span>
+                <input id="profile-city" type="text" maxlength="100" placeholder="Москва" />
+              </label>
+              <label>
+                <span>О себе</span>
+                <textarea id="profile-bio" rows="3" placeholder="Описание от лица девушки"></textarea>
+              </label>
+              <label>
+                <span>Ссылка Telegram</span>
+                <input id="profile-tg" type="url" placeholder="https://t.me/username" />
+              </label>
+              <label>
+                <span>Фото (URL)</span>
+                <input id="profile-photo" type="url" placeholder="https://..." />
+              </label>
+              <div class="profile-photo-preview-wrap">
+                <img id="profile-photo-preview" class="profile-thumb" alt="" hidden />
+              </div>
+              <label class="profile-toggle">
+                <span>Анкета активна</span>
+                <input id="profile-active" type="checkbox" checked />
+              </label>
+              <div class="example-form__actions">
+                <button id="profile-cancel" class="btn btn-secondary" type="button">Отмена</button>
+                <button id="profile-submit" class="btn btn-primary" type="submit">Сохранить</button>
+              </div>
+            </form>
+          </div>
+        </section>
       </main>
 
       <nav class="bottom-nav" aria-label="Вкладки">
         <button class="nav-btn active" data-tab="panel" type="button">Панель</button>
         <button class="nav-btn" data-tab="accounts" type="button">Аккаунты</button>
         <button class="nav-btn" data-tab="learn" type="button">Учить</button>
-        <a class="nav-btn" href="profiles.html">Анкеты</a>
+        <button class="nav-btn" data-tab="profiles" type="button">Анкеты</button>
         <button class="nav-btn" data-tab="info" type="button">Инфо</button>
         <button class="nav-btn" data-tab="options" type="button">Опции</button>
         <button class="nav-btn" data-tab="stats" type="button">Статы</button>
       </nav>
     </div>
 
+    <div id="app-snackbar" class="app-snackbar" hidden>Сохранено ✅</div>
+
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=12"></script>
+    <script src="app.js?v=13"></script>
     </body>
     </html>
