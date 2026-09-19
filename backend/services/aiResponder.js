@@ -124,7 +124,7 @@ const DEFAULT_PROMPT =
 function enrichShortFollowUp(history, userMessage) {
   const text = String(userMessage || '').trim();
   if (!text) return text;
-  if (/\[(?:ответ на|уточнение к|Ответ на сообщение)/i.test(text)) return text;
+  if (/\[(?:ответ на|уточнение к|Ответ на сообщение|геоконтекст)/i.test(text)) return text;
 
   const words = text.split(/\s+/).filter(Boolean);
   const isShort = text.length <= 28 && words.length <= 4;
@@ -154,9 +154,55 @@ function enrichShortFollowUp(history, userMessage) {
   return `[уточнение к твоей фразе «${quote}»]: ${text}`;
 }
 
+/**
+ * Собирает недавние фразы бота про города/переезд/семью — чтобы при
+ * уточнениях модель не меняла местами «сейчас живу» и «куда еду».
+ */
+function collectAssistantGeoFacts(history, limit = 4) {
+  const geoRe =
+    /(переезж|перееду|переехал|живу|жива|город|сейчас в|щас в|мама|мам[ауе]|отец|родител|из\s+[А-ЯЁа-яё]{3,}|в\s+[А-ЯЁ][а-яё]{3,})/i;
+  const facts = [];
+  for (let i = (history || []).length - 1; i >= 0 && facts.length < limit; i -= 1) {
+    const item = history[i];
+    if (item?.role !== 'assistant') continue;
+    let text = String(item.content || '')
+      .replace(/^\[голосовое:[^\]]+\]\s*/i, '')
+      .replace(/^\[медиа:[^\]]+\]\s*/i, '')
+      .replace(/<<(?:PHOTO|VIDEO|CIRCLE|LAUGH)>>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text || !geoRe.test(text)) continue;
+    facts.unshift(text.slice(0, 220));
+  }
+  return facts;
+}
+
+/**
+ * Уточнения про город/переезд («так ты в Липецк?», «а щас в каком городе?»)
+ * — подмешиваем свои прошлые гео-фразы, иначе модель часто меняет города местами.
+ */
+function enrichGeoFollowUp(history, userMessage) {
+  const text = String(userMessage || '').trim();
+  if (!text) return text;
+  if (/\[геоконтекст/i.test(text)) return text;
+
+  const clarifying =
+    /(переезж|куда\s+(ты\s+)?(ед|переез)|в\s+каком\s+городе|а\s+щас|а\s+сейчас|так\s+ты\s+в\s+|мама.*(город|жив)|зачем\s+тебе\s+в\s+|откуда\s+ты|где\s+ты\s+(сейчас|щас))/i.test(
+      text,
+    );
+  if (!clarifying) return text;
+
+  const facts = collectAssistantGeoFacts(history);
+  if (!facts.length) return text;
+
+  const joined = facts.map((f) => f.replace(/[«»]/g, '"')).join('» | «');
+  return `[геоконтекст — твои прошлые фразы в этом диалоге, НЕ противоречь им и НЕ меняй города местами: «${joined}»]: ${text}`;
+}
+
 async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const finalPrompt = systemPrompt?.trim() || DEFAULT_PROMPT;
-  const contextualUserMessage = enrichShortFollowUp(history, userMessage);
+  let contextualUserMessage = enrichShortFollowUp(history, userMessage);
+  contextualUserMessage = enrichGeoFollowUp(history, contextualUserMessage);
 
   // Reminder намеренно МИНИМАЛЬНЫЙ: он НЕ навязывает свои правила (длину,
   // вопросы и т.п.), чтобы не перебивать промпт из панели — все стилевые
@@ -188,6 +234,12 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'это почти всегда уточнение к ТВОЕЙ предыдущей фразе (role assistant), а не новая тема. ' +
     'Свяжи ответ с последним своим сообщением. Не пиши «не поняла» / «о чём речь», пока в истории есть к чему привязать его слова. ' +
     'Если во входящем есть пометка [уточнение к твоей фразе «...»], отвечай именно про эту фразу. ' +
+    'ГЕОГРАФИЯ И ФАКТЫ О СЕБЕ: города, «где я сейчас», «куда переезжаю», где мама/семья — раз сказала в этом диалоге, держи строго. ' +
+    'Никогда не меняй местами «сейчас живу/нахожусь» и «переезжаю/еду». ' +
+    'Если сказала «мама в X, поэтому переезжаю» — значит едешь В X, чтобы быть рядом, а сейчас ты НЕ в X. ' +
+    'Если собеседник уточняет («так ты в X переезжаешь?», «а щас в каком городе?») — перечитай СВОИ прошлые ответы про города и ответь в том же смысле, без перестановки городов. ' +
+    'Город из промпта персонажа бери только если в ЭТОМ диалоге ты ещё не называла другой город/переезд. ' +
+    'Если во входящем есть [геоконтекст ...], отвечай строго согласованно с перечисленными там твоими фразами. ' +
     'Продолжай последнюю тему естественно; новую тему начинай только если текущая завершена. ' +
     'Если последнее сообщение относится к недавно присланному фото, изображению или медиа, это имеет приоритет над старыми темами. ' +
     'Отвечай именно на вопрос о последнем изображении и не возвращайся к спорту, хобби или другой прежней теме, если собеседник её не поднял. ' +
