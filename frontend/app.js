@@ -1089,7 +1089,16 @@ function render() {
  * API анкет (PHP) — отдельно от Node /api.
  */
 const PROFILES_API = new URL('api.php', window.location.href).toString();
-const LANDING_PAGE = new URL('landing.html', window.location.href).toString();
+
+function landingBaseUrl() {
+  // Всегда чистый абсолютный URL без ?v= из Mini App
+  return `${window.location.origin}/landing.html`;
+}
+
+function landingLinkForProfile(id) {
+  const profileId = String(id || '').replace(/\D/g, '');
+  return `${landingBaseUrl()}?profile=${profileId}`;
+}
 
 function getWorkerTelegramId() {
   const user = getTelegramUser();
@@ -1253,8 +1262,8 @@ function showAppSnackbar(text) {
 }
 
 function landingLinkForProfile(id) {
-  const join = LANDING_PAGE.includes('?') ? '&' : '?';
-  return `${LANDING_PAGE}${join}profile=${encodeURIComponent(id)}`;
+  const profileId = String(id || '').replace(/\D/g, '');
+  return `${landingBaseUrl()}?profile=${profileId}`;
 }
 
 async function loadProfiles() {
@@ -1461,8 +1470,20 @@ async function copyProfileLink(id) {
       ta.remove();
     }
     showAppSnackbar('Ссылка скопирована ✅');
+    if (tg && typeof tg.showPopup === 'function') {
+      tg.showPopup({
+        title: 'Ссылка на лендинг',
+        message: link,
+        buttons: [{ type: 'close', text: 'OK' }],
+      });
+    } else if (tg && typeof tg.showAlert === 'function') {
+      tg.showAlert(link);
+    }
   } catch (_) {
     showAppSnackbar(link);
+    if (tg && typeof tg.showAlert === 'function') {
+      tg.showAlert(link);
+    }
   }
 }
 

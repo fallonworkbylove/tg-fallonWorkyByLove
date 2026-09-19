@@ -468,8 +468,10 @@
       }
 
       async function fetchProfile(id) {
-        const res = await fetch(`${API_URL}?action=get_profile&id=${encodeURIComponent(id)}`, {
+        const url = `${API_URL}?action=get_profile&id=${encodeURIComponent(id)}&_=${Date.now()}`;
+        const res = await fetch(url, {
           headers: { Accept: "application/json" },
+          cache: "no-store",
         });
         let data = null;
         try {

@@ -376,6 +376,13 @@ function profile_public(array $row): array
     ];
 }
 
+function send_no_store_headers(): void
+{
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+}
+
 // --- Роутинг ---
 $action = $_GET['action'] ?? '';
 $method = $_SERVER['REQUEST_METHOD'];
@@ -391,6 +398,8 @@ try {
             if ($method !== 'GET') {
                 json_response(['error' => 'method not allowed'], 405);
             }
+
+            send_no_store_headers();
 
             $id = isset($_GET['id']) ? (int) $_GET['id'] : 0;
             if ($id <= 0) {
