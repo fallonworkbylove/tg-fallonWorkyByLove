@@ -3,6 +3,15 @@ const tg = window.Telegram?.WebApp || null;
 if (tg) {
   tg.ready();
   tg.expand();
+  try {
+    if (typeof tg.disableVerticalSwipes === 'function') tg.disableVerticalSwipes();
+  } catch (_) {}
+  try {
+    if (typeof tg.setHeaderColor === 'function') tg.setHeaderColor('#111827');
+  } catch (_) {}
+  try {
+    if (typeof tg.setBackgroundColor === 'function') tg.setBackgroundColor('#111827');
+  } catch (_) {}
 }
 
 function isTelegramWebApp() {
@@ -1169,7 +1178,8 @@ function setProfilePhotoStatus(message, isError = false) {
   el.style.color = isError ? '#fca5a5' : '';
 }
 
-async function uploadProfilePhotoFile(file) {
+/** iPhone часто отдаёт HEIC — сервер принимает только jpeg/png/webp. */
+async function normalizeImageFileForUpload(file) {
   if (!file) return null;
 
   const maxBytes = 20 * 1024 * 1024;
@@ -1177,13 +1187,89 @@ async function uploadProfilePhotoFile(file) {
     throw new Error('Файл больше 20 МБ');
   }
 
+  const name = String(file.name || '').toLowerCase();
+  const type = String(file.type || '').toLowerCase();
+  const looksHeic =
+    type.includes('heic') ||
+    type.includes('heif') ||
+    /\.heic$|\.heif$/i.test(name);
+
+  const alreadyOk =
+    !looksHeic &&
+    (type === 'image/jpeg' ||
+      type === 'image/jpg' ||
+      type === 'image/png' ||
+      type === 'image/webp') &&
+    file.size <= 4 * 1024 * 1024;
+
+  if (alreadyOk) {
+    const ext = type.includes('png') ? 'png' : type.includes('webp') ? 'webp' : 'jpg';
+    return new File([file], `photo.${ext}`, { type, lastModified: Date.now() });
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () =>
+        reject(
+          new Error(
+            looksHeic
+              ? 'HEIC не поддерживается. В Настройки → Камера → Форматы выбери «Наиболее совместимый», или сохрани фото как JPG.'
+              : 'Не удалось прочитать изображение'
+          )
+        );
+      image.src = objectUrl;
+    });
+
+    const maxSide = 2048;
+    let { width, height } = img;
+    if (!width || !height) throw new Error('Пустое изображение');
+    const scale = Math.min(1, maxSide / Math.max(width, height));
+    width = Math.max(1, Math.round(width * scale));
+    height = Math.max(1, Math.round(height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas недоступен');
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error('Не удалось сжать фото'))),
+        'image/jpeg',
+        0.85
+      );
+    });
+
+    if (blob.size > maxBytes) {
+      throw new Error('После сжатия файл всё ещё больше 20 МБ');
+    }
+
+    return new File([blob], 'photo.jpg', {
+      type: 'image/jpeg',
+      lastModified: Date.now(),
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function uploadProfilePhotoFile(file) {
+  if (!file) return null;
+
+  const prepared = await normalizeImageFileForUpload(file);
+
   const initData = tg?.initData || '';
   const workerId = getWorkerTelegramId();
   const url = new URL(PROFILES_API);
   url.searchParams.set('action', 'upload_photo');
 
   const form = new FormData();
-  form.append('photo', file, file.name || 'photo.jpg');
+  form.append('photo', prepared, prepared.name || 'photo.jpg');
   if (workerId) form.append('worker_id', String(workerId));
   if (initData) form.append('initData', initData);
 
@@ -1219,7 +1305,7 @@ async function handleProfilePhotoFileChange(event) {
   const file = input?.files?.[0];
   if (!file) return;
 
-  setProfilePhotoStatus('Загрузка фото…');
+  setProfilePhotoStatus('Обработка фото…');
   showProfilesError('');
 
   try {
@@ -1236,6 +1322,37 @@ async function handleProfilePhotoFileChange(event) {
   } finally {
     if (input) input.value = '';
   }
+}
+
+async function copyTextRobust(text) {
+  const value = String(text || '');
+  if (!value) return false;
+
+  try {
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch (_) {}
+
+  const ta = document.createElement('textarea');
+  ta.value = value;
+  ta.setAttribute('readonly', '');
+  ta.setAttribute('aria-hidden', 'true');
+  ta.style.cssText =
+    'position:fixed;top:0;left:0;width:2px;height:2px;padding:0;border:0;opacity:0.01;z-index:-1;';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, value.length);
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch (_) {
+    ok = false;
+  }
+  ta.remove();
+  return ok;
 }
 
 function showProfilesError(message) {
@@ -1453,33 +1570,32 @@ async function deleteProfileById(id) {
 
 async function copyProfileLink(id) {
   const link = landingLinkForProfile(id);
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(link);
-    } else {
-      const ta = document.createElement('textarea');
-      ta.value = link;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      ta.remove();
-    }
+  const copied = await copyTextRobust(link);
+
+  if (copied) {
     showAppSnackbar('Ссылка скопирована ✅');
-    if (tg && typeof tg.showPopup === 'function') {
+  } else {
+    showAppSnackbar('Ссылка ниже — скопируй вручную');
+  }
+
+  // На iPhone clipboard часто блокируется — всегда показываем ссылку.
+  if (tg && typeof tg.showPopup === 'function') {
+    try {
       tg.showPopup({
-        title: 'Ссылка на лендинг',
+        title: copied ? 'Ссылка скопирована' : 'Ссылка на лендинг',
         message: link,
         buttons: [{ type: 'close', text: 'OK' }],
       });
-    } else if (tg && typeof tg.showAlert === 'function') {
-      tg.showAlert(link);
-    }
-  } catch (_) {
-    showAppSnackbar(link);
-    if (tg && typeof tg.showAlert === 'function') {
-      tg.showAlert(link);
-    }
+      return;
+    } catch (_) {}
   }
+  if (tg && typeof tg.showAlert === 'function') {
+    try {
+      tg.showAlert(link);
+      return;
+    } catch (_) {}
+  }
+  window.prompt('Ссылка на лендинг:', link);
 }
 
 function bindProfileEvents() {

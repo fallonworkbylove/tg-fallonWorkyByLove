@@ -10,7 +10,9 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Telegram Mini App</title>
-    <link rel="stylesheet" href="styles.css?v=15" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <link rel="stylesheet" href="styles.css?v=19" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -250,7 +252,7 @@
               </label>
               <label>
                 <span>Фото</span>
-                <input id="profile-photo-file" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/jpg,image/png,image/webp,image/*" />
+                <input id="profile-photo-file" type="file" accept="image/*" />
               </label>
               <p id="profile-photo-status" class="form-hint" hidden></p>
               <label>
@@ -287,6 +289,6 @@
     <div id="app-snackbar" class="app-snackbar" hidden>Сохранено ✅</div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=18"></script>
+    <script src="app.js?v=19"></script>
     </body>
     </html>
