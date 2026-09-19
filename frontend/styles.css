@@ -407,7 +407,7 @@ textarea {
   box-sizing: border-box;
   z-index: 1000;
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 6px;
   padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
   background: rgba(17, 24, 39, 0.96);
@@ -419,13 +419,17 @@ textarea {
   border: none;
   background: transparent;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
   padding: 8px 2px;
   border-radius: 10px;
   cursor: pointer;
   white-space: nowrap;
   text-align: center;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .nav-btn.active {
@@ -435,12 +439,12 @@ textarea {
 
 @media (max-width: 420px) {
   .bottom-nav {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 4px;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 3px;
   }
 
   .nav-btn {
-    font-size: 0.68rem;
+    font-size: 0.62rem;
     padding: 8px 1px;
   }
 

@@ -1820,7 +1820,11 @@ function handleDetails(accountId) {
 
 function bindEvents() {
   elements.tabs.forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', (event) => {
+      if (!button.dataset.tab) {
+        return;
+      }
+      event.preventDefault();
       setActiveTab(button.dataset.tab);
     });
   });
