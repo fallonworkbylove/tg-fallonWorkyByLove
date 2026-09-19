@@ -116,8 +116,47 @@ const DEFAULT_PROMPT =
  * @param {string} userMessage - новое сообщение собеседника
  * @returns {Promise<string>} сгенерированный ответ
  */
+/**
+ * Короткие уточнения («чем», «почему», «в смысле») почти всегда относятся
+ * к последней фразе бота. Без явной привязки лёгкая модель теряет контекст
+ * и отвечает «не поняла, о чём речь».
+ */
+function enrichShortFollowUp(history, userMessage) {
+  const text = String(userMessage || '').trim();
+  if (!text) return text;
+  if (/\[(?:ответ на|уточнение к|Ответ на сообщение)/i.test(text)) return text;
+
+  const words = text.split(/\s+/).filter(Boolean);
+  const isShort = text.length <= 28 && words.length <= 4;
+  if (!isShort) return text;
+
+  const followUpRe =
+    /^(а\s+)?(чем|чего|почему|зачем|как|какой|какая|какие|какое|где|куда|когда|кто|что|ну\s+и|типа|в\s+смысле|это\s+как|и\s+что)\b/i;
+  if (!followUpRe.test(text) && words.length > 2) return text;
+
+  let lastAssistant = '';
+  for (let i = (history || []).length - 1; i >= 0; i -= 1) {
+    if (history[i].role === 'assistant') {
+      lastAssistant = String(history[i].content || '').trim();
+      break;
+    }
+  }
+  if (!lastAssistant) return text;
+
+  const clean = lastAssistant
+    .replace(/^\[голосовое:[^\]]+\]\s*/i, '')
+    .replace(/^\[медиа:[^\]]+\]\s*/i, '')
+    .replace(/<<(?:PHOTO|VIDEO|CIRCLE|LAUGH)>>/g, '')
+    .trim();
+  if (!clean) return text;
+
+  const quote = clean.slice(0, 180).replace(/\s+/g, ' ');
+  return `[уточнение к твоей фразе «${quote}»]: ${text}`;
+}
+
 async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const finalPrompt = systemPrompt?.trim() || DEFAULT_PROMPT;
+  const contextualUserMessage = enrichShortFollowUp(history, userMessage);
 
   // Reminder намеренно МИНИМАЛЬНЫЙ: он НЕ навязывает свои правила (длину,
   // вопросы и т.п.), чтобы не перебивать промпт из панели — все стилевые
@@ -145,9 +184,13 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Не задавай вопрос, на который собеседник уже ответил, и не спрашивай заново то, что уже известно из истории. ' +
     'Если собеседник отвечает коротко («27», «нет», «понятно»), связывай ответ с непосредственно предыдущим вопросом, ' +
     'а не придумывай новый контекст. Не ссылайся на факт, которого нет в истории. ' +
+    'Если собеседник пишет очень коротко («чем», «почему», «а что», «в смысле», «как», «это») — ' +
+    'это почти всегда уточнение к ТВОЕЙ предыдущей фразе (role assistant), а не новая тема. ' +
+    'Свяжи ответ с последним своим сообщением. Не пиши «не поняла» / «о чём речь», пока в истории есть к чему привязать его слова. ' +
+    'Если во входящем есть пометка [уточнение к твоей фразе «...»], отвечай именно про эту фразу. ' +
     'Продолжай последнюю тему естественно; новую тему начинай только если текущая завершена. ' +
     'Если последнее сообщение относится к недавно присланному фото, изображению или медиа, это имеет приоритет над старыми темами. ' +
-    'Отвечай именно на вопрос о последнем изображении и не возвраща��ся к спорту, хобби или другой прежней теме, если собеседник её не поднял. ' +
+    'Отвечай именно на вопрос о последнем изображении и не возвращайся к спорту, хобби или другой прежней теме, если собеседник её не поднял. ' +
     'Если во входящем есть пометка [ответ на «...»], человек отвечает именно на эту цитату, ' +
     'какой бы ни была его реплика: короткое «да», «нет», «!», одно слово, вопрос или целое предложение. ' +
     'Связывай весь текст после пометки с цитатой в кавычках и отвечай на него в этом контексте, а не придумывай другую тему.';
@@ -313,7 +356,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   messages.push({ role: 'system', content: loveReminder });
   messages.push({ role: 'system', content: laughReminder });
   messages.push({ role: 'system', content: lengthReminder });
-  messages.push({ role: 'user', content: userMessage });
+  messages.push({ role: 'user', content: contextualUserMessage });
 
   // [v0] ВРЕМЕННЫЙ ЛОГ: печатает реально используемую модель и endpoint.
   console.log(
