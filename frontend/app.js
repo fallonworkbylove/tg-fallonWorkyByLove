@@ -1261,11 +1261,6 @@ function showAppSnackbar(text) {
   }, 2200);
 }
 
-function landingLinkForProfile(id) {
-  const profileId = String(id || '').replace(/\D/g, '');
-  return `${landingBaseUrl()}?profile=${profileId}`;
-}
-
 async function loadProfiles() {
   const workerId = getWorkerTelegramId();
   showProfilesError('');
