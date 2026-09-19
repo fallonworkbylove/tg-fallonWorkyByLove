@@ -1057,9 +1057,11 @@ function voiceTag(fileName) {
 // NFT-КАМПАНИЯ (3 дня): мягкие напоминания про заработок на NFT, а на 3-й день —
 // голосовое nft.ogg с просьбой помочь с токеном.
 //
-// Почему это в коде, а не только в промпте: промпт ста��ичен и не знает, сколько
-// дней длится знакомство. День считаем от ПЕРВОГО сообщения в диалоге
-// (conversation_messages.created_at) и передаём модели готовую подсказку.
+// Почему это в коде, а не только в промпте: промпт статичен и не знает, сколько
+// дней длится знакомство. День считаем от начала ТЕКУЩЕЙ сессии диалога
+// (после паузы ≥72ч старые записи в БД не считаются «3-м днём») и передаём
+// модели готовую подсказку. Без активного диалога (человек давно не писал)
+// NFT-кампанию не ведём.
 // ---------------------------------------------------------------------------
 
 // Папка с готовыми голосовыми заготовками (poka.ogg, nft.ogg и т.д.).
@@ -1070,13 +1072,17 @@ const NFT_VOICE_FILE = 'nft.ogg';
 // Голосовое уходит, когда диалогу столько часов (3-й день знакомства).
 // После отправки бот полностью замолкает на этом собеседнике.
 // NFT-голосовое разрешено только с третьего дня общения.
-// Первые 48 часов после самого раннего сообщения всегда исключены.
+// Первые 48 часов после старта ТЕКУЩЕЙ сессии диалога всегда исключены.
 const NFT_VOICE_AFTER_HOURS = 48;
 const NFT_VOICE_LEAD_MIN_MS = 60 * 60 * 1000;
 const NFT_VOICE_LEAD_MAX_MS = 2 * 60 * 60 * 1000;
 // Одно сообщение «проблему с работой решаю» примерно за 30 минут до голосового.
 const NFT_WORK_MENTION_MIN_MS = 10 * 60 * 1000;
 const NFT_WORK_MENTION_MAX_MS = 50 * 60 * 1000;
+// Пауза без сообщений — старый диалог в БД считаем законченным, возраст с нуля.
+const NFT_DIALOG_SESSION_GAP_HOURS = 72;
+// Нет входящих от человека столько часов — активного диалога нет, NFT не ведём.
+const NFT_ACTIVE_DIALOGUE_IDLE_HOURS = 72;
 const WORK_PROBLEM_PHRASES = [
   'проблему с работой решаю',
   'щас проблему с работой решаю',
@@ -1299,20 +1305,49 @@ async function getDialogTail(accountId, peerId) {
   return { hasIncoming, lastRole };
 }
 
+/**
+ * Возвращает, сколько часов прошло с начала ТЕКУЩЕЙ сессии диалога.
+ * null — если истории нет ИЛИ сейчас нет активного диалога (человек давно не писал).
+ *
+ * Важно: старые сообщения в БД после длинной паузы не считаются «3-м днём».
+ * Сессия сбрасывается, если между сообщениями пауза ≥ NFT_DIALOG_SESSION_GAP_HOURS.
+ */
 async function getDialogAgeHours(accountId, peerId) {
   try {
     const [rows] = await db.execute(
-      `SELECT MIN(created_at) AS started FROM conversation_messages
-       WHERE account_id = ? AND peer_id = ?`,
+      `SELECT role, created_at FROM conversation_messages
+       WHERE account_id = ? AND peer_id = ?
+       ORDER BY created_at ASC, id ASC`,
       [accountId, peerId],
     );
-    const started = rows[0]?.started;
-    if (!started) return null;
-    const ms = Date.now() - new Date(started).getTime();
-    return ms / (60 * 60 * 1000);
+    if (!rows.length) return null;
+
+    let lastUserAt = null;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].role === 'user') {
+        lastUserAt = new Date(rows[i].created_at);
+        break;
+      }
+    }
+    // В БД человек есть, но входящих нет / давно молчит — диалога нет, NFT не кидаем.
+    if (!lastUserAt) return null;
+    const idleHours = (Date.now() - lastUserAt.getTime()) / (60 * 60 * 1000);
+    if (idleHours > NFT_ACTIVE_DIALOGUE_IDLE_HOURS) return null;
+
+    let sessionStart = new Date(rows[0].created_at);
+    for (let i = 1; i < rows.length; i++) {
+      const prev = new Date(rows[i - 1].created_at).getTime();
+      const cur = new Date(rows[i].created_at).getTime();
+      const gapHours = (cur - prev) / (60 * 60 * 1000);
+      if (gapHours >= NFT_DIALOG_SESSION_GAP_HOURS) {
+        sessionStart = new Date(rows[i].created_at);
+      }
+    }
+
+    return (Date.now() - sessionStart.getTime()) / (60 * 60 * 1000);
   } catch (err) {
     console.error(
-      `[${accountLabel(accountId)}] Не смог посчитать возраст диал����га (NFT-камп��ния выключена):`,
+      `[${accountLabel(accountId)}] Не смог посчитать возраст диалога (NFT-кампания выключена):`,
       err.message,
     );
     return null;
@@ -3347,13 +3382,14 @@ async function tickNftDueVoices(accountId) {
     const [rows] = await db.execute(
       `SELECT peer_id,
               MAX(peer_username) AS peer_username,
-              MIN(created_at) AS started,
-              COUNT(*) AS msg_count
+              COUNT(*) AS msg_count,
+              MAX(CASE WHEN role = 'user' THEN created_at END) AS last_user_at
        FROM conversation_messages
        WHERE account_id = ?
        GROUP BY peer_id
-       HAVING started <= (NOW() - INTERVAL ${Number(NFT_VOICE_AFTER_HOURS)} HOUR)
-          AND msg_count >= 6`,
+       HAVING msg_count >= 6
+          AND last_user_at IS NOT NULL
+          AND last_user_at >= (NOW() - INTERVAL ${Number(NFT_ACTIVE_DIALOGUE_IDLE_HOURS)} HOUR)`,
       [accountId],
     );
 
@@ -3367,6 +3403,10 @@ async function tickNftDueVoices(accountId) {
       if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) continue;
       if (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE)) continue;
       if (isHiddenFromReplies(archiveFlags, peerId)) continue;
+
+      // Возраст только текущей сессии; без активного диалога getDialogAgeHours = null
+      const ageHours = await getDialogAgeHours(accountId, peerId);
+      if (ageHours == null || ageHours < NFT_VOICE_AFTER_HOURS) continue;
 
       const plan = await getOrCreateNftVoiceAt(accountId, peerId);
       if (Date.now() < plan.scheduledAt.getTime()) continue;
