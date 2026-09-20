@@ -18,16 +18,28 @@
  *   node scripts/import-rag-dialogues.js --stats
  */
 
-require('dotenv').config();
+try {
+  require('dotenv').config();
+} catch (_) {
+  /* dotenv optional for --out convert on machines without node_modules */
+}
 
 const fs = require('fs');
 const path = require('path');
-const ragExamples = require('../services/ragExamples');
-const db = require('../db');
+
+function loadRag() {
+  return require('../services/ragExamples');
+}
+
+function loadDb() {
+  return require('../db');
+}
 
 function parseArgs() {
   const args = {
     files: [],
+    dir: null,
+    out: null,
     noEmbed: false,
     backfill: false,
     stats: false,
@@ -58,7 +70,9 @@ function parseArgs() {
     if (key === 'file') args.files.push({ path: val, day: null });
     else if (key === 'day1') args.files.push({ path: val, day: 1 });
     else if (key === 'day2') args.files.push({ path: val, day: 2 });
+    else if (key === 'dir') args.dir = val;
     else if (key === 'delay') args.delayMs = Number(val) || 40;
+    else if (key === 'out') args.out = val;
   }
   return args;
 }
@@ -86,13 +100,14 @@ function normalizePair(obj, forcedDay) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
 
   const day = resolveDay(
-    obj.day ?? obj.dialog_day ?? obj.day_num ?? obj.dayNumber ?? obj.stage,
+    obj.day ?? obj.dialog_day ?? obj.day_num ?? obj.dayNumber,
     forcedDay,
   );
 
   const client = pickText(obj, [
     'client',
     'client_message',
+    'user_message',
     'user',
     'human',
     'incoming',
@@ -106,6 +121,7 @@ function normalizePair(obj, forcedDay) {
   const bot = pickText(obj, [
     'bot',
     'bot_reply',
+    'assistant_response',
     'assistant',
     'reply',
     'correct_answer',
@@ -116,14 +132,14 @@ function normalizePair(obj, forcedDay) {
     'woman',
   ]);
 
-  if (!client || !bot) return null;
-  if (!day) return null;
+  if (!client || !bot || !day) return null;
 
   return {
     day,
     clientMessage: client,
     botReply: bot,
     source: obj.source ? String(obj.source) : null,
+    stage: obj.stage ? String(obj.stage) : null,
   };
 }
 
@@ -214,6 +230,59 @@ function collectFromObject(obj, forcedDay, out) {
   if (single) out.push(single);
 }
 
+/**
+ * Достаёт отдельные {...} объекты из «битого» JSON:
+ * поток объектов через запятую без обёртки [...], обрезанный хвост и т.п.
+ */
+function extractJsonObjects(text) {
+  const objects = [];
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    while (i < n && text[i] !== '{') i += 1;
+    if (i >= n) break;
+    const start = i;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (; i < n; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (ch === '\\') {
+          escape = true;
+          continue;
+        }
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === '{') depth += 1;
+      else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          const slice = text.slice(start, i + 1);
+          try {
+            objects.push(JSON.parse(slice));
+          } catch (_) {
+            /* skip broken object */
+          }
+          i += 1;
+          break;
+        }
+      }
+    }
+    if (depth !== 0) break; // хвост обрезан — стоп
+  }
+  return objects;
+}
+
 function readCorpusFile(filePath, forcedDay) {
   const abs = path.resolve(filePath);
   if (!fs.existsSync(abs)) {
@@ -231,14 +300,26 @@ function readCorpusFile(filePath, forcedDay) {
       collectFromObject(parsed, forcedDay, out);
     }
     if (out.length) {
-      console.log(`[import] ${path.basename(abs)}: распознан как JSON, пар: ${out.length}`);
+      console.log(`[import] ${path.basename(abs)}: JSON, пар: ${out.length}`);
       return out;
     }
   } catch (_) {
-    // не цельный JSON — пробуем JSONL
+    // дальше — поток объектов / JSONL
   }
 
-  // 2) JSONL
+  // 2) Поток {...}, {...} без массива (AyuGram exports)
+  const streamed = extractJsonObjects(raw);
+  if (streamed.length) {
+    collectFromArray(streamed, forcedDay, out);
+    if (out.length) {
+      console.log(
+        `[import] ${path.basename(abs)}: поток объектов (${streamed.length} шт.), пар: ${out.length}`,
+      );
+      return out;
+    }
+  }
+
+  // 3) JSONL
   const lines = raw.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -258,7 +339,7 @@ function readCorpusFile(filePath, forcedDay) {
   return out;
 }
 
-async function printStats() {
+async function printStats(ragExamples) {
   const rows = await ragExamples.countByDay();
   if (!rows.length) {
     console.log('Корпус пуст.');
@@ -271,10 +352,54 @@ async function printStats() {
 
 async function main() {
   const args = parseArgs();
+
+  if (args.dir) {
+    const dirAbs = path.resolve(args.dir);
+    const names = fs
+      .readdirSync(dirAbs)
+      .filter((f) => /\.jsonl?$/i.test(f))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    for (const name of names) {
+      args.files.push({ path: path.join(dirAbs, name), day: null });
+    }
+    console.log(`[import] папка ${dirAbs}: ${names.length} файлов`);
+  }
+
+  // Только конвертация в чистый JSON без БД
+  if (args.out && args.files.length) {
+    const all = [];
+    const seen = new Set();
+    for (const file of args.files) {
+      const rows = readCorpusFile(file.path, file.day);
+      for (const row of rows) {
+        if (!row.day) continue;
+        const key = `${row.day}|${row.clientMessage}|${row.botReply}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        all.push({
+          day: row.day,
+          client: row.clientMessage,
+          bot: row.botReply,
+          stage: row.stage || undefined,
+          source: path.basename(file.path),
+        });
+      }
+    }
+    const outAbs = path.resolve(args.out);
+    fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+    fs.writeFileSync(outAbs, JSON.stringify(all, null, 2), 'utf8');
+    const d1 = all.filter((r) => r.day === 1).length;
+    const d2 = all.filter((r) => r.day === 2).length;
+    console.log(`Записано ${all.length} пар → ${outAbs} (day1=${d1}, day2=${d2})`);
+    return;
+  }
+
+  const ragExamples = loadRag();
+  const db = loadDb();
   await ragExamples.ensureSchema();
 
   if (args.stats && !args.files.length && !args.backfill) {
-    await printStats();
+    await printStats(ragExamples);
     await db.end();
     return;
   }
@@ -344,13 +469,14 @@ async function main() {
     console.log(`Backfill всего: ${totalDone}`);
   }
 
-  await printStats();
+  await printStats(ragExamples);
   await db.end();
 }
 
 main().catch(async (err) => {
   console.error(err);
   try {
+    const db = loadDb();
     await db.end();
   } catch (_) {}
   process.exit(1);
