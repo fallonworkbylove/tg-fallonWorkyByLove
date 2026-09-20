@@ -1,19 +1,21 @@
 /**
- * Импорт корпуса RAG day1/day2 из JSONL.
+ * Импорт корпуса RAG day1/day2 из JSON или JSONL.
  *
- * Формат строки (одна JSON-пара на строку):
- *   {"day":1,"client":"привет","bot":"приветик)"}
- *   {"day":2,"client_message":"...","bot_reply":"..."}
+ * Поддерживаемые JSON-форматы:
+ *   1) Массив пар:
+ *      [{"day":1,"client":"...","bot":"..."}, ...]
+ *   2) Объект с day1 / day2:
+ *      {"day1":[{"client":"...","bot":"..."}], "day2":[...]}
+ *   3) Объект с examples / dialogs / data / items (массив внутри)
+ *   4) Полный диалог как массив сообщений:
+ *      {"day":1,"messages":[{"role":"user","content":"..."},{"role":"assistant","content":"..."}]}
+ *   5) JSONL (по строке) — тоже ок
  *
- * Примеры запуска (из папки backend):
- *   node scripts/import-rag-dialogues.js --file=./data/rag.jsonl
- *   node scripts/import-rag-dialogues.js --day1=./data/day1.jsonl --day2=./data/day2.jsonl
- *   node scripts/import-rag-dialogues.js --file=./data/rag.jsonl --no-embed
+ * Запуск (из папки backend):
+ *   node scripts/import-rag-dialogues.js --file=./data/all.json --no-embed --clear
+ *   node scripts/import-rag-dialogues.js --day1=./day1.json --day2=./day2.json --no-embed
  *   node scripts/import-rag-dialogues.js --backfill
  *   node scripts/import-rag-dialogues.js --stats
- *
- * --no-embed: быстрый импорт без OpenAI, потом --backfill для векторов.
- * --clear: удалить старый корпус перед импортом.
  */
 
 require('dotenv').config();
@@ -61,17 +63,62 @@ function parseArgs() {
   return args;
 }
 
-function normalizeRow(obj, forcedDay) {
-  if (!obj || typeof obj !== 'object') return null;
-  const dayRaw = forcedDay != null ? forcedDay : obj.day ?? obj.dialog_day ?? obj.day_num;
-  const day = Number(dayRaw) === 2 ? 2 : Number(dayRaw) === 1 ? 1 : null;
-  const client = String(
-    obj.client ?? obj.client_message ?? obj.user ?? obj.human ?? obj.incoming ?? '',
-  ).trim();
-  const bot = String(
-    obj.bot ?? obj.bot_reply ?? obj.assistant ?? obj.reply ?? obj.correct_answer ?? '',
-  ).trim();
-  if (!day || !client || !bot) return null;
+function resolveDay(raw, forcedDay) {
+  if (forcedDay === 1 || forcedDay === 2) return forcedDay;
+  if (Number(raw) === 2) return 2;
+  if (Number(raw) === 1) return 1;
+  const s = String(raw || '').toLowerCase();
+  if (s === 'day2' || s === 'day_2' || s === '2') return 2;
+  if (s === 'day1' || s === 'day_1' || s === '1') return 1;
+  return null;
+}
+
+function pickText(obj, keys) {
+  for (const key of keys) {
+    if (obj[key] != null && String(obj[key]).trim()) {
+      return String(obj[key]).trim();
+    }
+  }
+  return '';
+}
+
+function normalizePair(obj, forcedDay) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+
+  const day = resolveDay(
+    obj.day ?? obj.dialog_day ?? obj.day_num ?? obj.dayNumber ?? obj.stage,
+    forcedDay,
+  );
+
+  const client = pickText(obj, [
+    'client',
+    'client_message',
+    'user',
+    'human',
+    'incoming',
+    'message',
+    'question',
+    'input',
+    'text',
+    'peer',
+    'man',
+  ]);
+  const bot = pickText(obj, [
+    'bot',
+    'bot_reply',
+    'assistant',
+    'reply',
+    'correct_answer',
+    'answer',
+    'response',
+    'output',
+    'girl',
+    'woman',
+  ]);
+
+  if (!client || !bot) return null;
+  if (!day) return null;
+
   return {
     day,
     clientMessage: client,
@@ -80,13 +127,118 @@ function normalizeRow(obj, forcedDay) {
   };
 }
 
-function readJsonl(filePath, forcedDay) {
+/**
+ * Из массива сообщений {role, content} достаём пары user→assistant подряд.
+ */
+function pairsFromMessages(messages, forcedDay, defaultDay = 1) {
+  const day = forcedDay || defaultDay;
+  const rows = [];
+  if (!Array.isArray(messages)) return rows;
+
+  for (let i = 0; i < messages.length - 1; i++) {
+    const a = messages[i];
+    const b = messages[i + 1];
+    if (!a || !b) continue;
+    const roleA = String(a.role || a.from || a.speaker || '').toLowerCase();
+    const roleB = String(b.role || b.from || b.speaker || '').toLowerCase();
+    const textA = String(a.content ?? a.text ?? a.message ?? '').trim();
+    const textB = String(b.content ?? b.text ?? b.message ?? '').trim();
+
+    const aIsUser = /user|human|client|peer|man|мужчин|парень/.test(roleA);
+    const bIsBot = /assistant|bot|girl|woman|ai|девушк/.test(roleB);
+    if (aIsUser && bIsBot && textA && textB) {
+      rows.push({
+        day,
+        clientMessage: textA,
+        botReply: textB,
+        source: null,
+      });
+    }
+  }
+  return rows;
+}
+
+function collectFromArray(arr, forcedDay, out) {
+  for (const item of arr) {
+    if (!item) continue;
+    if (Array.isArray(item)) {
+      // вложенный диалог-массив сообщений
+      out.push(...pairsFromMessages(item, forcedDay));
+      continue;
+    }
+    if (typeof item !== 'object') continue;
+
+    const pair = normalizePair(item, forcedDay);
+    if (pair) {
+      out.push(pair);
+      continue;
+    }
+
+    if (Array.isArray(item.messages)) {
+      const day = resolveDay(item.day, forcedDay) || forcedDay || 1;
+      out.push(...pairsFromMessages(item.messages, day));
+      continue;
+    }
+    if (Array.isArray(item.dialogue) || Array.isArray(item.dialog) || Array.isArray(item.turns)) {
+      const msgs = item.dialogue || item.dialog || item.turns;
+      const day = resolveDay(item.day, forcedDay) || forcedDay || 1;
+      out.push(...pairsFromMessages(msgs, day));
+    }
+  }
+}
+
+function collectFromObject(obj, forcedDay, out) {
+  // {"day1":[...], "day2":[...]}
+  for (const [key, val] of Object.entries(obj)) {
+    const keyDay = resolveDay(key, null);
+    if (keyDay && Array.isArray(val)) {
+      collectFromArray(val, forcedDay || keyDay, out);
+    }
+  }
+
+  // {"examples":[...]} / {"dialogs":[...]} / {"data":[...]}
+  for (const key of ['examples', 'dialogs', 'dialogues', 'data', 'items', 'pairs', 'rows', 'corpus']) {
+    if (Array.isArray(obj[key])) {
+      collectFromArray(obj[key], forcedDay, out);
+    }
+  }
+
+  // один диалог в корне
+  if (Array.isArray(obj.messages)) {
+    const day = resolveDay(obj.day, forcedDay) || forcedDay || 1;
+    out.push(...pairsFromMessages(obj.messages, day));
+  }
+
+  // одиночная пара в корне
+  const single = normalizePair(obj, forcedDay);
+  if (single) out.push(single);
+}
+
+function readCorpusFile(filePath, forcedDay) {
   const abs = path.resolve(filePath);
   if (!fs.existsSync(abs)) {
     throw new Error(`Файл не найден: ${abs}`);
   }
-  const raw = fs.readFileSync(abs, 'utf8');
-  const rows = [];
+  const raw = fs.readFileSync(abs, 'utf8').replace(/^\uFEFF/, '');
+  const out = [];
+
+  // 1) Цельный JSON (.json)
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      collectFromArray(parsed, forcedDay, out);
+    } else if (parsed && typeof parsed === 'object') {
+      collectFromObject(parsed, forcedDay, out);
+    }
+    if (out.length) {
+      console.log(`[import] ${path.basename(abs)}: распознан как JSON, пар: ${out.length}`);
+      return out;
+    }
+  } catch (_) {
+    // не цельный JSON — пробуем JSONL
+  }
+
+  // 2) JSONL
   const lines = raw.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -95,37 +247,15 @@ function readJsonl(filePath, forcedDay) {
     try {
       obj = JSON.parse(line);
     } catch (err) {
-      console.warn(`[import] строка ${i + 1}: невалидный JSON (${err.message})`);
+      console.warn(`[import] ${path.basename(abs)} строка ${i + 1}: невалидный JSON (${err.message})`);
       continue;
     }
-    // Массив в одной строке / весь файл как JSON-массив
-    if (Array.isArray(obj)) {
-      for (const item of obj) {
-        const row = normalizeRow(item, forcedDay);
-        if (row) rows.push(row);
-      }
-      continue;
-    }
-    const row = normalizeRow(obj, forcedDay);
-    if (row) rows.push(row);
-    else console.warn(`[import] строка ${i + 1}: пропуск (нужны day + client + bot)`);
+    if (Array.isArray(obj)) collectFromArray(obj, forcedDay, out);
+    else if (obj && typeof obj === 'object') collectFromObject(obj, forcedDay, out);
   }
 
-  // Если файл целиком — JSON-массив без JSONL
-  if (!rows.length) {
-    try {
-      const whole = JSON.parse(raw);
-      if (Array.isArray(whole)) {
-        for (const item of whole) {
-          const row = normalizeRow(item, forcedDay);
-          if (row) rows.push(row);
-        }
-      }
-    } catch (_) {
-      /* already tried line-by-line */
-    }
-  }
-  return rows;
+  console.log(`[import] ${path.basename(abs)}: JSONL/смешанный, пар: ${out.length}`);
+  return out;
 }
 
 async function printStats() {
@@ -135,9 +265,7 @@ async function printStats() {
     return;
   }
   for (const row of rows) {
-    console.log(
-      `day ${row.day}: ${row.n} примеров, с embedding: ${row.with_embed}`,
-    );
+    console.log(`day ${row.day}: ${row.n} примеров, с embedding: ${row.with_embed}`);
   }
 }
 
@@ -160,11 +288,25 @@ async function main() {
   let imported = 0;
   let withEmbed = 0;
   let failed = 0;
+  let skippedNoDay = 0;
 
   for (const file of args.files) {
-    const rows = readJsonl(file.path, file.day);
-    console.log(`[import] ${file.path}: ${rows.length} пар (day force=${file.day ?? 'from file'})`);
+    const rows = readCorpusFile(file.path, file.day);
+    const usable = [];
     for (const row of rows) {
+      if (!row.day) {
+        skippedNoDay += 1;
+        continue;
+      }
+      usable.push(row);
+    }
+    console.log(
+      `[import] ${file.path}: к загрузке ${usable.length}` +
+        (skippedNoDay ? ` (без day пропущено накоплено: ${skippedNoDay})` : '') +
+        ` (day force=${file.day ?? 'from file'})`,
+    );
+
+    for (const row of usable) {
       try {
         const res = await ragExamples.upsertExample({
           ...row,
