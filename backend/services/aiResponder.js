@@ -296,6 +296,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     '1 предложения. Пиши коротко, как в реальной переписке в мессенджере — ' +
     'без длинных объяснений, списков и уточнений. Это правило важнее желания ' +
     'рассказать подробнее. ' +
+    'НИКОГДА не используй длинное тире «—» и среднее «–»: только обычный дефис «-» или запятая, как в телефоне. ' +
     'ВАЖНО: не более ОДНОГО вопроса за всё сообщение. Если хочешь сначала ' +
     'отреагировать на слова собеседника (коротким комментарием), а потом ' +
     'спросить что-то — оставь только один из двух вопросов, а не два подряд. ' +
@@ -476,6 +477,13 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
 function applyAntiDetectStyle(text) {
   if (!text) return text;
   let result = text.replace(/!+/g, '');
+  // Длинное тире (—) и среднее (–) — типичный след ИИ; в переписке обычно дефис или запятая.
+  result = result
+    .replace(/\u2014/g, '-') // —
+    .replace(/\u2013/g, '-') // –
+    .replace(/\u2212/g, '-') // minus sign
+    .replace(/\s+-\s+/g, ' - ')
+    .replace(/-{2,}/g, '-');
   result = result.trimEnd();
   while (result.endsWith('.') && !result.endsWith('..')) {
     result = result.slice(0, -1).trimEnd();

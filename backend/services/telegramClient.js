@@ -1176,6 +1176,35 @@ function isHiddenFromReplies(flags, peerId) {
   return flags.get(String(peerId)) !== false;
 }
 
+/**
+ * Ставит «прочитано» (две синие галочки у собеседника), если у обоих
+ * включены уведомления о прочтении в настройках Telegram.
+ */
+async function markPeerAsRead(client, peer, message = null) {
+  if (!client || !peer) return;
+  try {
+    if (typeof client.markAsRead === 'function') {
+      if (message) {
+        await client.markAsRead(peer, message);
+      } else {
+        await client.markAsRead(peer);
+      }
+      return;
+    }
+    const inputPeer = await client.getInputEntity(peer);
+    const maxId = message?.id ? Number(message.id) : 0;
+    await client.invoke(
+      new Api.messages.ReadHistory({
+        peer: inputPeer,
+        maxId,
+      }),
+    );
+  } catch (err) {
+    // Не валим ответ из‑за read receipt
+    console.warn('[telegram] markAsRead failed:', err.errorMessage || err.message);
+  }
+}
+
 async function peerHasIncoming(client, entity) {
   let offsetId = 0;
   for (let page = 0; page < 8; page += 1) {
@@ -1926,6 +1955,13 @@ async function handleIncomingMessage(accountId, event) {
 
     if (await isPeerBlacklisted(accountId, peerId)) return;
 
+    // Сразу «прочитано», пока копим серию — собеседник видит галочки
+    // ещё до ответа (только в часы бодрствования).
+    const client = getActiveClient(accountId);
+    if (client && isWithinWorkingHours(accountId)) {
+      markPeerAsRead(client, sender || message.peerId, message).catch(() => {});
+    }
+
     // Фильтр 3: извлекаем текст. Голосовые расшифровываем (Whisper),
     // фото распознаём (vision) — так бот «слышит» и «видит» сообщения.
     // Для чатов из списка исключений распознавание фото пропускается.
@@ -2318,6 +2354,10 @@ async function processBufferedMessages(
     // Клиент должен быть активен, чтобы отправить ответ.
     const client = getActiveClient(accountId);
     if (!client) return;
+
+    // Ещё раз отмечаем прочитанным перед генерацией/паузой (на случай
+    // ответа из скана, где live-handler не сработал).
+    await markPeerAsRead(client, sender, message);
 
     // Фильтр 4: игнорируем собеседников, спрятанных в АРХИВ.
     const inputPeer = await message.getInputSender();
