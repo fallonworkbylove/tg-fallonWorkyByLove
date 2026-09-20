@@ -1504,13 +1504,37 @@ const REFUSAL_RE =
 // Требуем И глагол-просьбу («скинь/пришли/покажи/запиши/можешь»), И объект
 // («фото/видео/кружок/себя»), чтобы «куда едешь на кружочке?» НЕ считалось просьбой.
 const MEDIA_REQUEST_VERB_RE =
-  /(скинь|скинешь|кинь|кинешь|пришли|пришлёшь|пришлешь|отправь|отправишь|отправляй|покажи|покажешь|запиши|запишешь|сфоткай|сфоткайся|сделай|можешь|можно|давай|хочу увидеть|хочу посмотреть|дай посмотреть)/i;
-  const MEDIA_REQUEST_OBJ_RE =
+  /(скинь|скинешь|кинь|кинешь|пришли|пришлёшь|пришлешь|отправь|отправишь|отправляй|покажи|покажешь|запиши|запишешь|сфоткай|сфоткайся|сделай|можешь|можно|давай|хочу увидеть|хочу посмотреть|дай посмотреть|есть\s+фото|фото\s+есть)/i;
+const MEDIA_REQUEST_OBJ_RE =
   /(фото|фотк|фоточк|фоточ|селфи|видео|видосик|видос|кружок|кружочек|кружочк|себя|как ты выглядишь|как выглядишь|своё лицо|свое лицо|личико)/i;
+const MEDIA_REQUEST_SHORT_RE =
+  /(^|\n)\s*(а\s+)?(фото|фотку|фоточку|селфи|видео|видос|кружок|кружочек)\s*\??\s*($|\n)/i;
 
 function isExplicitMediaRequest(text) {
   if (!text) return false;
-  return MEDIA_REQUEST_VERB_RE.test(text) && MEDIA_REQUEST_OBJ_RE.test(text);
+  const t = String(text);
+  if (MEDIA_REQUEST_VERB_RE.test(t) && MEDIA_REQUEST_OBJ_RE.test(t)) return true;
+  if (MEDIA_REQUEST_SHORT_RE.test(t)) return true;
+  if (/(есть|скинь|покажи|пришли|кинь).{0,48}(фото|фотк|видео|круж|себя|селфи)/i.test(t)) return true;
+  return false;
+}
+
+function detectRequestedMediaType(text) {
+  const t = String(text || '');
+  if (/кружок|кружочек|video\s*note/i.test(t)) return 'circle';
+  if (/видео|видос/i.test(t)) return 'video';
+  return 'photo';
+}
+
+const MEDIA_FAIL_DEFLECTS = [
+  'ой что-то с фотками затык, давай лучше расскажи как день)',
+  'неа, давай про тебя) чем сейчас занят?',
+  'потом как-нибудь, а сейчас лучше напиши что интересного было)',
+  'давай без фоток, расскажи лучше что у тебя нового)',
+];
+
+function pickMediaFailDeflect() {
+  return MEDIA_FAIL_DEFLECTS[Math.floor(Math.random() * MEDIA_FAIL_DEFLECTS.length)];
 }
 
 // Было ли ПОСЛЕДНЕЕ сообщение бота отправкой медиа (метка [медиа:#id]).
@@ -1652,10 +1676,65 @@ async function trySendMedia(
     return true;
   } catch (err) {
     console.error(
-      `[${accountLabel(accountId)}] Ошибка о��правки медиа (${mediaType}): ${err.message}`,
+      `[${accountLabel(accountId)}] Ошибка отправки медиа (${mediaType}): ${err.message}`,
     );
     return false;
   }
+}
+
+/**
+ * Шлёт медиа всем, кто явно попросил. Если не вышло — мягко уводит с темы
+ * (без «щас найду» / «потом скину»).
+ */
+async function sendRequestedMediaOrDeflect(
+  client,
+  sender,
+  accountId,
+  peerId,
+  senderName,
+  mediaType,
+  mediaLink,
+) {
+  if (!mediaType || !mediaLink) return false;
+  try {
+    await client.invoke(
+      new Api.messages.SetTyping({
+        peer: sender,
+        action:
+          mediaType === 'photo'
+            ? new Api.SendMessageUploadPhotoAction({ progress: 0 })
+            : new Api.SendMessageUploadVideoAction({ progress: 0 }),
+      }),
+    );
+  } catch (_) {
+    // индикатор не критичен
+  }
+  await sleep(1200 + Math.random() * 1200);
+  const sent = await trySendMedia(
+    client,
+    sender,
+    accountId,
+    peerId,
+    senderName,
+    mediaType,
+    mediaLink,
+  );
+  if (sent) return true;
+
+  const deflect = pickMediaFailDeflect();
+  try {
+    await client.sendMessage(sender, { message: deflect });
+    await saveMessage(accountId, peerId, senderName, 'assistant', deflect);
+    console.log(
+      `[${accountLabel(accountId)}] Медиа не ушло ${senderName} — мягкий уход с темы: "${deflect}"`,
+    );
+  } catch (err) {
+    console.error(
+      `[${accountLabel(accountId)}] Не удалось отправить уход с темы после медиа:`,
+      err.message,
+    );
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -2110,14 +2189,14 @@ async function fireReengage(accountId, peerId) {
       typeof settings.media_chat_link === 'string'
         ? settings.media_chat_link.trim()
         : '';
-    // Отлож��нный ответ — не прямая реакция на явную просьбу медиа, поэтому
-    // ИИ здесь никогда не решает сама прислать фото/видео/кружок.
-    // Отложенный сценарий не инициирует медиа сам: фото отправляются только
-  // в основном обработчике после явной просьбы собеседника.
-  const mediaEnabled = false;
+    const explicitMediaRequest = isExplicitMediaRequest(text);
+    // Отложенный ответ тоже должен отдавать медиа, если человек просил —
+    // раньше тут было mediaEnabled=false и фото «пропадало», а другим уходило.
+    const mediaEnabled = !!mediaLink && explicitMediaRequest;
+    const noMediaExcuse = explicitMediaRequest && !mediaLink;
     const nft = await getNftCampaignState(accountId, peerId, history.length);
 
-    // Динамический тайм-менеджм��нт + Mood Engine + Memory Triggers +
+    // Динамический тайм-менеджмент + Mood Engine + Memory Triggers +
     // обработка возражений/анти-детект — см. соответствующие модули.
     const timeInfo = getAccountTimeStyle(accountId);
     if (timeInfo.isSleep) {
@@ -2147,6 +2226,7 @@ async function fireReengage(accountId, peerId) {
 
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
+      noMediaExcuse,
       campaignHint: nft.hint,
       learningSnippet,
       manualSnippet,
@@ -2164,9 +2244,11 @@ async function fireReengage(accountId, peerId) {
     const { text: reply, mediaType: rawMediaType } =
       extractMediaRequest(replyWithoutLaugh);
 
-    // Та же защита от «медиа два хода подряд», что и в обычном ответе.
     let mediaType = rawMediaType;
-    if (mediaType && lastAssistantWasMedia(history)) {
+    if (explicitMediaRequest && mediaLink && !mediaType) {
+      mediaType = detectRequestedMediaType(text);
+    }
+    if (mediaType && !explicitMediaRequest && lastAssistantWasMedia(history)) {
       mediaType = null;
     }
 
@@ -2182,18 +2264,18 @@ async function fireReengage(accountId, peerId) {
     }
 
     // Небольшая «естественная» пауза перед отправкой — как будто отвлеклась
-    // на пару мин��т, но всё-таки вернулась ответить на вопрос. Длительность
+    // на пару минут, но всё-таки вернулась ответить на вопрос. Длительность
     // индикатора «печатает...» зависит от длины итогового текста.
     const delayMs = delayBeforeSendMs(settings, outText);
     console.log(
-      `[${accountLabel(accountId)}] Пауз�� ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
+      `[${accountLabel(accountId)}] Пауза ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
     );
     await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
 
     if (outText) {
-  await client.sendMessage(sender, { message: outText });
-  lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
-  await saveMessage(accountId, peerId, senderName, 'assistant', outText);
+      await client.sendMessage(sender, { message: outText });
+      lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
+      await saveMessage(accountId, peerId, senderName, 'assistant', outText);
       await learningDb.recordBotReply(accountId, peerId, text, outText, learningStage);
       console.log(
         `[${accountLabel(accountId)}] Отложенный ответ для ${senderName}: "${outText}"`,
@@ -2206,21 +2288,7 @@ async function fireReengage(accountId, peerId) {
 
     let mediaSentThisTurn = false;
     if (mediaType && mediaEnabled) {
-      try {
-        await client.invoke(
-          new Api.messages.SetTyping({
-            peer: sender,
-            action:
-              mediaType === 'photo'
-                ? new Api.SendMessageUploadPhotoAction({ progress: 0 })
-                : new Api.SendMessageUploadVideoAction({ progress: 0 }),
-          }),
-        );
-      } catch (_) {
-        // индикатор не критичен
-      }
-      await sleep(1500 + Math.random() * 1500);
-      mediaSentThisTurn = await trySendMedia(
+      mediaSentThisTurn = await sendRequestedMediaOrDeflect(
         client,
         sender,
         accountId,
@@ -2590,13 +2658,18 @@ async function processBufferedMessages(
     const { text: reply, mediaType: rawMediaType } = extractMediaRequest(replyWithoutLaugh);
 
     // Защита от «медиа два хода подряд»: если модель снова захотела прислать
-    // медиа, но прошлый ответ уже был ��едиа И че��овек НЕ просил новое явно —
+    // медиа, но прошлый ответ уже был медиа И человек НЕ просил новое явно —
     // подавляем. Так на вопрос «а куда едешь на кружочке?» бот ответит
     // текстом, а не пришлёт ещё один кружок.
     let mediaType = rawMediaType;
+    // Явная просьба + есть медиа-чат → всегда пытаемся отправить, даже если
+    // модель забыла токен (раньше часть людей оставалась без фото).
+    if (explicitMediaRequest && mediaLink && !mediaType) {
+      mediaType = detectRequestedMediaType(contextualText);
+    }
     if (mediaType && !explicitMediaRequest && lastAssistantWasMedia(history)) {
       console.log(
-        `[${accountLabel(accountId)}] Подавил повторное медиа (${mediaType}) для ${senderName}: прошлый ответ уже был медиа, явной просьбы н��т.`,
+        `[${accountLabel(accountId)}] Подавил повторное медиа (${mediaType}) для ${senderName}: прошлый ответ уже был медиа, явной просьбы нет.`,
       );
       mediaType = null;
     }
@@ -2637,25 +2710,10 @@ async function processBufferedMessages(
       await sendLaughBubble(client, sender, accountId, peerId, senderName);
     }
 
-    // 6.5. Медиа по запросу модели (фото/видео/кружок из чата по ссылке).
+    // 6.5. Медиа по запросу: всем, кто явно просил и у кого есть медиа-чат.
     let mediaSentThisTurn = false;
     if (mediaType && mediaEnabled) {
-      // Небольшая ��ауза + индикатор, чтобы медиа не «прилипало» к тексту.
-      try {
-        await client.invoke(
-          new Api.messages.SetTyping({
-            peer: sender,
-            action:
-              mediaType === 'photo'
-                ? new Api.SendMessageUploadPhotoAction({ progress: 0 })
-                : new Api.SendMessageUploadVideoAction({ progress: 0 }),
-          }),
-        );
-      } catch (_) {
-        // индикатор не критичен
-      }
-      await sleep(1500 + Math.random() * 1500);
-      mediaSentThisTurn = await trySendMedia(
+      mediaSentThisTurn = await sendRequestedMediaOrDeflect(
         client,
         sender,
         accountId,
