@@ -103,10 +103,78 @@ const mediaClient = buildMediaClient();
 // Запасной промпт, если у аккаунта не задан свой.
 const DEFAULT_PROMPT =
   'Ты — живой человек, который непринуждённо общается в личных сообщениях. ' +
-  'Отвечай МАКСИМУМ в 2 коротких предложениях, тепло и по-человечески на русском языке. ' +
+  'Отвечай МАКСИМУМ в 2 коротких предложениях, тепло и по-человечески. ' +
+  'Язык ответа: тот же, на котором пишет собеседник (русский или английский). ' +
   'В ответах должно быть много любви: забота, нежность, ласка, ощущение что человеку рады. ' +
   'Никогда не пиши больше 2 предложений. ' +
   'Не скрывай, что ты искусственный интеллект, если собеседник прямо об этом спрашивает.';
+
+/**
+ * Определяет язык ответа: русский или английский — по тексту собеседника.
+ * Короткие реплики («ok», «да», «why») наследуют язык недавних его сообщений.
+ */
+function stripMetaForLangDetect(text) {
+  return String(text || '')
+    .replace(/\[[^\]]*]/g, ' ')
+    .replace(/<<[^>]+>>/g, ' ')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .trim();
+}
+
+function scoreScript(text) {
+  const clean = stripMetaForLangDetect(text);
+  let cyr = 0;
+  let lat = 0;
+  for (const ch of clean) {
+    if (/[а-яёА-ЯЁ]/.test(ch)) cyr += 1;
+    else if (/[a-zA-Z]/.test(ch)) lat += 1;
+  }
+  return { cyr, lat, total: cyr + lat };
+}
+
+function detectReplyLanguage(userMessage, history = []) {
+  const current = scoreScript(userMessage);
+  if (current.total >= 3) {
+    if (current.cyr > current.lat) return 'ru';
+    if (current.lat > current.cyr) return 'en';
+  }
+
+  // Короткие / смешанные реплики — смотрим последние сообщения собеседника.
+  let cyr = 0;
+  let lat = 0;
+  let seen = 0;
+  for (let i = (history || []).length - 1; i >= 0 && seen < 6; i -= 1) {
+    if (history[i]?.role !== 'user') continue;
+    const s = scoreScript(history[i].content);
+    if (s.total === 0) continue;
+    cyr += s.cyr;
+    lat += s.lat;
+    seen += 1;
+  }
+
+  if (cyr === 0 && lat === 0) {
+    // Совсем нет текста — по текущей реплике или дефолт русский.
+    if (current.lat > 0 && current.cyr === 0) return 'en';
+    return 'ru';
+  }
+  return lat > cyr ? 'en' : 'ru';
+}
+
+function buildLanguageReminder(lang) {
+  if (lang === 'en') {
+    return (
+      'LANGUAGE: the interlocutor is writing in English. Reply ONLY in natural English. ' +
+      'Do not switch to Russian. Keep the same warm casual chat style, max 2 short sentences. ' +
+      'Warmth/affection also in English (miss you, glad you wrote, take care) — not Russian words. ' +
+      'Service tokens like <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> stay as-is.'
+    );
+  }
+  return (
+    'ЯЗЫК: собеседник пишет по-русски. Отвечай ТОЛЬКО на русском, живо и разговорно. ' +
+    'Не переходи на английский, если он сам не перешёл. ' +
+    'Служебные токены <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> оставляй как есть.'
+  );
+}
 
 /**
  * Генерирует ответ через OpenAI.
@@ -203,6 +271,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const finalPrompt = systemPrompt?.trim() || DEFAULT_PROMPT;
   let contextualUserMessage = enrichShortFollowUp(history, userMessage);
   contextualUserMessage = enrichGeoFollowUp(history, contextualUserMessage);
+  const replyLang = detectReplyLanguage(contextualUserMessage, history);
+  const languageReminder = buildLanguageReminder(replyLang);
 
   // Reminder намеренно МИНИМАЛЬНЫЙ: он НЕ навязывает свои правила (длину,
   // вопросы и т.п.), чтобы не перебивать промпт из панели — все стилевые
@@ -416,6 +486,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   messages.push({ role: 'system', content: laughReminder });
   messages.push({ role: 'system', content: noMeetReminder });
   messages.push({ role: 'system', content: lengthReminder });
+  messages.push({ role: 'system', content: languageReminder });
   messages.push({ role: 'user', content: contextualUserMessage });
 
   // [v0] ВРЕМЕННЫЙ ЛОГ: печатает реально используемую модель и endpoint.
@@ -498,7 +569,7 @@ async function transcribeAudio(buffer, filename = 'voice.ogg') {
     const result = await mediaClient.audio.transcriptions.create({
       file,
       model: 'whisper-1',
-      language: 'ru',
+      // Без language — Whisper сам определяет ru/en.
     });
     return (result.text || '').trim();
   } catch (err) {
@@ -509,11 +580,8 @@ async function transcribeAudio(buffer, filename = 'voice.ogg') {
 
 /**
  * Описывает содержимое фотографии через GPT-4o (vision).
- * Возвращает короткое описание на русском, чтобы AI мог отреагировать.
- *
- * @param {Buffer} buffer - изображение (jpeg/png)
- * @param {string} caption - подпись к фото, если есть
- * @returns {Promise<string>} описание изображения (или пустая строка)
+ * Язык описания — как у подписи, иначе английский; ответ бота всё равно
+ * подстраивается под язык собеседника в generateReply.
  */
 async function describeImage(buffer, caption = '') {
   try {
@@ -528,9 +596,10 @@ async function describeImage(buffer, caption = '') {
             {
               type: 'text',
               text:
-                'Опиши коротко и по делу, что изображено на этом фото ' +
-                '(на русском). Если есть люди — опиши их и обстановку.' +
-                (caption ? ` Подпись к фото: "${caption}".` : ''),
+                'Describe briefly what is in this photo. If there are people, mention them and the setting. ' +
+                'Reply in the same language as the caption if present; otherwise use English. ' +
+                'Keep it factual and short.' +
+                (caption ? ` Caption: "${caption}".` : ''),
             },
             {
               type: 'image_url',
