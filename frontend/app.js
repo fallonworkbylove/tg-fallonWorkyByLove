@@ -204,7 +204,8 @@ const api = {
       method: 'DELETE',
     }),
 
-  getStats: () => request('/stats'),
+  getStats: (force = false) =>
+    request(force ? '/stats?refresh=1' : '/stats'),
 };
 
 /**
@@ -249,7 +250,10 @@ const state = {
     messages: 0,
     accounts: 0,
     messagesByAccount: [],
+    computedAt: 0,
+    nextUpdateAt: 0,
   },
+  statsRefreshTimer: null,
 
   profiles: [],
   profileEditingId: null,
@@ -515,8 +519,8 @@ async function loadConversations() {
   state.conversations = getResponseArray(response, 'conversations');
 }
 
-async function loadStats() {
-  const response = await api.getStats();
+async function loadStats({ force = false } = {}) {
+  const response = await api.getStats(force);
   const stats = response.stats || response.data || response;
 
   const messagesByAccount = Array.isArray(stats.messagesByAccount)
@@ -537,7 +541,24 @@ async function loadStats() {
         stats.accounts_count,
     ),
     messagesByAccount,
+    computedAt: toNumber(stats.computedAt ?? stats.computed_at),
+    nextUpdateAt: toNumber(stats.nextUpdateAt ?? stats.next_update_at),
   };
+}
+
+function ensureStatsHourlyRefresh() {
+  if (state.statsRefreshTimer) {
+    return;
+  }
+
+  state.statsRefreshTimer = window.setInterval(async () => {
+    try {
+      await loadStats({ force: true });
+      renderStats();
+    } catch (error) {
+      console.warn('hourly stats refresh failed', error);
+    }
+  }, 60 * 60 * 1000);
 }
 
 /**
@@ -545,7 +566,7 @@ async function loadStats() {
  * Promise.allSettled позволяет не ломать интерфейс,
  * даже если отдельный endpoint временно вернул ошибку.
  */
-async function loadAllData() {
+async function loadAllData({ forceStats = false } = {}) {
   const results = await Promise.allSettled([
     loadDashboard(),
     loadAccounts(),
@@ -553,10 +574,11 @@ async function loadAllData() {
     loadPhotoExceptions(),
     loadExamples(),
     loadConversations(),
-    loadStats(),
+    loadStats({ force: forceStats }),
   ]);
 
   render();
+  ensureStatsHourlyRefresh();
 
   const errors = results
     .filter((result) => result.status === 'rejected')
@@ -600,7 +622,7 @@ function renderPanel() {
 
     <div class="stat-card">
       <strong>${messages}</strong>
-      <span>Сообщения</span>
+      <span>За сутки</span>
     </div>
   `;
 
@@ -1043,7 +1065,7 @@ function renderStats() {
   elements.statsCards.innerHTML = `
     <div class="stat-card">
       <strong>${state.stats.messages}</strong>
-      <span>Сообщения</span>
+      <span>Всего сообщений</span>
     </div>
 
     <div class="stat-card">
@@ -1052,8 +1074,14 @@ function renderStats() {
     </div>
   `;
 
-  elements.statsAccounts.innerHTML = state.accounts.length
-    ? state.accounts
+  const sortedAccounts = [...state.accounts].sort((a, b) => {
+    const ca = counts.get(String(a.id)) || 0;
+    const cb = counts.get(String(b.id)) || 0;
+    return cb - ca;
+  });
+
+  elements.statsAccounts.innerHTML = sortedAccounts.length
+    ? sortedAccounts
         .map((account) => {
           const aiEnabled = isAiEnabled(account);
           const messageCount = counts.get(String(account.id)) || 0;
@@ -1066,7 +1094,7 @@ function renderStats() {
                   ${escapeHtml(account.status || (aiEnabled ? 'AI включен' : 'Остановлен'))}
                 </span>
               </div>
-              <p>${messageCount} сообщ.</p>
+              <p>${messageCount} сообщ. всего</p>
             </div>
           `;
         })
@@ -2226,7 +2254,7 @@ async function handleClearPhotoExceptions() {
  * Обновление всех данных по кнопке "Обновить".
  */
 async function handleRefresh() {
-  const success = await loadAllData();
+  const success = await loadAllData({ forceStats: true });
 
   if (success) {
     notify('Данные обновлены');
