@@ -26,6 +26,7 @@ const {
   transcribeAudio,
 } = require('./aiResponder');
 const learningDb = require('./learningDb');
+const ragExamples = require('./ragExamples');
 const {
   findVoiceForText,
   findTextReplyForText,
@@ -2098,9 +2099,12 @@ async function fireReengage(accountId, peerId) {
     // диалога для подмешивания в промпт текущего ответа.
     const learningStage = learningDb.detectStage({ objectionHint, nftHint: nft.hint, historyLength: history.length });
     await learningDb.scoreAndLearn(accountId, peerId, text);
-    const [learningSnippet, manualSnippet] = await Promise.all([
+    const dialogAgeHours = await getDialogAgeHours(accountId, peerId);
+    const ragDay = ragExamples.dialogDayFromAgeHours(dialogAgeHours);
+    const [learningSnippet, manualSnippet, ragSnippet] = await Promise.all([
       learningDb.buildLearningSnippet(learningStage),
       learningDb.buildManualTrainingSnippet(accountId, text),
+      ragExamples.buildRagSnippet(ragDay, text),
     ]);
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
@@ -2110,6 +2114,7 @@ async function fireReengage(accountId, peerId) {
       campaignHint: nft.hint,
       learningSnippet,
       manualSnippet,
+      ragSnippet,
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
       memoryHint: dueMemory?.hint,
@@ -2514,9 +2519,12 @@ async function processBufferedMessages(
     // диалога для подмешивания в промпт текущего ответа.
     const learningStage = learningDb.detectStage({ objectionHint, nftHint: nft.hint, historyLength: history.length });
     await learningDb.scoreAndLearn(accountId, peerId, text);
-    const [learningSnippet, manualSnippet] = await Promise.all([
+    const dialogAgeHours = await getDialogAgeHours(accountId, peerId);
+    const ragDay = ragExamples.dialogDayFromAgeHours(dialogAgeHours);
+    const [learningSnippet, manualSnippet, ragSnippet] = await Promise.all([
       learningDb.buildLearningSnippet(learningStage),
       learningDb.buildManualTrainingSnippet(accountId, text),
+      ragExamples.buildRagSnippet(ragDay, contextualText || text),
     ]);
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
@@ -2527,6 +2535,7 @@ async function processBufferedMessages(
       campaignHint: nft.hint,
       learningSnippet,
       manualSnippet,
+      ragSnippet,
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
       memoryHint: dueMemory?.hint,

@@ -318,6 +318,9 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   if (options.manualSnippet) {
     messages.push({ role: 'system', content: options.manualSnippet });
   }
+  if (options.ragSnippet) {
+    messages.push({ role: 'system', content: options.ragSnippet });
+  }
 
   // Медиа-протокол: включается ТОЛЬКО если у аккаунта задан чат с медиа.
   // Модель сама решает по смыслу, что человек просит фото/видео/кружок (или
