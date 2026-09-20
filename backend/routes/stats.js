@@ -4,10 +4,6 @@ const db = require("../db");
 
 function getUserId(req) { return req.dbUser ? req.dbUser.id : 1; }
 
-/** Кэш «настоящих» статов: пересчёт не чаще раза в час на пользователя. */
-const CACHE_TTL_MS = 60 * 60 * 1000;
-const statsCache = new Map();
-
 async function computeStats(userId) {
   const [messageRows] = await db.execute(
     `
@@ -63,30 +59,16 @@ async function computeStats(userId) {
 router.get("/", async (req, res) => {
   try {
     const userId = getUserId(req);
-    const force = String(req.query.refresh || "") === "1";
+    const payload = await computeStats(userId);
     const now = Date.now();
-    const cached = statsCache.get(userId);
-
-    let payload;
-    let fromCache = false;
-
-    if (!force && cached && now - cached.at < CACHE_TTL_MS) {
-      payload = cached.data;
-      fromCache = true;
-    } else {
-      payload = await computeStats(userId);
-      statsCache.set(userId, { at: now, data: payload });
-    }
-
-    const computedAt = fromCache ? cached.at : now;
 
     return res.json({
       success: true,
       stats: {
         ...payload,
-        computedAt,
-        nextUpdateAt: computedAt + CACHE_TTL_MS,
-        cached: fromCache,
+        computedAt: now,
+        nextUpdateAt: now,
+        cached: false,
       },
     });
   } catch (error) {

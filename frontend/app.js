@@ -253,7 +253,8 @@ const state = {
     computedAt: 0,
     nextUpdateAt: 0,
   },
-  statsRefreshTimer: null,
+  autoRefreshTimer: null,
+  autoRefreshInFlight: false,
 
   profiles: [],
   profileEditingId: null,
@@ -473,6 +474,10 @@ function setActiveTab(tabName) {
     panel.classList.toggle('active', panel.dataset.panel === nextTab);
   });
 
+  if (nextTab === 'panel' || nextTab === 'stats') {
+    refreshLiveCounters();
+  }
+
   if (nextTab === 'profiles') {
     loadProfiles().catch((err) => {
       console.error('profiles load failed', err);
@@ -551,19 +556,42 @@ async function loadStats({ force = false } = {}) {
   };
 }
 
-function ensureStatsHourlyRefresh() {
-  if (state.statsRefreshTimer) {
-    return;
-  }
+const AUTO_REFRESH_MS = 60 * 1000;
 
-  state.statsRefreshTimer = window.setInterval(async () => {
+async function refreshLiveCounters() {
+  if (state.autoRefreshInFlight) return;
+  if (typeof document !== 'undefined' && document.hidden) return;
+
+  state.autoRefreshInFlight = true;
+  try {
+    await Promise.all([loadDashboard(), loadStats()]);
+    renderPanel();
+    renderStats();
+  } catch (error) {
+    console.warn('auto refresh failed', error);
+  } finally {
+    state.autoRefreshInFlight = false;
+  }
+}
+
+function ensureAutoRefresh() {
+  if (state.autoRefreshTimer) return;
+
+  state.autoRefreshTimer = window.setInterval(() => {
+    refreshLiveCounters();
+  }, AUTO_REFRESH_MS);
+
+  if (!state._autoRefreshVisibilityBound) {
+    state._autoRefreshVisibilityBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) refreshLiveCounters();
+    });
     try {
-      await loadStats({ force: true });
-      renderStats();
-    } catch (error) {
-      console.warn('hourly stats refresh failed', error);
-    }
-  }, 60 * 60 * 1000);
+      tg?.onEvent?.('viewportChanged', () => {
+        if (!document.hidden) refreshLiveCounters();
+      });
+    } catch (_) {}
+  }
 }
 
 /**
@@ -583,7 +611,7 @@ async function loadAllData({ forceStats = false } = {}) {
   ]);
 
   render();
-  ensureStatsHourlyRefresh();
+  ensureAutoRefresh();
 
   const errors = results
     .filter((result) => result.status === 'rejected')
