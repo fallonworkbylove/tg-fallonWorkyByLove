@@ -310,11 +310,16 @@ function shownDelayPair(min, max) {
   return low <= high ? [low, high] : [high, low];
 }
 
+function normalizePhone(value) {
+  let digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 11 && digits.startsWith('8')) digits = `7${digits.slice(1)}`;
+  if (digits.length === 10) digits = `7${digits}`;
+  return `+${digits}`;
+}
+
 function formatPhone(value) {
-  const digits = String(value || '').replace(/\D/g, '');
-  const normalized = digits.length === 11 && digits.startsWith('8')
-    ? `7${digits.slice(1)}`
-    : digits;
+  const normalized = normalizePhone(value).replace(/^\+/, '');
   if (normalized.length === 11 && normalized.startsWith('7')) {
     return `+7 ${normalized.slice(1, 4)} ${normalized.slice(4, 7)} ${normalized.slice(7, 9)} ${normalized.slice(9)}`;
   }
@@ -1826,13 +1831,15 @@ async function addAccount(event) {
   try {
     if (connectState.step === 'phone') {
       const phoneField = document.getElementById('account-phone');
-      const phone = phoneField?.value.trim() || '';
+      const phone = normalizePhone(phoneField?.value || '');
       const promptField = document.getElementById('account-prompt');
 
-      if (!phone) {
+      if (!phone || phone.length < 12) {
         notify('Введите номер телефона');
         return;
       }
+
+      if (phoneField) phoneField.value = phone;
 
       // Запоминаем промпт, введённый в форме, чтобы сохранить его
       // вместе с аккаунтом на финальном шаге подключения.

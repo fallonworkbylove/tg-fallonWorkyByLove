@@ -29,8 +29,10 @@ html {
 body {
   margin: 0;
   min-height: 100%;
-  min-height: 100dvh;
+  /* Порядок важен: -webkit-fill-available не должен затирать 100dvh. */
+  min-height: 100vh;
   min-height: -webkit-fill-available;
+  min-height: 100dvh;
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background-color: var(--bg);
   background-image: linear-gradient(var(--bg-grid) 1px, transparent 1px), linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
@@ -61,10 +63,10 @@ input[type="file"] {
 
 .app-shell {
   max-width: 430px;
-  /* dvh + fill-available: iOS Safari / Telegram WebView */
+  /* Порядок: vh → fill-available → dvh. Иначе iOS затирает корректную высоту. */
   min-height: 100vh;
-  min-height: 100dvh;
   min-height: -webkit-fill-available;
+  min-height: 100dvh;
   margin: 0 auto;
   background: linear-gradient(180deg, #1f2937 0%, var(--bg) 100%);
   display: flex;
@@ -476,13 +478,15 @@ textarea {
   }
 
   .action-row {
-  grid-template-columns: 1fr;
+    grid-template-columns: 1fr;
   }
 
-  .panel-actions {
+  .panel-actions,
+  .account-bulk-actions {
     display: flex;
     flex-direction: column;
     width: 100%;
+    gap: 10px;
   }
 
   .bulk-controls {
@@ -493,13 +497,16 @@ textarea {
   }
 
   .panel-actions .btn,
+  .account-bulk-actions .btn,
   .bulk-action {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 100%;
     min-height: 52px;
     white-space: normal;
   }
-  }
+}
 
 /* --- Модальное окно деталей аккаунта --- */
 .modal-overlay {
