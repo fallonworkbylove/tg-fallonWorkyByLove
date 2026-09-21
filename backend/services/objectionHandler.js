@@ -17,6 +17,26 @@ const db = require('../db');
 // voiceReplies.js ни от telegramClient.js, ни от objectionHandler.js не зависит,
 // поэтому его можно require-ить сразу.
 const { sendVoiceReply, VOICES_DIR } = require('./voiceReplies');
+const { isRussianConversation } = require('./aiResponder');
+
+async function peerChatsInRussian(accountId, peerId) {
+  const [rows] = await db.execute(
+    `SELECT role, content FROM conversation_messages
+     WHERE account_id = ? AND peer_id = ?
+     ORDER BY id DESC
+     LIMIT 20`,
+    [accountId, String(peerId)],
+  );
+  const history = rows.reverse();
+  let lastUser = '';
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i].role === 'user') {
+      lastUser = history[i].content || '';
+      break;
+    }
+  }
+  return isRussianConversation(lastUser, history);
+}
 
 const OBJECTION_PATTERNS = [
   {
@@ -319,6 +339,13 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
         if (!shouldSend) continue;
 
         if (!client) continue;
+
+        if (!(await peerChatsInRussian(row.account_id, row.peer_id))) {
+          console.log(
+            `[Аккаунт ${row.account_id}] Голосовое молчания пропущено — ${row.peer_username || row.peer_id} не на русском.`,
+          );
+          continue;
+        }
 
         entity = await client.getEntity(row.peer_username || Number(row.peer_id) || row.peer_id);
         if (await shouldSkipProactivePeer(client, entity)) continue;

@@ -105,6 +105,7 @@ const DEFAULT_PROMPT =
   'Ты — живой человек, который непринуждённо общается в личных сообщениях. ' +
   'Отвечай МАКСИМУМ в 2 коротких предложениях, тепло и по-человечески. ' +
   'Язык ответа: тот же, на котором пишет собеседник (русский или английский). ' +
+  'На английском пиши как носитель в мессенджере: contractions, нормальный spelling, без ломаного English. ' +
   'В ответах должно быть много любви: забота, нежность, ласка, ощущение что человеку рады. ' +
   'Никогда не пиши больше 2 предложений. ' +
   'Не скрывай, что ты искусственный интеллект, если собеседник прямо об этом спрашивает.';
@@ -163,17 +164,27 @@ function detectReplyLanguage(userMessage, history = []) {
 function buildLanguageReminder(lang) {
   if (lang === 'en') {
     return (
-      'LANGUAGE: the interlocutor is writing in English. Reply ONLY in natural English. ' +
-      'Do not switch to Russian. Keep the same warm casual chat style, max 2 short sentences. ' +
-      'Warmth/affection also in English (miss you, glad you wrote, take care) — not Russian words. ' +
-      'Service tokens like <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> stay as-is.'
+      'LANGUAGE: the person is chatting in English. Reply ONLY in natural casual English, ' +
+      'like a real girl texting on her phone — warm, short, human. ' +
+      'Use normal English spelling and letters only (I, I\'m, can\'t, what\'s) — ' +
+      'NEVER Turkish/dotted letters like ı/İ, NEVER broken learner English. ' +
+      'Use contractions. Max 2 short sentences. ' +
+      'Do NOT say you cannot understand Russian if they wrote in English. ' +
+      'Do NOT switch to Russian. Do NOT sound translated. ' +
+      'Warmth in English naturally (miss you, glad you texted, take care) — no Russian words. ' +
+      'Service tokens <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> stay as-is.'
     );
   }
   return (
-    'ЯЗЫК: собеседник пишет по-русски. Отвечай ТОЛЬКО на русском, живо и разговорно. ' +
+    'ЯЗЫК: собеседник пишет по-русски. Отвечай ТОЛЬКО на русском, живо и разговорно, как в обычной переписке. ' +
     'Не переходи на английский, если он сам не перешёл. ' +
     'Служебные токены <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> оставляй как есть.'
   );
+}
+
+/** true, если по текущему сообщению и истории диалог на русском. */
+function isRussianConversation(userMessage, history = []) {
+  return detectReplyLanguage(userMessage, history) === 'ru';
 }
 
 /**
@@ -549,6 +560,8 @@ function applyAntiDetectStyle(text) {
     .replace(/\u2212/g, '-') // minus sign
     .replace(/\s+-\s+/g, ' - ')
     .replace(/-{2,}/g, '-');
+  // Турецкие ı/İ иногда проскакивают в «английском» — чиним в латиницу.
+  result = result.replace(/\u0131/g, 'i').replace(/\u0130/g, 'I');
   result = result.trimEnd();
   while (result.endsWith('.') && !result.endsWith('..')) {
     result = result.slice(0, -1).trimEnd();
@@ -616,4 +629,10 @@ async function describeImage(buffer, caption = '') {
   }
 }
 
-Object.assign(module.exports, { generateReply, transcribeAudio, describeImage });
+Object.assign(module.exports, {
+  generateReply,
+  transcribeAudio,
+  describeImage,
+  detectReplyLanguage,
+  isRussianConversation,
+});

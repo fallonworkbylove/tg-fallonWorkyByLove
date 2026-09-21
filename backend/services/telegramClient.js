@@ -24,6 +24,8 @@ const {
   generateReply,
   describeImage,
   transcribeAudio,
+  isRussianConversation,
+  detectReplyLanguage,
 } = require('./aiResponder');
 const learningDb = require('./learningDb');
 const ragExamples = require('./ragExamples');
@@ -1004,6 +1006,18 @@ async function getHistory(accountId, peerId) {
   );
   // Из БД пришло от новых к старым — разворачиваем в хронологию.
   return rows.reverse();
+}
+
+/**
+ * Диалог на русском? Голосовые заготовки (русские ogg) не шлём англоязычным.
+ */
+async function conversationIsRussian(accountId, peerId, latestText = '') {
+  try {
+    const history = await getHistory(accountId, peerId);
+    return isRussianConversation(latestText, history);
+  } catch (_) {
+    return isRussianConversation(latestText, []);
+  }
 }
 
 /**
@@ -2195,6 +2209,9 @@ async function fireReengage(accountId, peerId) {
     const mediaEnabled = !!mediaLink && explicitMediaRequest;
     const noMediaExcuse = explicitMediaRequest && !mediaLink;
     const nft = await getNftCampaignState(accountId, peerId, history.length);
+    if (!isRussianConversation(text, history)) {
+      nft.sendVoice = false;
+    }
 
     // Динамический тайм-менеджмент + Mood Engine + Memory Triggers +
     // обработка возражений/анти-детект — см. соответствующие модули.
@@ -2510,6 +2527,16 @@ async function processBufferedMessages(
     // уходило гол��совое вместо кружка.
     let voice =
       explicitMediaRequest && mediaLinkEarly ? null : findVoiceForText(text);
+
+    // Голосовые файлы на русском — англоязычным / не-RU собеседникам не шлём.
+    const allowVoice = isRussianConversation(contextualText || text, history);
+    if (voice && !allowVoice) {
+      console.log(
+        `[${accountLabel(accountId)}] ${senderName} пишет не по-русски — голосовые заготовки пропускаю.`,
+      );
+      voice = null;
+    }
+
     const voiceDialogKey = voice ? `${accountId}:${String(peerId)}` : null;
     if (
       voice &&
@@ -2604,6 +2631,12 @@ async function processBufferedMessages(
 
     // NFT-кампания: 1–2 день — мягкое упоминание темы, 3-й день — голосовое.
     const nft = await getNftCampaignState(accountId, peerId, history.length);
+    if (!allowVoice && nft.sendVoice) {
+      console.log(
+        `[${accountLabel(accountId)}] ${senderName} не на русском — NFT-голосовое пропускаю.`,
+      );
+      nft.sendVoice = false;
+    }
 
     // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем,
     // не согласился ли он именно этим сообщением (см. helpRequestNotifier.js).
@@ -3510,6 +3543,9 @@ async function tickNftDueVoices(accountId) {
       if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) continue;
       if (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE)) continue;
       if (isHiddenFromReplies(archiveFlags, peerId)) continue;
+      if (!(await conversationIsRussian(accountId, peerId))) {
+        continue;
+      }
 
       // Возраст только текущей сессии; без активного диалога getDialogAgeHours = null
       const ageHours = await getDialogAgeHours(accountId, peerId);
