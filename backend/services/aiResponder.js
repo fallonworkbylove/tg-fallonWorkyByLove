@@ -55,7 +55,41 @@ function buildOpenAIOptions() {
   return opts;
 }
 
+/**
+ * Клиент OpenRouter (OpenAI-совместимый API).
+ * Ключ: OPENROUTER_API_KEY. Модель по умолчанию: openai/gpt-4o-mini.
+ */
+function buildOpenRouterClient() {
+  const apiKey = String(process.env.OPENROUTER_API_KEY || '').trim();
+  if (!apiKey) return null;
+
+  const opts = {
+    apiKey,
+    baseURL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+    defaultHeaders: {
+      'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'https://loverussian.duckdns.org',
+      'X-Title': process.env.OPENROUTER_APP_NAME || 'LoveStory MiniApp',
+    },
+  };
+
+  const socks = firstSocks5FromEnv();
+  if (socks) {
+    try {
+      const { socksDispatcher } = require('fetch-socks');
+      opts.fetchOptions = { dispatcher: socksDispatcher(socks) };
+    } catch (_) {
+      // без прокси — OpenRouter обычно доступен и без SOCKS
+    }
+  }
+
+  console.log(
+    `[openrouter] Чат-фолбэк включён: ${opts.baseURL} model=${process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini'}`,
+  );
+  return new OpenAI(opts);
+}
+
 const openai = new OpenAI(buildOpenAIOptions());
+const openrouter = buildOpenRouterClient();
 
 // Экспортируем конструктор опций, чтобы другие модули (напр. learningDb.js)
 // могли создать свой OpenAI-клиент через тот же SOCKS5-прокси, а не биться
@@ -76,6 +110,11 @@ const CHAT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 // fine-tuned) вернёт ошибку (модель удалена/деактивирована/недоступна).
 // Без фолбэка бот полностью замолчит, если fine-tuned модель отключат.
 const FALLBACK_MODEL = process.env.OPENAI_MODEL_FALLBACK || 'gpt-4o-mini';
+
+// OpenRouter: openai/gpt-4o-mini (или OPENROUTER_MODEL).
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini';
+// openrouter | openai — куда слать чат в первую очередь.
+const CHAT_PROVIDER = String(process.env.CHAT_PROVIDER || 'openai').trim().toLowerCase();
 
 // Отдельный клиент для ГОЛОСА (whisper) и ФОТО (vision). Freemodel обычно
 // НЕ поддерживает эти модели, поэтому если задан OPENAI_FALLBACK_KEY (ключ
@@ -490,8 +529,15 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   messages.push({ role: 'user', content: contextualUserMessage });
 
   // [v0] ВРЕМЕННЫЙ ЛОГ: печатает реально используемую модель и endpoint.
+  const primaryViaOpenRouter = CHAT_PROVIDER === 'openrouter' && openrouter;
   console.log(
-    `[v0] Запрос к модели: "${CHAT_MODEL}" | baseURL: ${process.env.OPENAI_BASE_URL || 'api.openai.com (по умолчанию)'}`,
+    `[v0] Запрос к модели: "${primaryViaOpenRouter ? OPENROUTER_MODEL : CHAT_MODEL}" | ` +
+      `provider: ${primaryViaOpenRouter ? 'openrouter' : 'openai'} | ` +
+      `baseURL: ${
+        primaryViaOpenRouter
+          ? process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1'
+          : process.env.OPENAI_BASE_URL || 'api.openai.com (по умолчанию)'
+      }`,
   );
 
   const requestOptions = {
@@ -505,22 +551,56 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   };
 
   let completion;
-  let usedModel = CHAT_MODEL;
+  let usedModel = primaryViaOpenRouter ? OPENROUTER_MODEL : CHAT_MODEL;
   let fellBack = false;
+
+  async function callOpenAI(model) {
+    return openai.chat.completions.create({ ...requestOptions, model });
+  }
+
+  async function callOpenRouter(model) {
+    if (!openrouter) throw new Error('OPENROUTER_API_KEY не задан');
+    return openrouter.chat.completions.create({ ...requestOptions, model });
+  }
+
   try {
-    completion = await openai.chat.completions.create({ ...requestOptions, model: CHAT_MODEL });
+    if (primaryViaOpenRouter) {
+      completion = await callOpenRouter(OPENROUTER_MODEL);
+    } else {
+      completion = await callOpenAI(CHAT_MODEL);
+    }
   } catch (err) {
-    // Фолбэк: если основная модель (например, отключённая/удалённая
-    // fine-tuned версия) недоступна, не роняем ответ бота, а пробуем
-    // запасную модель. Срабатывает только когда CHAT_MODEL и FALLBACK_MODEL
-    // реально разные — иначе смысла в повторе нет.
-    if (CHAT_MODEL === FALLBACK_MODEL) throw err;
-    console.error(
-      `[openai] Модель "${CHAT_MODEL}" вернула ошибку (${err.message}), пробую запасную "${FALLBACK_MODEL}".`,
-    );
-    usedModel = FALLBACK_MODEL;
-    fellBack = true;
-    completion = await openai.chat.completions.create({ ...requestOptions, model: FALLBACK_MODEL });
+    // 1) Та же платформа, другая модель (fine-tune → gpt-4o-mini).
+    if (!primaryViaOpenRouter && CHAT_MODEL !== FALLBACK_MODEL) {
+      try {
+        console.error(
+          `[openai] Модель "${CHAT_MODEL}" вернула ошибку (${err.message}), пробую запасную "${FALLBACK_MODEL}".`,
+        );
+        usedModel = FALLBACK_MODEL;
+        fellBack = true;
+        completion = await callOpenAI(FALLBACK_MODEL);
+      } catch (err2) {
+        err = err2;
+        completion = null;
+      }
+    }
+
+    // 2) OpenRouter openai/gpt-4o-mini — если OpenAI лежит (429/баланс) или
+    // primary openrouter упал и есть смысл только один раз.
+    if (!completion && openrouter && !primaryViaOpenRouter) {
+      try {
+        console.error(
+          `[openai] Основной провайдер недоступен (${err.message}), пробую OpenRouter "${OPENROUTER_MODEL}".`,
+        );
+        usedModel = OPENROUTER_MODEL;
+        fellBack = true;
+        completion = await callOpenRouter(OPENROUTER_MODEL);
+      } catch (err3) {
+        throw err3;
+      }
+    } else if (!completion) {
+      throw err;
+    }
   }
 
   // Учёт расходов: пишем реальные токены из ответа API в БД (см.
