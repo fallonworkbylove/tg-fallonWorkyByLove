@@ -1,18 +1,22 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../db');
-const { getActiveClient, isPeerArchived, isNeverContact, NFT_VOICE_AFTER_HOURS } = require('./telegramClient');
+const {
+  getActiveClient,
+  isPeerArchived,
+  isNeverContact,
+  NFT_VOICE_AFTER_HOURS,
+} = require('./telegramClient');
+const helpRequestNotifier = require('./helpRequestNotifier');
 
-// Разрешённые расширения для готовых фото.
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 
-// Окно отправки: каждому написавшему за день собеседнику уходит 1 фото
-// в случайный момент внутри этого диапазона (часы, 24ч формат).
-// Конец в 15:00: с 16:00 до 22:00 в тех же диалогах уходит голосовое NFT-кампании.
+// Окно по Москве (не UTC сервера!): 13:00–15:00 МСК — строго до NFT 16:00–21:00 МСК.
 const WINDOW_START_HOUR = 13;
 const WINDOW_END_HOUR = 15;
+const PHOTO_TIMEZONE = process.env.WORK_TIMEZONE || 'Europe/Moscow';
+const NFT_VOICE_TAG = '[голосовое: nft.ogg]';
 
-// Случайная подпись к фото — придаёт сообщению живой, неформальный тон.
 const CAPTIONS = [
   'сегодня повезло 😊',
   'вот так бы всегда 🥹',
@@ -27,11 +31,6 @@ function pickRandomCaption() {
 
 let schemaReady = false;
 
-/**
- * Создаёт таблицу учёта ежедневных рассылок фото, если её ещё нет.
- * account_id + peer_id + send_date — уникальны, чтобы не запланировать
- * повторную отправку одному собеседнику в тот же день.
- */
 async function ensureSchema() {
   if (schemaReady) return;
 
@@ -52,22 +51,12 @@ async function ensureSchema() {
   schemaReady = true;
 }
 
-/**
- * Возвращает все настроенные папки с готовыми фото. Все наборы аккаунтов
- * синхронизированы — фото берутся из общего пула (IMAGES_FOLDER +
- * IMAGES_FOLDER_2), независимо от того, к какому набору принадлежит аккаунт.
- */
 function getImagesFolders() {
   return [process.env.IMAGES_FOLDER, process.env.IMAGES_FOLDER_2]
     .filter((folder) => folder && folder.trim())
     .map((folder) => folder.trim());
 }
 
-/**
- * Выбирает случайное фото из объединённого пула всех настроенных папок.
- * Возвращает полный путь или null, если ни одна папка не существует / не
- * содержит подходящих файлов.
- */
 function pickRandomImage(folders) {
   const allFiles = [];
 
@@ -79,53 +68,119 @@ function pickRandomImage(folders) {
         .readdirSync(folder)
         .filter((name) => IMAGE_EXTENSIONS.has(path.extname(name).toLowerCase()))
         .map((name) => path.join(folder, name));
-
       allFiles.push(...files);
-    } catch (err) {
-      console.error(`Не удалось прочитать папку с фото (${folder}):`, err.message);
+    } catch (_) {
+      // папка недоступна — пропускаем
     }
   }
 
   if (allFiles.length === 0) return null;
-
   return allFiles[Math.floor(Math.random() * allFiles.length)];
 }
 
-/**
- * Возвращает случайную дату-время в диапазоне [from, to] (объекты Date).
- */
-function randomTimeBetween(from, to) {
-  if (from >= to) return from;
-  const time = from.getTime() + Math.random() * (to.getTime() - from.getTime());
-  return new Date(time);
+/** Части даты/времени «сейчас» в PHOTO_TIMEZONE. */
+function zonedNowParts(date = new Date()) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: PHOTO_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+      .formatToParts(date)
+      .filter((p) => p.type !== 'literal')
+      .map((p) => [p.type, p.value]),
+  );
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour) % 24,
+    minute: Number(parts.minute),
+    second: Number(parts.second),
+  };
 }
 
 /**
- * Находит всех собеседников, которые сегодня писали хотя бы одно сообщение
- * (по всем аккаунтам), и планирует каждому из них ровно одну отправку фото
- * на случайное время внутри окна 13:00–15:00 (если ещё не запланировано).
+ * UTC-инстант, когда в PHOTO_TIMEZONE на часах y-m-d h:min:s.
+ * Через подбор смещения (сервер может быть в UTC).
  */
+function zonedLocalToUtc(year, month, day, hour, minute = 0, second = 0) {
+  const utcGuess = Date.UTC(year, month - 1, day, hour, minute, second);
+  const shown = zonedNowParts(new Date(utcGuess));
+  const asUtcFromShown = Date.UTC(
+    shown.year,
+    shown.month - 1,
+    shown.day,
+    shown.hour,
+    shown.minute,
+    shown.second,
+  );
+  const offset = asUtcFromShown - utcGuess;
+  return new Date(utcGuess - offset);
+}
+
+function moscowWindowBounds(now = new Date()) {
+  const p = zonedNowParts(now);
+  const start = zonedLocalToUtc(p.year, p.month, p.day, WINDOW_START_HOUR, 0, 0);
+  const end = zonedLocalToUtc(p.year, p.month, p.day, WINDOW_END_HOUR, 0, 0);
+  return { start, end, parts: p };
+}
+
+function randomTimeBetween(from, to) {
+  const a = from.getTime();
+  const b = to.getTime();
+  if (b <= a) return new Date(a);
+  return new Date(a + Math.floor(Math.random() * (b - a)));
+}
+
+/** Не слать «профит-фото», если диалог уже в NFT-фазе или голосовое ушло. */
+async function shouldSkipDailyPhoto(accountId, peerId) {
+  if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) {
+    return 'autoreply_disabled';
+  }
+
+  const [[voice]] = await db.execute(
+    `SELECT id FROM conversation_messages
+     WHERE account_id = ? AND peer_id = ? AND role = 'assistant' AND content = ?
+     LIMIT 1`,
+    [accountId, String(peerId), NFT_VOICE_TAG],
+  );
+  if (voice) return 'nft_voice_sent';
+
+  const [[age]] = await db.execute(
+    `SELECT TIMESTAMPDIFF(HOUR, MIN(created_at), NOW()) AS hours
+     FROM conversation_messages
+     WHERE account_id = ? AND peer_id = ?`,
+    [accountId, String(peerId)],
+  );
+  if (Number(age?.hours) >= NFT_VOICE_AFTER_HOURS) return 'nft_day';
+
+  return null;
+}
+
+async function markSkipped(id, reason, accountId, peerId) {
+  await db.execute('UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?', [id]);
+  console.log(
+    `[Аккаунт ${accountId}] Ежедневное фото пропущено (${reason}) для ${peerId}.`,
+  );
+}
+
 async function schedulePendingSends() {
   await ensureSchema();
 
   const now = new Date();
-  const windowEnd = new Date(now);
-  windowEnd.setHours(WINDOW_END_HOUR, 0, 0, 0);
+  const { start: windowStart, end: windowEnd } = moscowWindowBounds(now);
 
-  // Окно на сегодня уже закрылось — новых отправок на сегодня не планируем.
   if (now >= windowEnd) return;
 
-  const windowStart = new Date(now);
-  windowStart.setHours(WINDOW_START_HOUR, 0, 0, 0);
-
-  // Нижняя граница случайного времени: не раньше начала окна и не раньше «сейчас».
   const lowerBound = now > windowStart ? now : windowStart;
 
-  // Фото отправляем только начиная со 2-го дня знакомства: собеседник должен
-  // писать сегодня, но переписка с ним должна быть начата не сегодня.
-  // С 3-го дня (48+ часов с первого сообщения) диалог переходит к NFT-кампании
-  // (см. getNftCampaignState/NFT_VOICE_AFTER_HOURS в telegramClient.js) — ей не
-  // должна мешать ежедневная фотка, поэтому такие диалоги здесь исключаем.
+  // Только 2-й день (< 48ч). С 3-го дня — NFT, профит-скрин мешает кампании.
   const [writers] = await db.execute(
     `SELECT DISTINCT cm.account_id, cm.peer_id, cm.peer_username,
        (SELECT MIN(cm2.created_at) FROM conversation_messages cm2
@@ -138,6 +193,8 @@ async function schedulePendingSends() {
   );
 
   for (const writer of writers) {
+    if (await shouldSkipDailyPhoto(writer.account_id, writer.peer_id)) continue;
+
     const scheduledAt = randomTimeBetween(lowerBound, windowEnd);
 
     try {
@@ -156,17 +213,13 @@ async function schedulePendingSends() {
   }
 }
 
-/**
- * Отправляет все фото, для которых наступило запланированное время
- * и они ещё не были отправлены.
- */
 async function sendDuePhotos() {
   await ensureSchema();
 
-  const windowEnd = new Date();
-  windowEnd.setHours(WINDOW_END_HOUR, 0, 0, 0);
+  const now = new Date();
+  const { end: windowEnd } = moscowWindowBounds(now);
 
-  // Старые планы (окно было до 20:00) после 15:00 не отправляем: это время NFT-голосового.
+  // Всё, что запланировано на после конца окна (или ошибочно в NFT-часы) — гасим.
   await db.execute(
     `UPDATE daily_photo_sends
      SET sent_at = NOW()
@@ -174,15 +227,24 @@ async function sendDuePhotos() {
     [windowEnd],
   );
 
-  const [due] = await db.execute(`
+  const [due] = await db.execute(
+    `
     SELECT id, account_id, peer_id, peer_username
     FROM daily_photo_sends
     WHERE send_date = CURDATE() AND sent_at IS NULL AND scheduled_at <= NOW()
       AND scheduled_at < ?
-  `, [windowEnd]);
+  `,
+    [windowEnd],
+  );
 
   for (const row of due) {
     try {
+      const skip = await shouldSkipDailyPhoto(row.account_id, row.peer_id);
+      if (skip) {
+        await markSkipped(row.id, skip, row.account_id, row.peer_id);
+        continue;
+      }
+
       const client = getActiveClient(row.account_id);
       if (!client) {
         console.error(
@@ -197,26 +259,14 @@ async function sendDuePhotos() {
         continue;
       }
 
-      // Собеседник выбирается по сохранённому Telegram ID. Имя контакта не
-      // является идентификатором и может совпадать у нескольких пользователей.
       const entity = await resolvePeerEntity(client, row.peer_id, row.peer_username);
       if (isNeverContact(entity) || isNeverContact(row.peer_username)) {
-        await db.execute(
-          'UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?',
-          [row.id],
-        );
+        await markSkipped(row.id, 'never_contact', row.account_id, row.peer_id);
         continue;
       }
 
-      // Архивные диалоги не ��олучают готовые ежедневные фотографии.
       if (await isPeerArchived(client, entity)) {
-        await db.execute(
-          'UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?',
-          [row.id],
-        );
-        console.log(
-          `[Аккаунт ${row.account_id}] Фото пропущено: диалог ${row.peer_id} находится в архиве.`,
-        );
+        await markSkipped(row.id, 'archived', row.account_id, row.peer_id);
         continue;
       }
 
@@ -228,10 +278,7 @@ async function sendDuePhotos() {
 
       await client.sendFile(entity, { file: imagePath, caption: pickRandomCaption() });
 
-      await db.execute(
-        'UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?',
-        [row.id],
-      );
+      await db.execute('UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?', [row.id]);
 
       console.log(
         `[Аккаунт ${row.account_id}] Отправлено ежедневное фото пользователю с ID ${row.peer_id}${row.peer_username ? ` (@${row.peer_username})` : ''}.`,
@@ -242,22 +289,13 @@ async function sendDuePhotos() {
         err.message,
       );
 
-      // Ошибки, из-за которых отправка никогда не сможет пройти в этот
-      // день (собеседник закрыл доступ к переписке, заблокировал аккаунт
-      // и т.п.), помечаем как отправленные — иначе планировщик будет
-      // безрезультатно повторять попытку каждую минуту до конца окна.
       if (isPermanentSendError(err)) {
-        await db.execute(
-          'UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?',
-          [row.id],
-        );
+        await markSkipped(row.id, 'permanent_error', row.account_id, row.peer_id);
       }
     }
   }
 }
 
-// Коды ошибок Telegram, при которых повторная попытка в тот же день заведомо
-// не сработает (доступ к переписке закрыт, а не временный сетевой сбой).
 async function resolvePeerEntity(client, peerId, peerUsername) {
   const normalizedId = String(peerId || '').trim();
   if (normalizedId && /^-?\d+$/.test(normalizedId)) {
@@ -289,11 +327,6 @@ function isPermanentSendError(err) {
 
 let schedulerStarted = false;
 
-/**
- * Запускает фоновый планировщик: каждую минуту проверяет новых написавших
- * сегодня собеседников (планирует им случайное время в окне 13:00–15:00)
- * и отправляет тем, у кого это время уже наступило.
- */
 function startDailyPhotoScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
@@ -303,15 +336,15 @@ function startDailyPhotoScheduler() {
       await schedulePendingSends();
       await sendDuePhotos();
     } catch (err) {
-      console.error('Ошибка планировщика ежедневных фото:', err.message);
+      console.error('[dailyPhotos] tick failed:', err.message);
     }
   };
 
   tick();
   setInterval(tick, 60 * 1000);
+  console.log(
+    `[dailyPhotos] Планировщик запущен: окно ${WINDOW_START_HOUR}:00–${WINDOW_END_HOUR}:00 ${PHOTO_TIMEZONE} (до NFT-кампании).`,
+  );
 }
 
-module.exports = {
-  ensureSchema,
-  startDailyPhotoScheduler,
-};
+module.exports = { startDailyPhotoScheduler, schedulePendingSends, sendDuePhotos };
