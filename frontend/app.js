@@ -2306,7 +2306,11 @@ function closeAccountModal() {
   }
   document.removeEventListener('keydown', onModalKeydown);
   // Снимаем блокировку прокрутки фона и слушатель клавиатуры (см. handleDetails).
+  const lockedY = Number(document.body.dataset.scrollLockY || 0);
   document.body.classList.remove('modal-open');
+  document.body.style.top = '';
+  delete document.body.dataset.scrollLockY;
+  window.scrollTo(0, lockedY);
   if (visualViewportHandler && window.visualViewport) {
     window.visualViewport.removeEventListener('resize', visualViewportHandler);
     visualViewportHandler = null;
@@ -2482,6 +2486,8 @@ function handleDetails(accountId) {
   document.body.appendChild(overlay);
   document.addEventListener('keydown', onModalKeydown);
   // Блокируем прокрутку фона и включаем мобильную обработку клавиатуры.
+  document.body.dataset.scrollLockY = String(window.scrollY || window.pageYOffset || 0);
+  document.body.style.top = `-${document.body.dataset.scrollLockY}px`;
   document.body.classList.add('modal-open');
   setupMobileKeyboardHandling(overlay);
 
