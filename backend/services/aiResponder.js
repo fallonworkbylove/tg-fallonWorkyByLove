@@ -114,11 +114,21 @@ const DEFAULT_PROMPT =
  * Определяет язык ответа: русский или английский — по тексту собеседника.
  * Короткие реплики («ok», «да», «why») наследуют язык недавних его сообщений.
  */
+/**
+ * Убирает служебные обёртки перед определением языка.
+ * Важно: описание фото vision'ом раньше оставалось после снятия `[…]`,
+ * и английский текст («cute squirrel…») ложно переключал ответ на EN.
+ */
 function stripMetaForLangDetect(text) {
   return String(text || '')
-    .replace(/\[[^\]]*]/g, ' ')
+    .replace(/\[фото от собеседника\]:\s*[^\n]*/gi, ' ')
+    .replace(/\[(?:голос(?:овое)?|voice|аудио)[^\]]*\]:\s*[^\n]*/gi, ' ')
+    .replace(/\[геоконтекст[^\]]*\]:\s*/gi, ' ')
+    .replace(/\[(?:ответ на|уточнение к|Ответ на сообщение)[^\]]*\]:?\s*/gi, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
     .replace(/<<[^>]+>>/g, ' ')
     .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -135,16 +145,12 @@ function scoreScript(text) {
 
 function detectReplyLanguage(userMessage, history = []) {
   const current = scoreScript(userMessage);
-  if (current.total >= 3) {
-    if (current.cyr > current.lat) return 'ru';
-    if (current.lat > current.cyr) return 'en';
-  }
 
-  // Короткие / смешанные реплики — смотрим последние сообщения собеседника.
+  // История собеседника (без vision-описаний) — главный якорь языка.
   let cyr = 0;
   let lat = 0;
   let seen = 0;
-  for (let i = (history || []).length - 1; i >= 0 && seen < 6; i -= 1) {
+  for (let i = (history || []).length - 1; i >= 0 && seen < 8; i -= 1) {
     if (history[i]?.role !== 'user') continue;
     const s = scoreScript(history[i].content);
     if (s.total === 0) continue;
@@ -153,8 +159,22 @@ function detectReplyLanguage(userMessage, history = []) {
     seen += 1;
   }
 
+  const historyStrong = cyr + lat >= 6;
+  if (historyStrong) {
+    // Уже русский/английский диалог — не прыгаем из‑за одного фото/коротыша.
+    if (current.total >= 8) {
+      if (current.cyr > current.lat * 2) return 'ru';
+      if (current.lat > current.cyr * 2) return 'en';
+    }
+    return lat > cyr ? 'en' : 'ru';
+  }
+
+  if (current.total >= 3) {
+    if (current.cyr > current.lat) return 'ru';
+    if (current.lat > current.cyr) return 'en';
+  }
+
   if (cyr === 0 && lat === 0) {
-    // Совсем нет текста — по текущей реплике или дефолт русский.
     if (current.lat > 0 && current.cyr === 0) return 'en';
     return 'ru';
   }
