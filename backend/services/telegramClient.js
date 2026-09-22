@@ -906,7 +906,8 @@ async function isPeerArchived(client, inputPeer) {
     if (!dialog) return true;
     if (dialog.className === 'DialogFolder') return true;
 
-    // folderId === 1 -> архив. undefined/0 -> основной список.
+    // folderId === 1 / archived === true -> архив. undefined/0 -> основной список.
+    if (dialog.archived === true) return true;
     return Number(dialog.folderId) === 1;
   } catch (err) {
     console.error(
@@ -1212,6 +1213,12 @@ function isHiddenFromReplies(flags, peerId) {
  */
 async function markPeerAsRead(client, peer, message = null) {
   if (!client || !peer) return;
+  // Жёсткий запрет: архивные диалоги никогда не читаем.
+  try {
+    if (await isPeerArchived(client, peer)) return;
+  } catch (_) {
+    return;
+  }
   try {
     if (typeof client.markAsRead === 'function') {
       if (message) {
@@ -2064,6 +2071,16 @@ async function handleIncomingMessage(accountId, event) {
 
     if (await isPeerBlacklisted(accountId, peerId)) return;
 
+    // Архив: не читаем и не отвечаем. Проверяем ДО Whisper/vision/буфера,
+    // чтобы вообще не трогать диалог.
+    const clientEarly = getActiveClient(accountId);
+    if (clientEarly && sender && (await isPeerArchived(clientEarly, sender))) {
+      console.log(
+        `[${accountLabel(accountId)}] ${senderName} в архиве — игнорирую (не читаю, не отвечаю).`,
+      );
+      return;
+    }
+
     // Не ставим «прочитано» здесь: иначе при паузе «занята» / отключённом
     // автоответе собеседник видит галочки без ответа. Читаем в processBufferedMessages
     // только когда реально отвечаем.
@@ -2209,6 +2226,13 @@ async function fireReengage(accountId, peerId) {
   if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) return;
   // Вне её режима дня не пишем — непрочитанное подхватит после подъёма.
   if (!isWithinWorkingHours(accountId)) return;
+  // Архив — никогда не читаем и не пишем, в том числе отложенным ответом.
+  if (await isPeerArchived(client, sender)) {
+    console.log(
+      `[${accountLabel(accountId)}] Отложенный ответ отменён — ${senderName} в архиве.`,
+    );
+    return;
+  }
 
   let workMentionClaimed = false;
   try {
@@ -2479,10 +2503,15 @@ async function processBufferedMessages(
     if (!client) return;
 
     // Фильтр 4: игнорируем собеседников, спрятанных в АРХИВ.
-    const inputPeer = await message.getInputSender();
-    if (inputPeer && (await isPeerArchived(client, inputPeer))) {
+    // getInputSender() иногда null — тогда проверяем по sender entity.
+    let archiveCheckPeer = sender;
+    try {
+      const inputPeer = await message.getInputSender();
+      if (inputPeer) archiveCheckPeer = inputPeer;
+    } catch (_) {}
+    if (await isPeerArchived(client, archiveCheckPeer || sender || peerId)) {
       console.log(
-        `[${accountLabel(accountId)}] Сообщение от ${senderName} получено, но диалог в архиве — не отвечаю.`,
+        `[${accountLabel(accountId)}] Сообщение от ${senderName} получено, но диалог в архиве — не читаю и не отвечаю.`,
       );
       return;
     }
@@ -3036,6 +3065,8 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 
       const peerId = String(sender.id);
       if (await isPeerBlacklisted(accountId, peerId)) continue;
+      // Доп. проверка архива (на случай если dialog.archived соврал).
+      if (await isPeerArchived(client, sender)) continue;
 
       // Если это сообщение сей��ас ��опит live-обработчик — не вмешиваемся.
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
