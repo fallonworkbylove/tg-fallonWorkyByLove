@@ -323,7 +323,9 @@ const AGGREGATE_MAX_WAIT_MS = 45000;
 const deferredDialogs = new Map();
 
 // Вероятность «замолчать и потом написать самой» вместо обычного ответа (~30–35%).
-const DEFER_CHANCE = 0.32;
+// Раньше 0.32 — слишком часто: галочки «прочитано» + молчание 5–25 мин
+// выглядели как «читает и не отвечает». Редкие паузы оставляем для живости.
+const DEFER_CHANCE = 0.08;
 // Диапазон паузы перед ре-энгейджментом: от 5 до 25 минут.
 const DEFER_MIN_MS = 5 * 60 * 1000;
 const DEFER_MAX_MS = 25 * 60 * 1000;
@@ -2048,12 +2050,9 @@ async function handleIncomingMessage(accountId, event) {
 
     if (await isPeerBlacklisted(accountId, peerId)) return;
 
-    // Сразу «прочитано», пока копим серию — собеседник видит галочки
-    // ещё до ответа (только в часы бодрствования).
-    const client = getActiveClient(accountId);
-    if (client && isWithinWorkingHours(accountId)) {
-      markPeerAsRead(client, sender || message.peerId, message).catch(() => {});
-    }
+    // Не ставим «прочитано» здесь: иначе при паузе «занята» / отключённом
+    // автоответе собеседник видит галочки без ответа. Читаем в processBufferedMessages
+    // только когда реально отвечаем.
 
     // Фильтр 3: извлекаем текст. Голосовые расшифровываем (Whisper),
     // фото распознаём (vision) — так бот «слышит» и «видит» сообщения.
@@ -2257,6 +2256,8 @@ async function fireReengage(accountId, peerId) {
     if (!rawReply) return;
     if (dueMemory) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
+    await markPeerAsRead(client, sender, null);
+
     const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
     const { text: reply, mediaType: rawMediaType } =
       extractMediaRequest(replyWithoutLaugh);
@@ -2440,10 +2441,6 @@ async function processBufferedMessages(
     const client = getActiveClient(accountId);
     if (!client) return;
 
-    // Ещё раз отмечаем прочитанным перед генерацией/паузой (на случай
-    // ответа из скана, где live-handler не сработал).
-    await markPeerAsRead(client, sender, message);
-
     // Фильтр 4: игнорируем собеседников, спрятанных в АРХИВ.
     const inputPeer = await message.getInputSender();
     if (inputPeer && (await isPeerArchived(client, inputPeer))) {
@@ -2563,8 +2560,9 @@ async function processBufferedMessages(
 
     if (voice && voice.voiceOnly) {
       console.log(
-        `[Акка��нт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед голосовым для ${senderName}.`,
+        `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед голосовым для ${senderName}.`,
       );
+      await markPeerAsRead(client, sender, message);
       await waitBeforeReply(client, sender, delayMs);
       await sendVoiceReply(client, sender, voice.filePath);
       await saveMessage(
@@ -2585,6 +2583,7 @@ async function processBufferedMessages(
     // Например, на «что ищ��шь здесь?» отвечаем заранее заданным текстом.
     const fixedReply = findTextReplyForText(text);
     if (fixedReply) {
+      await markPeerAsRead(client, sender, message);
       const textDelayMs = forcedDelayMs != null ? forcedDelayMs : delayBeforeSendMs(settings, fixedReply);
       console.log(
         `[${accountLabel(accountId)}] Пауза ${Math.round(textDelayMs / 1000)}с перед фиксированным ответом для ${senderName}.`,
@@ -2599,11 +2598,13 @@ async function processBufferedMessages(
       return;
     }
 
-    // 3.7. «Живой» игнор: иногда (≈30–35%) вместо обычного ответа бот ведёт
-    // себя как занятой человек — молчит, а через 10–60 мин сам напишет вопро��
-    // («что делаешь?»). Не срабатывает: на явную просьбу медиа, на голосовые
+    // 3.7. «Живой» игнор: иногда (редко) вместо обычного ответа бот ведёт
+    // себя как занятой человек — молчит, а через 5–25 мин сам ответит
+    // по существу. Не срабатывает: на явную просьбу медиа, на голосовые
     // заготовки, при вынужденном ответе (человек написал во время паузы) и в
     // самом начале знакомства (пока история короткая).
+    // Пока «занята» — сообщение остаётся непрочитанным (галочки только
+    // когда реально отвечаем).
     if (
       forcedDelayMs == null &&
       !explicitMediaRequest &&
@@ -2614,6 +2615,9 @@ async function processBufferedMessages(
       scheduleReengage(accountId, sender, peerId, senderName, history, text);
       return;
     }
+
+    // Читаем диалог только когда реально отвечаем (не при «занята»).
+    await markPeerAsRead(client, sender, message);
 
     // 4. Генерируем ответ через OpenAI.
     // Медиа-протокол включаем ТОЛЬКО когда собеседник ЯВНО попросил фото/видео/
