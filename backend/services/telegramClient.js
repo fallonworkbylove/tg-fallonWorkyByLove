@@ -300,7 +300,15 @@ const messageBuffers = new Map();
   // Не отправляем несколько самостоятельных ответов подряд в одном диалоге.
   // Это также защищает от повторного запуска сканером сразу после live-события.
   const lastReplyAt = new Map();
-  const MIN_REPLY_GAP_MS = 25000;
+  const MIN_REPLY_GAP_MS = 45000;
+
+  // Последний telegram message.id, на который уже ушёл ответ в этом диалоге.
+  // Скан/повторный flush с тем же id не должен слать второй ответ.
+  const lastAnsweredMsgId = new Map();
+
+  // Пока диалог in-flight, новые тексты не дропаем — копятся и обрабатываются
+  // одним ответом после завершения текущего (иначе скан потом шлёт «дубль»).
+  const pendingAfterInFlight = new Map();
 
 // Сколько ждать следующего сообщения перед тем, как ответить (мс).
 // Человек часто пишет мысль несколькими сообщениями с паузами — даём ему
@@ -704,6 +712,12 @@ async function deactivateAccount(accountId) {
   }
   for (const key of lastReplyAt.keys()) {
     if (key.startsWith(prefix)) lastReplyAt.delete(key);
+  }
+  for (const key of lastAnsweredMsgId.keys()) {
+    if (key.startsWith(prefix)) lastAnsweredMsgId.delete(key);
+  }
+  for (const key of pendingAfterInFlight.keys()) {
+    if (key.startsWith(prefix)) pendingAfterInFlight.delete(key);
   }
   for (const key of voiceSendInFlight) {
     if (key.startsWith(prefix)) voiceSendInFlight.delete(key);
@@ -2256,8 +2270,6 @@ async function fireReengage(accountId, peerId) {
     if (!rawReply) return;
     if (dueMemory) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
-    await markPeerAsRead(client, sender, null);
-
     const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
     const { text: reply, mediaType: rawMediaType } =
       extractMediaRequest(replyWithoutLaugh);
@@ -2291,6 +2303,7 @@ async function fireReengage(accountId, peerId) {
     await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
 
     if (outText) {
+      await markPeerAsRead(client, sender, null);
       await client.sendMessage(sender, { message: outText });
       lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
       await saveMessage(accountId, peerId, senderName, 'assistant', outText);
@@ -2388,22 +2401,46 @@ async function processBufferedMessages(
   // а не запускаем вторую генерацию ответа на то же сообщение.
   if (isNeverContact(sender) || isNeverContact(senderName)) return;
   const inFlightKey = bufferKey(accountId, peerId);
+  const msgId = message?.id != null ? Number(message.id) : null;
+
   if (processingInFlight.has(inFlightKey)) {
+    // Не дропаем текст: после текущего ответа ответим одним разом на накопившееся.
+    const pending = pendingAfterInFlight.get(inFlightKey) || {
+      texts: [],
+      sender,
+      message,
+      senderName,
+    };
+    pending.texts.push(text);
+    pending.sender = sender;
+    pending.message = message;
+    pending.senderName = senderName;
+    pendingAfterInFlight.set(inFlightKey, pending);
     console.log(
-      `[${accountLabel(accountId)}] ${senderName} уже обрабатывается — пропускаю повторный вызов, чтобы не отправить дублирующий ответ.`,
+      `[${accountLabel(accountId)}] ${senderName} уже обрабатывается — коплю сообщение, отвечу одним разом после текущего.`,
     );
     return;
   }
-    processingInFlight.add(inFlightKey);
 
-    const lastReply = lastReplyAt.get(inFlightKey) || 0;
-    if (Date.now() - lastReply < MIN_REPLY_GAP_MS) {
-      console.log(
-        `[${accountLabel(accountId)}] Слишком скоро после предыдущего ответа — пропускаю повторный ответ для ${senderName}.`,
-      );
-      processingInFlight.delete(inFlightKey);
-      return;
-    }
+  if (msgId && lastAnsweredMsgId.get(inFlightKey) === msgId) {
+    console.log(
+      `[${accountLabel(accountId)}] ${senderName}: сообщение #${msgId} уже отвечено — дубль пропускаю.`,
+    );
+    return;
+  }
+
+  processingInFlight.add(inFlightKey);
+
+  const lastReply = lastReplyAt.get(inFlightKey) || 0;
+  if (Date.now() - lastReply < MIN_REPLY_GAP_MS) {
+    console.log(
+      `[${accountLabel(accountId)}] Слишком скоро после предыдущего ответа — пропускаю повторный ответ для ${senderName}.`,
+    );
+    processingInFlight.delete(inFlightKey);
+    // Если пришли новые тексты во время gap — всё равно не читаем и не отвечаем сейчас;
+    // скан подхватит непрочитанное позже, когда gap истечёт.
+    return;
+  }
 
   let workMentionClaimed = false;
   try {
@@ -2562,9 +2599,11 @@ async function processBufferedMessages(
       console.log(
         `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед голосовым для ${senderName}.`,
       );
-      await markPeerAsRead(client, sender, message);
       await waitBeforeReply(client, sender, delayMs);
+      await markPeerAsRead(client, sender, message);
       await sendVoiceReply(client, sender, voice.filePath);
+      if (msgId) lastAnsweredMsgId.set(inFlightKey, msgId);
+      lastReplyAt.set(inFlightKey, Date.now());
       await saveMessage(
         accountId,
         peerId,
@@ -2583,15 +2622,16 @@ async function processBufferedMessages(
     // Например, на «что ищ��шь здесь?» отвечаем заранее заданным текстом.
     const fixedReply = findTextReplyForText(text);
     if (fixedReply) {
-      await markPeerAsRead(client, sender, message);
       const textDelayMs = forcedDelayMs != null ? forcedDelayMs : delayBeforeSendMs(settings, fixedReply);
       console.log(
         `[${accountLabel(accountId)}] Пауза ${Math.round(textDelayMs / 1000)}с перед фиксированным ответом для ${senderName}.`,
       );
       await waitBeforeReply(client, sender, textDelayMs, computeTypingMs(fixedReply));
-  await client.sendMessage(sender, { message: fixedReply });
-  lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
-  await saveMessage(accountId, peerId, senderName, 'assistant', fixedReply);
+      await markPeerAsRead(client, sender, message);
+      await client.sendMessage(sender, { message: fixedReply });
+      lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
+      if (msgId) lastAnsweredMsgId.set(inFlightKey, msgId);
+      await saveMessage(accountId, peerId, senderName, 'assistant', fixedReply);
       console.log(
         `[${accountLabel(accountId)}] Фиксированный ответ для ${senderName}: "${fixedReply}"`,
       );
@@ -2616,10 +2656,9 @@ async function processBufferedMessages(
       return;
     }
 
-    // Читаем диалог только когда реально отвечаем (не при «занята»).
-    await markPeerAsRead(client, sender, message);
+    // Читаем диалог только непосредственно перед отправкой ответа
+    // (см. ниже) — если ИИ не ответил / sleep / ошибка, галочек не ставим.
 
-    // 4. Генерируем ответ через OpenAI.
     // Медиа-протокол включаем ТОЛЬКО когда собеседник ЯВНО попросил фото/видео/
     // кружок — ИИ больше не решает сама «по желанию» прислать медиа. Так модел��
     // никогда не вставит токен <<PHOTO>>/<<VIDEO>>/<<CIRCLE>> без прямой просьбы.
@@ -2735,10 +2774,28 @@ async function processBufferedMessages(
     );
     await waitBeforeReply(client, sender, textDelayMs, computeTypingMs(outText));
 
+    // Пока ждали, другой путь мог уже ответить — не шлём дубль.
+    const answeredId = lastAnsweredMsgId.get(inFlightKey);
+    if (msgId && answeredId != null && answeredId >= msgId) {
+      console.log(
+        `[${accountLabel(accountId)}] ${senderName}: пока ждали, сообщение уже отвечено — дубль не отправляю.`,
+      );
+      return;
+    }
+    const gapNow = lastReplyAt.get(inFlightKey) || 0;
+    if (Date.now() - gapNow < MIN_REPLY_GAP_MS && gapNow > 0) {
+      console.log(
+        `[${accountLabel(accountId)}] ${senderName}: пока ждали, уже ушёл ответ — дубль не отправляю.`,
+      );
+      return;
+    }
+
     if (outText) {
-  await client.sendMessage(sender, { message: outText });
-  lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
-  await saveMessage(accountId, peerId, senderName, 'assistant', outText);
+      await markPeerAsRead(client, sender, message);
+      await client.sendMessage(sender, { message: outText });
+      lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
+      if (msgId) lastAnsweredMsgId.set(inFlightKey, msgId);
+      await saveMessage(accountId, peerId, senderName, 'assistant', outText);
       await learningDb.recordBotReply(accountId, peerId, text, outText, learningStage);
       console.log(`[${accountLabel(accountId)}] Ответ для ${senderName}: "${outText}"`);
     }
@@ -2858,6 +2915,41 @@ async function processBufferedMessages(
     );
   } finally {
     processingInFlight.delete(inFlightKey);
+    const pending = pendingAfterInFlight.get(inFlightKey);
+    if (pending?.texts?.length) {
+      pendingAfterInFlight.delete(inFlightKey);
+      const combined = pending.texts.join('\n').trim();
+      const pendingMsgId = pending.message?.id != null ? Number(pending.message.id) : null;
+      const deferred = deferredDialogs.get(inFlightKey);
+      if (deferred && combined) {
+        // Уже «занята» — дописываем новые сообщения в отложенный ответ, без второго хода.
+        deferred.text = [deferred.text, combined].filter(Boolean).join('\n');
+        deferred.sender = pending.sender || deferred.sender;
+        deferred.senderName = pending.senderName || deferred.senderName;
+        console.log(
+          `[${accountLabel(accountId)}] ${pending.senderName}: дописал в паузу «занята», отвечу одним разом.`,
+        );
+      } else if (
+        combined &&
+        !(pendingMsgId && lastAnsweredMsgId.get(inFlightKey) === pendingMsgId)
+      ) {
+        setTimeout(() => {
+          processBufferedMessages(
+            accountId,
+            pending.sender,
+            pending.message,
+            peerId,
+            pending.senderName,
+            combined,
+          ).catch((e) =>
+            console.error(
+              `[${accountLabel(accountId)}] Ошибка отложенной догонки:`,
+              e.message,
+            ),
+          );
+        }, 800);
+      }
+    }
   }
 }
 
