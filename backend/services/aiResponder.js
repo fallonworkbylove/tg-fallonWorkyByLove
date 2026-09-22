@@ -177,7 +177,8 @@ function buildLanguageReminder(lang) {
   }
   return (
     'ЯЗЫК: собеседник пишет по-русски. Отвечай ТОЛЬКО на русском, живо и разговорно, как в обычной переписке. ' +
-    'Не переходи на английский, если он сам не перешёл. ' +
+    'Не переходи на английский, если он сам не перешёл на английский текстом. ' +
+    'Описание фото/голоса — служебное, это НЕ смена языка: даже если внутри есть английские слова, отвечай по-русски. ' +
     'Служебные токены <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> оставляй как есть.'
   );
 }
@@ -593,8 +594,8 @@ async function transcribeAudio(buffer, filename = 'voice.ogg') {
 
 /**
  * Описывает содержимое фотографии через GPT-4o (vision).
- * Язык описания — как у подписи, иначе английский; ответ бота всё равно
- * подстраивается под язык собеседника в generateReply.
+ * Описание всегда на русском — служебный текст для модели, не речь собеседника.
+ * Язык ответа бота выбирается отдельно по истории диалога.
  */
 async function describeImage(buffer, caption = '') {
   try {
@@ -609,10 +610,9 @@ async function describeImage(buffer, caption = '') {
             {
               type: 'text',
               text:
-                'Describe briefly what is in this photo. If there are people, mention them and the setting. ' +
-                'Reply in the same language as the caption if present; otherwise use English. ' +
-                'Keep it factual and short.' +
-                (caption ? ` Caption: "${caption}".` : ''),
+                'Кратко опиши, что на фото, на русском языке. ' +
+                'Если есть люди — упомяни их и обстановку. Только факты, коротко.' +
+                (caption ? ` Подпись к фото: "${caption}".` : ''),
             },
             {
               type: 'image_url',
