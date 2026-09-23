@@ -272,9 +272,49 @@ function collectAssistantGeoFacts(history, limit = 4) {
       .replace(/\s+/g, ' ')
       .trim();
     if (!text || !geoRe.test(text)) continue;
+    // Выкидываем уже сказанный бред «мама в A, еду в B к ней»
+    if (
+      /мама/i.test(text) &&
+      /переезж/i.test(text) &&
+      /рядом|к ней|с ней|быть рядом/i.test(text)
+    ) {
+      const cities = [...text.matchAll(/\b(?:в|из)\s+([А-ЯЁ][а-яё]{2,}(?:ск|цк|град|бург|ов|ёв|ев)?)\b/gi)].map(
+        (x) => x[1].toLowerCase(),
+      );
+      const unique = [...new Set(cities)];
+      if (unique.length >= 2) continue;
+    }
     facts.unshift(text.slice(0, 220));
   }
   return facts;
+}
+
+/**
+ * Из промпта персонажа: «сейчас в A, переезжаешь в B (к маме)» —
+ * жёстко фиксируем, что мама в B, иначе модель пишет «мама в A, еду в B к ней».
+ */
+function buildCharacterGeoReminder(systemPrompt) {
+  const p = String(systemPrompt || '');
+  const m = p.match(
+    /жив[её]шь\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+).{0,120}?переезжаешь\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+)/i,
+  );
+  if (!m) return null;
+  const fromCity = m[1];
+  const toCity = m[2];
+  if (!fromCity || !toCity || fromCity.toLowerCase() === toCity.toLowerCase()) return null;
+
+  const momNearMove = /мама|мам[ауе]/i.test(p) && /поддержк|рядом|боле|плох/i.test(p);
+  let extra = '';
+  if (momNearMove) {
+    extra =
+      `Мама живёт в ${toCity} (туда ты и едешь, чтобы быть рядом с ней). ` +
+      `ЗАПРЕЩЕНО писать «мама в ${fromCity}, а я переезжаю в ${toCity}, чтобы быть рядом» — это противоречие. ` +
+      `Правильно: сейчас ты в ${fromCity}, мама уже в ${toCity} / там, куда едешь. `;
+  }
+  return (
+    `ГЕОГРАФИЯ ПЕРСОНАЖА (строго): сейчас ты в ${fromCity}, переезжаешь в ${toCity}. ${extra}` +
+    `Не путай эти два города местами.`
+  );
 }
 
 /**
@@ -287,7 +327,7 @@ function enrichGeoFollowUp(history, userMessage) {
   if (/\[геоконтекст/i.test(text)) return text;
 
   const clarifying =
-    /(переезж|куда\s+(ты\s+)?(ед|переез)|в\s+каком\s+городе|а\s+щас|а\s+сейчас|так\s+ты\s+в\s+|мама.*(город|жив)|зачем\s+тебе\s+в\s+|откуда\s+ты|где\s+ты\s+(сейчас|щас))/i.test(
+    /(переезж|куда\s+(ты\s+)?(ед|переез)|в\s+каком\s+городе|а\s+щас|а\s+сейчас|так\s+ты\s+в\s+|мама|мам[ауе]|зд[еэ]сь|зачем\s+тебе\s+в\s+|откуда\s+ты|где\s+ты\s+(сейчас|щас)|болеет)/i.test(
       text,
     );
   if (!clarifying) return text;
@@ -305,6 +345,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   contextualUserMessage = enrichGeoFollowUp(history, contextualUserMessage);
   const replyLang = detectReplyLanguage(contextualUserMessage, history);
   const languageReminder = buildLanguageReminder(replyLang);
+  const characterGeoReminder = buildCharacterGeoReminder(finalPrompt);
 
   // Reminder намеренно МИНИМАЛЬНЫЙ: он НЕ навязывает свои правила (длину,
   // вопросы и т.п.), чтобы не перебивать промпт из панели — все стилевые
@@ -334,8 +375,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Если во входящем есть пометка [уточнение к твоей фразе «...»], отвечай именно про эту фразу. ' +
     'ГЕОГРАФИЯ И ФАКТЫ О СЕБЕ: города, «где я сейчас», «куда переезжаю», где мама/семья — раз сказала в этом диалоге, держи строго. ' +
     'Никогда не меняй местами «сейчас живу/нахожусь» и «переезжаю/еду». ' +
-    'Если сказала «мама в X, поэтому переезжаю» — значит едешь В X, чтобы быть рядом, а сейчас ты НЕ в X. ' +
-    'Если собеседник уточняет («так ты в X переезжаешь?», «а щас в каком городе?») — перечитай СВОИ прошлые ответы про города и ответь в том же смысле, без перестановки городов. ' +
+    'Если переезжаешь к маме — мама живёт В городе переезда. ' +
+    'НЕЛЬЗЯ: «мама в Липецке, а я еду в Прагу/Донецк/… чтобы быть рядом с ней» — это противоречие. ' +
+    'Правильно: сейчас ты в одном городе, мама уже там, куда едешь. ' +
+    'Если собеседник уточняет («так ты в X переезжаешь?», «а щас в каком городе?», «мама как здесь?») — перечитай СВОИ прошлые ответы про города и ответь в том же смысле, без перестановки городов. ' +
     'Город из промпта персонажа бери только если в ЭТОМ диалоге ты ещё не называла другой город/переезд. ' +
     'Если во входящем есть [геоконтекст ...], отвечай строго согласованно с перечисленными там твоими фразами. ' +
     'Продолжай последнюю тему естественно; новую тему начинай только если текущая завершена. ' +
@@ -442,6 +485,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     { role: 'system', content: humanStyleReminder },
     { role: 'system', content: laughReminder },
   ];
+
+  if (characterGeoReminder) {
+    messages.push({ role: 'system', content: characterGeoReminder });
+  }
 
   // Обучение на прошлом опыте (без fine-tuning): если telegramClient передал
   // готовый текстовый блок с лучшими фразами из bot_patterns — подмешиваем
