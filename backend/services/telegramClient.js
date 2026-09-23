@@ -1083,10 +1083,14 @@ function voiceTag(fileName) {
   }
 
   async function wasAnyVoiceSent(accountId, peerId) {
+    // Голосовое «как проходит день» / тишина не считается — иначе после него
+    // навсегда блокируются все триггерные войсы.
     const [rows] = await db.execute(
       `SELECT id FROM conversation_messages
        WHERE account_id = ? AND peer_id = ? AND role = 'assistant'
        AND content LIKE '[голосовое:%'
+       AND content NOT LIKE '%kak_prohodit_den%'
+       AND content NOT LIKE '%как проходит%'
        LIMIT 1`,
       [accountId, peerId],
     );
@@ -2922,6 +2926,7 @@ async function processBufferedMessages(
   }
 
   let workMentionClaimed = false;
+  let voiceDialogKey = null;
   try {
     // Проверяем настройки аккаунта: автоответчик должен быть включён.
     const settings = await getAccountSettings(accountId);
@@ -3055,7 +3060,7 @@ async function processBufferedMessages(
       voice = null;
     }
 
-    const voiceDialogKey = voice ? `${accountId}:${String(peerId)}` : null;
+    voiceDialogKey = voice ? `${accountId}:${String(peerId)}` : null;
     if (
       voice &&
       (voiceSendInFlight.has(voiceDialogKey) || (await wasAnyVoiceSent(accountId, peerId)))
@@ -3066,7 +3071,7 @@ async function processBufferedMessages(
       // Раньше на voiceOnly-правиле здесь стоял return — и бот молчал совсем:
       // голосовое пропускал, а текст не генерировал (человек оставался без
       // ответа). Теперь в любом случае продолжаем обычный AI-ответ текстом,
-      // прос��о уже без голосового.
+      // просто уже без голосового.
       voice = null;
     } else if (voiceDialogKey) {
       // Резервируем диалог до фактической отправки: задержка ответа может быть
@@ -3074,8 +3079,16 @@ async function processBufferedMessages(
       voiceSendInFlight.add(voiceDialogKey);
     }
 
-    // Случа��ная задержка перед ответом (диапазон задаётся в настройках).
-    // Если бот «отвлёкся» во время п��узы — исп��льзуем короткую задержку ~2 мин.
+    // Снимаем резерв, если голосовое в итоге не уйдёт (sleep / fixed / ошибка / только текст).
+    const releaseVoiceSlot = () => {
+      if (voiceDialogKey) {
+        voiceSendInFlight.delete(voiceDialogKey);
+        voiceDialogKey = null;
+      }
+    };
+
+    // Случайная задержка перед ответом (диапазон задаётся в настройках).
+    // Если бот «отвлёкся» во время паузы — используем короткую задержку ~2 мин.
     const delayMs =
       forcedDelayMs != null ? forcedDelayMs : pickReplyDelayMs(settings);
 
@@ -3095,17 +3108,18 @@ async function processBufferedMessages(
         'assistant',
         voiceTag(voice.fileName),
       );
-      voiceSendInFlight.delete(voiceDialogKey);
+      releaseVoiceSlot();
       console.log(
         `[${accountLabel(accountId)}] Отправлено только голосовое (без текста) для ${senderName}.`,
       );
       return;
     }
 
-    // 3.5. Фикси��ованные текст��вые ответы по триггеру (��ез обращения к AI).
-    // Например, на «что ищ��шь здесь?» отвечаем заранее заданным текстом.
+    // 3.5. Фиксированные текстовые ответы по триггеру (без обращения к AI).
+    // Например, на «что ищешь здесь?» отвечаем заранее заданным текстом.
     const fixedReply = findTextReplyForText(text);
     if (fixedReply) {
+      releaseVoiceSlot();
       const textDelayMs = forcedDelayMs != null ? forcedDelayMs : delayBeforeSendMs(settings, fixedReply);
       console.log(
         `[${accountLabel(accountId)}] Пауза ${Math.round(textDelayMs / 1000)}с перед фиксированным ответом для ${senderName}.`,
@@ -3392,45 +3406,48 @@ async function processBufferedMessages(
         const sendKey = voiceSendKey(accountId, peerId, NFT_VOICE_FILE);
         voiceSendInFlight.add(sendKey);
         try {
-          await client.invoke(
-            new Api.messages.SetTyping({
-              peer: sender,
-              action: new Api.SendMessageRecordAudioAction(),
-            }),
-          );
-        } catch (_) {
-          // Индикатор не критичен.
-        }
-        // Пауза чуть больше обычной: голосовое длиннее, «записыв��ет» дольш��.
-        await sleep(4000 + Math.random() * 3000);
+          try {
+            await client.invoke(
+              new Api.messages.SetTyping({
+                peer: sender,
+                action: new Api.SendMessageRecordAudioAction(),
+              }),
+            );
+          } catch (_) {
+            // Индикатор не критичен.
+          }
+          // Пауза чуть больше обычной: голосовое длиннее, «записывает» дольше.
+          await sleep(4000 + Math.random() * 3000);
 
-        await sendVoiceReply(client, sender, nftPath);
-        await saveMessage(
-          accountId,
-          peerId,
-          senderName,
-          'assistant',
-          voiceTag(NFT_VOICE_FILE),
-        );
-        const accountProfile = await client.getMe();
-        const accountName = [accountProfile.firstName, accountProfile.lastName]
-          .filter(Boolean)
-          .join(' ') || (accountProfile.username ? `@${accountProfile.username}` : '');
-        await helpRequestNotifier.recordVoiceSent(
-          accountId,
-          peerId,
-          senderName,
-          NFT_VOICE_FILE,
-          settings.phone,
-          accountName,
-        );
-        // Дальше с этим собеседником ведёт оператор вручную — ИИ замолкает
-        // именно в этом диалоге, остальные диалоги аккаунта не затрагиваются.
-        await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, 'nft_voice_sent');
-        voiceSendInFlight.delete(sendKey);
-        console.log(
-          `[${accountLabel(accountId)}] Отп��авлено гол��совое про NFT (3-й день) для ${senderName}.`,
-        );
+          await sendVoiceReply(client, sender, nftPath);
+          await saveMessage(
+            accountId,
+            peerId,
+            senderName,
+            'assistant',
+            voiceTag(NFT_VOICE_FILE),
+          );
+          const accountProfile = await client.getMe();
+          const accountName = [accountProfile.firstName, accountProfile.lastName]
+            .filter(Boolean)
+            .join(' ') || (accountProfile.username ? `@${accountProfile.username}` : '');
+          await helpRequestNotifier.recordVoiceSent(
+            accountId,
+            peerId,
+            senderName,
+            NFT_VOICE_FILE,
+            settings.phone,
+            accountName,
+          );
+          // Дальше с этим собеседником ведёт оператор вручную — ИИ замолкает
+          // именно в этом диалоге, остальные диалоги аккаунта не затрагиваются.
+          await helpRequestNotifier.disableAutoreplyForPeer(accountId, peerId, 'nft_voice_sent');
+          console.log(
+            `[${accountLabel(accountId)}] Отправлено голосовое про NFT (3-й день) для ${senderName}.`,
+          );
+        } finally {
+          voiceSendInFlight.delete(sendKey);
+        }
       }
     }
   } catch (err) {
@@ -3440,6 +3457,7 @@ async function processBufferedMessages(
       err.message,
     );
   } finally {
+    if (voiceDialogKey) voiceSendInFlight.delete(voiceDialogKey);
     processingInFlight.delete(inFlightKey);
     const pending = pendingAfterInFlight.get(inFlightKey);
     if (pending?.texts?.length) {
@@ -4460,4 +4478,5 @@ module.exports = {
   saveMessage,
   archivePeer,
   NFT_VOICE_AFTER_HOURS,
+  getDialogAgeHours,
   };

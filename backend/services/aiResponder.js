@@ -922,8 +922,11 @@ function stripFalseStayHereRefusal(reply, userMessage, history, options = {}) {
 
   if (text.length >= 8) return text;
 
-  // Ответ почти целиком был ложным отказом — не отправляем пустышку/повтор скрипта
-  if (before !== text || text.length < 8) {
+  // Заглушку ставим ТОЛЬКО если реально вырезали отказ «давай тут общаться».
+  // Иначе короткие живые ответы («ок)», «ага)», «поняла)») затираются зря.
+  if (before === text) return before;
+
+  if (text.length < 8) {
     if (/(программ|figma|photoshop|дизайн|работ|примеры|портфолио)/i.test(textIn)) {
       return 'в основном в figma и photoshop) а тебе что ближе по работе?';
     }

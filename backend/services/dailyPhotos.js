@@ -162,13 +162,13 @@ async function shouldSkipDailyPhoto(accountId, peerId) {
   );
   if (voice) return 'nft_voice_sent';
 
-  const [[age]] = await db.execute(
-    `SELECT TIMESTAMPDIFF(HOUR, MIN(created_at), NOW()) AS hours
-     FROM conversation_messages
-     WHERE account_id = ? AND peer_id = ?`,
-    [accountId, String(peerId)],
-  );
-  if (Number(age?.hours) >= tg().NFT_VOICE_AFTER_HOURS) return 'nft_day';
+  // Возраст ТЕКУЩЕЙ сессии (пауза ≥72ч сбрасывает счётчик), как у NFT-кампании.
+  // MIN(created_at) по всей истории ошибочно считал старые диалоги «3-м днём».
+  const ageHours = await tg().getDialogAgeHours(accountId, String(peerId));
+  if (ageHours == null) return 'no_active_dialog';
+  if (ageHours >= tg().NFT_VOICE_AFTER_HOURS) return 'nft_day';
+  // Первый день знакомства в текущей сессии — ещё рано для профит-скрина.
+  if (ageHours < 20) return 'too_early';
 
   return null;
 }
@@ -190,16 +190,12 @@ async function schedulePendingSends() {
 
   const lowerBound = now > windowStart ? now : windowStart;
 
-  // Только 2-й день (< 48ч). С 3-го дня — NFT, профит-скрин мешает кампании.
+  // Кандидаты: сегодня писали. День/сессия — в shouldSkipDailyPhoto
+  // (getDialogAgeHours: ~20–48ч текущей сессии, не MIN по всей истории).
   const [writers] = await db.execute(
-    `SELECT DISTINCT cm.account_id, cm.peer_id, cm.peer_username,
-       (SELECT MIN(cm2.created_at) FROM conversation_messages cm2
-        WHERE cm2.account_id = cm.account_id AND cm2.peer_id = cm.peer_id) AS started_at
+    `SELECT DISTINCT cm.account_id, cm.peer_id, cm.peer_username
      FROM conversation_messages cm
-     WHERE cm.role = 'user' AND DATE(cm.created_at) = CURDATE()
-     HAVING DATE(started_at) < CURDATE()
-       AND TIMESTAMPDIFF(HOUR, started_at, NOW()) < ?`,
-    [tg().NFT_VOICE_AFTER_HOURS],
+     WHERE cm.role = 'user' AND DATE(cm.created_at) = CURDATE()`,
   );
 
   for (const writer of writers) {
