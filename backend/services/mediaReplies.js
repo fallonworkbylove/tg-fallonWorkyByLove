@@ -35,7 +35,7 @@ const CAPTIONS_PATH = path.join(__dirname, '..', 'media', 'captions.json');
 const FALLBACK_CAPTIONS = {
   photo: ['это недавно)', 'вот я сегодня'],
   video: ['вот записала на днях'],
-  circle: ['вот занимаюсь делами)'],
+  circle: [''],
 };
 
 function loadCaptions() {
@@ -226,7 +226,9 @@ async function sendMediaItem(client, peer, item, caption) {
   }
 
   const opts = { file: item.msg.media };
-  if (caption) opts.caption = caption;
+  // У кружков (video note) подпись выглядит странно (текст рядом с кружком) —
+  // шлём только сам кружок, без caption.
+  if (caption && item.type !== 'circle') opts.caption = caption;
   if (item.type === 'circle') opts.videoNote = true;
   await client.sendFile(peer, opts);
 }

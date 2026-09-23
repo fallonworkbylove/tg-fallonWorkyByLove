@@ -1781,14 +1781,16 @@ async function trySendMedia(
     }
 
     try {
-      await sendMediaItem(client, sender, item, pickCaption(mediaType));
+      const caption = mediaType === 'circle' ? '' : pickCaption(mediaType);
+      await sendMediaItem(client, sender, item, caption);
     } catch (e) {
-      // Устаревшая ссылк�� на файл — сбрасываем кэш и пробуем ещё раз.
+      // Устаревшая ссылка на файл — сбрасываем кэш и пробуем ещё раз.
       if (String(e.message || '').includes('FILE_REFERENCE')) {
         clearMediaCache(accountId, link);
         record = await getMediaItems(client, accountId, link);
         item = pickUnsentMedia(record.items, mediaType, sentIds) || item;
-        await sendMediaItem(client, sender, item, pickCaption(mediaType));
+        const caption = mediaType === 'circle' ? '' : pickCaption(mediaType);
+        await sendMediaItem(client, sender, item, caption);
       } else {
         throw e;
       }
