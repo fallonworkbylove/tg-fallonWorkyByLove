@@ -300,19 +300,31 @@ function buildCharacterGeoReminder(systemPrompt) {
   );
   if (!m) return null;
   const fromCity = m[1];
-  const toCity = m[2];
-  if (!fromCity || !toCity || fromCity.toLowerCase() === toCity.toLowerCase()) return null;
+  const toCityRaw = m[2];
+  if (!fromCity || !toCityRaw || fromCity.toLowerCase() === toCityRaw.toLowerCase()) return null;
+
+  // Для «живёт в …» нужна форма места; для переезда оставляем как в промпте.
+  const locative = {
+    Прагу: 'Праге',
+    Прага: 'Праге',
+    Донецк: 'Донецке',
+    Таганрог: 'Таганроге',
+    Архангельск: 'Архангельске',
+    Курган: 'Кургане',
+    Тимашевск: 'Тимашевске',
+  };
+  const toLive = locative[toCityRaw] || toCityRaw;
 
   const momNearMove = /мама|мам[ауе]/i.test(p) && /поддержк|рядом|боле|плох/i.test(p);
   let extra = '';
   if (momNearMove) {
     extra =
-      `Мама живёт в ${toCity} (туда ты и едешь, чтобы быть рядом с ней). ` +
-      `ЗАПРЕЩЕНО писать «мама в ${fromCity}, а я переезжаю в ${toCity}, чтобы быть рядом» — это противоречие. ` +
-      `Правильно: сейчас ты в ${fromCity}, мама уже в ${toCity} / там, куда едешь. `;
+      `Мама живёт в ${toLive} (туда ты и едешь, чтобы быть рядом с ней). ` +
+      `ЗАПРЕЩЕНО писать «мама в ${fromCity}, а я переезжаю в ${toCityRaw}, чтобы быть рядом» — это противоречие. ` +
+      `Правильно: сейчас ты в ${fromCity}, мама уже в ${toLive}. `;
   }
   return (
-    `ГЕОГРАФИЯ ПЕРСОНАЖА (строго): сейчас ты в ${fromCity}, переезжаешь в ${toCity}. ${extra}` +
+    `ГЕОГРАФИЯ ПЕРСОНАЖА (строго): сейчас ты в ${fromCity}, переезжаешь в ${toCityRaw}. ${extra}` +
     `Не путай эти два города местами.`
   );
 }
