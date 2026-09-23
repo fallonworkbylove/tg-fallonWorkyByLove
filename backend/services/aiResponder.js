@@ -414,7 +414,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'спросить что-то — оставь только один из двух вопросов, а не два подряд. ' +
     'Часто лучше вообще без вопроса — просто живая реакция, как в реальной переписке ' +
     'человек не задаёт вопрос в каждом сообщении. ' +
-    'Если факт о собеседнике (город, возраст, имя и т.п.) уже есть в истории или в текущем сообщении — вопрос про этот факт ЗАПРЕЩЁН.';
+    'Если факт о собеседнике (город, возраст, имя, работа/профессия и т.п.) уже есть в истории или в текущем сообщении — вопрос про этот факт ЗАПРЕЩЁН. ' +
+    'Если он уже сказал кем работает («я барбер», «я водитель» и т.п.) — НИКОГДА не спрашивай «а ты чем занимаешься?» / «а ты кем работаешь?».';
 
   const contextGuard = buildContextGuard(history, contextualUserMessage);
 
@@ -588,73 +589,136 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   logUsage(usedModel, completion.usage, { fellBack }).catch(() => {});
 
   const rawText = completion.choices[0]?.message?.content?.trim() || '';
-  return applyAntiDetectStyle(rawText);
+  const cleaned = applyAntiDetectStyle(rawText);
+  return stripReaskedKnownFacts(cleaned, contextGuard);
 }
 
 /**
- * Достаёт уже сказанные факты (город и т.п.) из истории + текущего сообщения,
- * чтобы модель не переспрашивала («Новочеркасск» → нельзя «а ты откуда?»).
+ * Достаёт уже сказанные факты (город, работа и т.п.) из истории + текущего
+ * сообщения, чтобы модель не переспрашивала
+ * («Новочеркасск» → нельзя «а ты откуда?»; «я барбер» → нельзя «чем занимаешься?»).
  */
 function buildContextGuard(history, userMessage) {
   const recent = [...(Array.isArray(history) ? history.slice(-16) : [])];
   if (userMessage) recent.push({ role: 'user', content: String(userMessage) });
 
   const places = [];
+  const jobs = [];
   const BOT_ASKED_PLACE_RE =
     /(где ты|а ты где|откуда|из какого|в каком городе|а где жив|where (are )?you|where do you live)/i;
+  const BOT_ASKED_JOB_RE =
+    /(чем (ты )?занимаешься|чем занимаешьс|кем (ты )?работа|а ты чем|what do you do|what'?s your (job|work)|where do you work)/i;
   const PLACE_FROM_PHRASE_RE =
     /(?:я из|живу в|из города|переехал[аи]? в|я в)\s+([А-ЯA-ZЁ][\wА-Яа-яёЁ\-]+(?:\s+[А-ЯA-ZЁ][\wА-Яа-яёЁ\-]+)?)/i;
+  // Явные «я барбер)», «я дизайнер», «работаю барбером»
+  const JOB_EXPLICIT_RE =
+    /(?:^|[\n])\s*(?:я\s+)([а-яёa-z]{3,40})\s*[).!]*/gi;
+  const JOB_WORK_AS_RE =
+    /работаю\s+(?:как\s+)?([а-яёa-z]{3,40})/gi;
+
+  const stripMeta = (t) =>
+    String(t || '')
+      .replace(/\n\[Ответ на сообщение[^\]]*\]/gi, '')
+      .replace(/\n\[ответ на[^\]]*\]/gi, '')
+      .replace(/\n\[уточнение[^\]]*\]/gi, '')
+      .replace(/\n\[геоконтекст[^\]]*\]/gi, '')
+      .trim();
+
+  const looksLikeJobWord = (word) => {
+    const w = String(word || '').trim().toLowerCase();
+    if (w.length < 3 || w.length > 40) return false;
+    if (/^(да|нет|ок|лан|ну|привет|пока|понял|поняла|хорошо|норм|хз)$/i.test(w)) return false;
+    if (/^(из|в|на|по|у|к|с|от|до|для|про)$/i.test(w)) return false;
+    return true;
+  };
 
   for (let i = 0; i < recent.length; i++) {
     const msg = recent[i];
     if (!msg || msg.role !== 'user') continue;
-    const text = String(msg.content || '').trim();
+    const text = stripMeta(msg.content);
     if (!text) continue;
 
     const fromMatch = text.match(PLACE_FROM_PHRASE_RE);
     if (fromMatch) places.push(fromMatch[1].trim());
 
+    let m;
+    const explicit = new RegExp(JOB_EXPLICIT_RE.source, 'gi');
+    while ((m = explicit.exec(text)) !== null) {
+      const job = m[1].trim();
+      // «я же написал» / «я тоже» — не профессия
+      if (/^(же|тоже|тут|здесь|сейчас|просто|уже|ещё|еще|не|только)$/i.test(job)) continue;
+      if (looksLikeJobWord(job)) jobs.push(job);
+    }
+    const workAs = new RegExp(JOB_WORK_AS_RE.source, 'gi');
+    while ((m = workAs.exec(text)) !== null) {
+      if (looksLikeJobWord(m[1])) jobs.push(m[1].trim());
+    }
+
     const burstLines = text
       .split('\n')
-      .map((line) => line.replace(/\n\[Ответ на сообщение[^\]]*\]/gi, '').trim())
+      .map((line) => stripMeta(line))
       .filter(Boolean);
 
-    // Пачка «Новочеркасск\nМожет знаешь...\nА ты откуда сам?» — первая
-    // короткая строка без «?» почти наверняка ответ про город.
+    // Пачка «Новочеркасск\nМожет знаешь где это?» — первая короткая строка
+    // без «?» = ответ про город. Не путать с «Я барбер)\nДизайнер чего?».
     if (burstLines.length > 1) {
       const first = burstLines[0].replace(/[).!…]+$/g, '').trim();
-      const restAsk = burstLines
+      const restPlaceAsk = burstLines
         .slice(1)
-        .some((line) => /[?]/.test(line) || /(откуда|знаешь|где|where|from)/i.test(line));
+        .some((line) => /(откуда|знаешь где|где это|where|from|город)/i.test(line));
       if (
-        restAsk &&
+        restPlaceAsk &&
         first.length >= 2 &&
         first.length <= 40 &&
         !/[?]/.test(first) &&
+        !/^я\s+/i.test(first) &&
         !/(привет|хай|hello|hi)\b/i.test(first)
       ) {
         places.push(first);
       }
     }
 
+    // Пачка «Я барбер)\nДизайнер чего?» — первая строка = работа.
+    if (burstLines.length > 1) {
+      const first = burstLines[0].replace(/[).!…]+$/g, '').trim();
+      const jobMatch = first.match(/^(?:я\s+)?([а-яёa-z]{3,40})$/i);
+      if (jobMatch && looksLikeJobWord(jobMatch[1])) {
+        jobs.push(jobMatch[1]);
+      }
+    }
+
     const prev = i > 0 ? recent[i - 1] : null;
-    if (prev && prev.role === 'assistant' && BOT_ASKED_PLACE_RE.test(String(prev.content || ''))) {
-      const answer = burstLines[0] || text.split('\n')[0];
-      const place = String(answer || '')
-        .replace(/[).!…?]+$/g, '')
-        .trim();
-      if (
-        place.length >= 2 &&
-        place.length <= 40 &&
-        !/[?]/.test(place) &&
-        !/(не знаю|хз|фиг|хрен)\b/i.test(place)
-      ) {
-        places.push(place);
+    if (prev && prev.role === 'assistant') {
+      const prevText = String(prev.content || '');
+      if (BOT_ASKED_PLACE_RE.test(prevText)) {
+        const answer = burstLines[0] || text.split('\n')[0];
+        const place = String(answer || '')
+          .replace(/[).!…?]+$/g, '')
+          .trim();
+        if (
+          place.length >= 2 &&
+          place.length <= 40 &&
+          !/[?]/.test(place) &&
+          !/(не знаю|хз|фиг|хрен)\b/i.test(place)
+        ) {
+          places.push(place);
+        }
+      }
+      if (BOT_ASKED_JOB_RE.test(prevText)) {
+        for (const line of burstLines) {
+          const cleaned = line.replace(/[).!…?]+$/g, '').trim();
+          const jobMatch = cleaned.match(/^(?:я\s+)?(?:работаю\s+(?:как\s+)?)?([а-яёa-z][а-яёa-z\s-]{2,40})$/i);
+          if (jobMatch && looksLikeJobWord(jobMatch[1].trim()) && !/[?]/.test(cleaned)) {
+            jobs.push(jobMatch[1].trim());
+            break;
+          }
+        }
       }
     }
   }
 
   const uniquePlaces = [...new Set(places.map((p) => p.trim()).filter(Boolean))];
+  const uniqueJobs = [...new Set(jobs.map((p) => p.trim().toLowerCase()).filter(Boolean))];
   const parts = [];
 
   if (uniquePlaces.length) {
@@ -662,6 +726,14 @@ function buildContextGuard(history, userMessage) {
       `УЖЕ ИЗВЕСТНО: собеседник назвал место/город — ${uniquePlaces.join(', ')}. ` +
         'НЕ спрашивай «а ты откуда?», «где ты?», «из какого города?» — он уже сказал. ' +
         'Можно коротко отреагировать на город, но не переспрашивать.',
+    );
+  }
+
+  if (uniqueJobs.length) {
+    parts.push(
+      `УЖЕ ИЗВЕСТНО: собеседник назвал работу/профессию — ${uniqueJobs.join(', ')}. ` +
+        'НЕ спрашивай «а ты чем занимаешься?», «кем работаешь?», «а ты чем?» — он уже сказал. ' +
+        'Можно коротко отреагировать на его работу (например «о, барбер, круто)»), но не переспрашивать.',
     );
   }
 
@@ -673,6 +745,31 @@ function buildContextGuard(history, userMessage) {
   }
 
   return parts.length ? parts.join(' ') : null;
+}
+
+/**
+ * Убирает из ответа модели повторный вопрос про уже известную работу/город.
+ */
+function stripReaskedKnownFacts(reply, contextGuard) {
+  if (!reply || !contextGuard) return reply;
+  let text = String(reply);
+  if (/работу\/профессию|назвал работу/i.test(contextGuard)) {
+    text = text
+      .replace(/[.?!]?\s*а\s+ты\s+чем\s+занимаешься\s*\??/gi, '')
+      .replace(/[.?!]?\s*а\s+ты\s+чем\s*\??/gi, '')
+      .replace(/[.?!]?\s*чем\s+ты\s+занимаешься\s*\??/gi, '')
+      .replace(/[.?!]?\s*кем\s+(ты\s+)?работаешь\s*\??/gi, '')
+      .replace(/[.?!]?\s*а\s+ты\s+кем\s*\??/gi, '')
+      .replace(/[.?!]?\s*what\s+do\s+you\s+do\s*\??/gi, '');
+  }
+  if (/место\/город|назвал место/i.test(contextGuard)) {
+    text = text
+      .replace(/[.?!]?\s*а\s+ты\s+откуда\s*\??/gi, '')
+      .replace(/[.?!]?\s*а\s+ты\s+где\s*\??/gi, '')
+      .replace(/[.?!]?\s*где\s+ты\s*(жив[её]шь)?\s*\??/gi, '')
+      .replace(/[.?!]?\s*из\s+какого\s+города\s*\??/gi, '');
+  }
+  return text.replace(/[ \t]{2,}/g, ' ').replace(/\s+([).!])/g, '$1').trim();
 }
 
 /**
