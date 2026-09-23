@@ -2415,6 +2415,9 @@ async function fireReengage(accountId, peerId) {
     );
     const objectionHint = objectionHandler.detectHint(text, replyHistory);
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, text);
+    // На прямой вопрос memory follow-up часто уводит в «философию» вместо ответа.
+    const useMemoryHint =
+      dueMemory?.hint && !objectionHandler.isDirectQuestion(text) ? dueMemory.hint : null;
 
     // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на
     // предыдущие ответы бота (окно из нескольких сообщений — см.
@@ -2441,12 +2444,12 @@ async function fireReengage(accountId, peerId) {
       ragSnippet,
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
-      memoryHint: dueMemory?.hint,
+      memoryHint: useMemoryHint,
       objectionHint,
       complimentHint,
     });
     if (!rawReply) return;
-    if (dueMemory) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
+    if (dueMemory && useMemoryHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
     const { text: replyWithoutReact, reaction } = extractReaction(replyWithoutLaugh);
@@ -2909,6 +2912,8 @@ async function processBufferedMessages(
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const objectionHint = objectionHandler.detectHint(text, history);
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, contextualText);
+    const useMemoryHint =
+      dueMemory?.hint && !objectionHandler.isDirectQuestion(text) ? dueMemory.hint : null;
 
     // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на
     // предыдущие ответы бота (окно из нескольких сообщений — см.
@@ -2935,12 +2940,12 @@ async function processBufferedMessages(
       ragSnippet,
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
-      memoryHint: dueMemory?.hint,
+      memoryHint: useMemoryHint,
       objectionHint,
       complimentHint,
     });
     if (!rawReply) return;
-    if (dueMemory) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
+    if (dueMemory && useMemoryHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     // Отделяем текст от запрошенного типа медиа (токен вырезаем из текста).
     const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);

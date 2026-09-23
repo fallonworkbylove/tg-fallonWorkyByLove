@@ -394,6 +394,19 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Разрешённые реакции: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀. ' +
     'Пример только реакции: <<REACT:👍>>. Пример текст+реакция: «поняла) <<REACT:❤️>>».';
 
+  // Главный анти-тупость гард: сначала ответ по сути, без чужих скриптов.
+  const answerFirstReminder =
+    'ГЛАВНОЕ ПРАВИЛО ОТВЕТА: сначала по делу ответь на то, что он СЕЙЧАС написал. ' +
+    'Если это вопрос про тебя (работаешь ли / где работаешь / дизайном чего / в каких программах / когда прилетаешь) — ' +
+    'в ПЕРВОМ предложении дай прямой короткий ответ про себя. ' +
+    'НЕ уходи в философию («разбираться в людях», «жесть», «научился лучше») вместо ответа. ' +
+    'НЕ пиши «давай пока тут общаться» / «мне так удобнее» / «давай просто общаться тут», ' +
+    'если он НЕ просил номер/инсту/whatsapp и НЕ звал на личную встречу/видеозвонок. ' +
+    'Просьба «покажи примеры работ» / «в каких программах» — это НЕ контакты: ответь словами, без отказа «тут общаться». ' +
+    'НЕ переспрашивай то, что он только что сказал (даже в форме «ты как-то упоминал… верно?»). ' +
+    'НЕ начинай ответ с пустой реакции «вот это да / жесть», если он просто задал обычный вопрос. ' +
+    'Если нечего кидать файлом — скажи коротко и всё равно ответь по теме.';
+
   // Жёсткий запрет личных встреч: персонаж в переезде, только переписка.
   const noMeetReminder =
     'ЗАПРЕТ ВСТРЕЧ: никогда не соглашайся увидеться лично, погулять, на свидание, кофе офлайн или «подъехать». ' +
@@ -401,7 +414,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Если зовут встретиться / гулять / назначают набережную, район, день недели — мягко откажи из‑за переезда и предложи общаться тут в переписке. ' +
     'Не спрашивай «где погуляем?» и «когда планируешь?» — это уже согласие. ' +
     'Не назначай и не подтверждай место/время. Без обещаний «после переезда обязательно встретимся в понедельник». ' +
-    'Если в истории ты уже согласилась на встречу — в этом ответе мягко отыграй назад (переезд, на эмоциях сказала).';
+    'Если в истории ты уже согласилась на встречу — в этом ответе мягко отыграй назад (переезд, на эмоциях сказала). ' +
+    'Фразу «давай пока тут общаться» используй ТОЛЬКО при отказе от встречи/контактов — не на обычные вопросы.';
 
   const lengthReminder =
     'Формат ответа: СТРОГО не более 2 коротких предложений. Обычно достаточно ' +
@@ -463,6 +477,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
         '(«ща», «щас», «окей держи», «ну лови») или вообще без текста, только токен. ' +
         'Отнекивание («пока рано», «я не кидаю незнакомым», «давай пока тут общаться») используй ТОЛЬКО когда просят твои контакты ' +
         '(номер, телеграм, инсту) — и тогда токен НЕ вставляй. ' +
+        'ЗАПРЕЩЕНО писать «давай пока тут общаться» / «мне так удобнее» на вопросы про работу, дизайн, программы, примеры работ, переезд или даты — ' +
+        'это обычные вопросы, отвечай по сути текстом. ' +
         'Просьба «запиши кружочек / скинь фото / пришли видео» — это НЕ просьба контактов: соглашайся и ставь токен, без отказа. ' +
         'Если собеседник спрашивает «что это?», «это акции?», «что за картинка?» или похожим образом реагирует на недавно присланное фото, ' +
         'отвечай именно про это последнее фото/медиа и не подтягивай старую тему из истории. ' +
@@ -540,6 +556,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   messages.push({ role: 'system', content: noMeetReminder });
   messages.push({ role: 'system', content: lengthReminder });
   messages.push({ role: 'system', content: languageReminder });
+  // Ближе к концу — лучше держит правило «сначала ответь».
+  messages.push({ role: 'system', content: answerFirstReminder });
 
   for (const h of history || []) {
     if (!h || !h.content) continue;
@@ -590,7 +608,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
 
   const rawText = completion.choices[0]?.message?.content?.trim() || '';
   const cleaned = applyAntiDetectStyle(rawText);
-  return stripReaskedKnownFacts(cleaned, contextGuard);
+  const strippedFacts = stripReaskedKnownFacts(cleaned, contextGuard);
+  return stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
 }
 
 /**
@@ -744,6 +763,26 @@ function buildContextGuard(history, userMessage) {
     );
   }
 
+  // Недавний ответ на наш вопрос — нельзя переспрашивать «ты упоминал… верно?»
+  for (let i = 1; i < recent.length; i++) {
+    const prev = recent[i - 1];
+    const cur = recent[i];
+    if (!prev || !cur || prev.role !== 'assistant' || cur.role !== 'user') continue;
+    const prevText = String(prev.content || '');
+    const curText = stripMeta(cur.content);
+    if (!curText || /[?]/.test(curText)) continue;
+    if (
+      /(в одном городе|одном городе|всегда в одном)/i.test(prevText) &&
+      curText.length <= 80
+    ) {
+      parts.push(
+        `Собеседник УЖЕ ответил на вопрос про работу в одном городе («${curText.slice(0, 60)}»). ` +
+          'НЕ переспрашивай это и не пиши «ты как-то упоминал… верно?». Просто учти и иди дальше.',
+      );
+      break;
+    }
+  }
+
   return parts.length ? parts.join(' ') : null;
 }
 
@@ -769,7 +808,76 @@ function stripReaskedKnownFacts(reply, contextGuard) {
       .replace(/[.?!]?\s*где\s+ты\s*(жив[её]шь)?\s*\??/gi, '')
       .replace(/[.?!]?\s*из\s+какого\s+города\s*\??/gi, '');
   }
+  // Фейковое «ты упоминал… верно?» про только что сказанное
+  if (/УЖЕ ответил на вопрос про работу в одном городе/i.test(contextGuard)) {
+    text = text
+      .replace(/[.?!]?\s*ты\s+как[- ]?то\s+упоминал[^.?!]*\??/gi, '')
+      .replace(/[.?!]?\s*работаешь\s+почти\s+всегда\s+в\s+одном\s+городе[^.?!]*\??/gi, '');
+  }
   return text.replace(/[ \t]{2,}/g, ' ').replace(/\s+([).!])/g, '$1').trim();
+}
+
+const STAY_HERE_REFUSAL_RE =
+  /не,?\s*давай\s+(пока\s+)?(тут|здесь)\s+общаться[^.!?\n]*[.!)]*/gi;
+const STAY_HERE_SOFT_RE =
+  /давай\s+(пока\s+|просто\s+)?(общаться\s+)?(тут|здесь)[^.!?\n]*[.!)]*/gi;
+const STAY_HERE_COMFORT_RE =
+  /мне\s+так\s+(удобнее|комфортнее)[^.!?\n]*[.!)]*/gi;
+
+/**
+ * Срезает ложный отказ «давай тут общаться», если собеседник не просил
+ * контакты/встречу/видеозвонок. Если после среза почти ничего не осталось —
+ * короткая заглушка по теме (лучше чем снова гнать скрипт отказа).
+ */
+function stripFalseStayHereRefusal(reply, userMessage, history, options = {}) {
+  if (!reply) return reply;
+  const textIn = String(userMessage || '');
+  const hint = String(options.objectionHint || '');
+  const allowed =
+    /(номер|инст|whatsapp|ватсап|контакт|встрет|погуля|видео\s*звон|созвон|facetime)/i.test(textIn) ||
+    /(просит твои контакты|зовёт встретиться|созвониться по видео)/i.test(hint);
+  if (allowed) return reply;
+
+  let text = String(reply);
+  const before = text;
+  text = text
+    .replace(STAY_HERE_REFUSAL_RE, ' ')
+    .replace(STAY_HERE_SOFT_RE, ' ')
+    .replace(STAY_HERE_COMFORT_RE, ' ')
+    .replace(/если\s+чё[^.!?\n]*проект[^.!?\n]*[.!)]*/gi, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([).!])/g, '$1')
+    .trim();
+
+  // Уже писала этот отказ недавно — даже остаток «рада что понимаешь» без темы режем мягко
+  const recentAssistant = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-3)
+    .map((h) => String(h.content || ''))
+    .join('\n');
+  if (/давай\s+(пока\s+)?(тут|здесь)\s+общать|мне\s+так\s+(удобнее|комфортнее)/i.test(recentAssistant)) {
+    text = text
+      .replace(/рада,?\s+что\s+понимаешь[^.!?\n]*[.!)]*/gi, ' ')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim();
+  }
+
+  if (text.length >= 8) return text;
+
+  // Ответ почти целиком был ложным отказом — не отправляем пустышку/повтор скрипта
+  if (before !== text || text.length < 8) {
+    if (/(программ|figma|photoshop|дизайн|работ|примеры|портфолио)/i.test(textIn)) {
+      return 'в основном в figma и photoshop) а тебе что ближе по работе?';
+    }
+    if (/(работаешь|не работаешь|чем занима|кем работа)/i.test(textIn)) {
+      return 'работаю, самозанятая) дизайном в основном';
+    }
+    if (/(прилета|числах|когда\s+ты|куда\s+ты)/i.test(textIn)) {
+      return 'пока точных дат нет, ближе к переезду скажу)';
+    }
+    return 'ага) а ты что имел в виду?';
+  }
+  return text;
 }
 
 /**

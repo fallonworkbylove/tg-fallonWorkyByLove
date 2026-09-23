@@ -78,6 +78,14 @@ const CONTACT_REQUEST_RE = /(номер телефона|дай (свой )?но
 const LOCATION_ASK_RE =
   /(^|\s)((а\s+)?где\s+ты\b|ты\s+где\b|где\s+сейчас\b|где\s+щас\b|в\s+каком\s+городе\b|откуда\s+ты\b|куда\s+ты\s+(ед|переез)|ты\s+в\s+\S+\s+переез)/i;
 
+// Вопросы про ЕЁ работу / портфолио / софт — НЕ контакты и НЕ «давай тут общаться».
+const ABOUT_HER_JOB_RE =
+  /(ты\s+не\s+работаешь|ты\s+работаешь\b|а\s+ты\s+работа|где\s+(ты\s+)?работаешь|чем\s+(ты\s+)?занимаешься|кем\s+(ты\s+)?работа|ты\s+где\s+работа|дизайном\s+чего|дизайн\s+чего|в\s+каких\s+программ|какими\s+программ|покажи\s+(примеры|работы|портфолио)|примеры\s+(своих\s+)?работ|скинь\s+(работы|портфолио|примеры)|what\s+do\s+you\s+do|where\s+do\s+you\s+work|do\s+you\s+work)/i;
+
+// Прямой вопрос / просьба — memory follow-up и «философия» не должны перебивать ответ.
+const DIRECT_QUESTION_RE =
+  /(\?|что\s+ты\s+имеешь|в\s+смысле|почему\s+ты|зачем\s+ты|когда\s+ты|куда\s+ты|в\s+каких\s+числах|прилетаешь|приедешь|покажи|расскажи|объясни|what\s+do\s+you\s+mean|why\s+do\s+you)/i;
+
 // Вопрос про наше daily-фото (скрин прибыли с NFT-флипа).
 const FLIP_PHOTO_IN_HISTORY_RE =
   /\[фото от меня:.*флиппинг NFT/i;
@@ -139,6 +147,26 @@ const MEET_PLANNING_RE =
  * Если передан history — также ловит вопросы про наше daily-фото с флипом.
  * Возвращает null, если ничего не найдено.
  */
+function isAboutHerJobQuestion(text) {
+  return ABOUT_HER_JOB_RE.test(String(text || ''));
+}
+
+function isDirectQuestion(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  return DIRECT_QUESTION_RE.test(t) || isAboutHerJobQuestion(t) || LOCATION_ASK_RE.test(t);
+}
+
+function isContactOrMeetRelated(text) {
+  const t = String(text || '');
+  return (
+    CONTACT_REQUEST_RE.test(t) ||
+    MEET_REQUEST_RE.test(t) ||
+    MEET_PLANNING_RE.test(t) ||
+    VIDEO_CALL_REQUEST_RE.test(t)
+  );
+}
+
 function detectHint(text, history = []) {
   if (!text) return null;
 
@@ -154,6 +182,20 @@ function detectHint(text, history = []) {
       'Собеседник говорит, что ты фейк / ненастоящая. Отреагируй по-человечески: лёгкая обида или ирония, коротко — ' +
       'в духе «ну да, конечно 🙄» или «обидно слышать)» — НЕ оправдывайся длинно, НЕ признавайся, ' +
       'НЕ объясняй откуда фото/кружок. Переведи тему дальше.'
+    );
+  }
+
+  // Работа / портфолио / программы — ДО контактов, иначе модель путает с «дай инсту».
+  if (isAboutHerJobQuestion(text) && !CONTACT_REQUEST_RE.test(text)) {
+    return (
+      'Собеседник спрашивает про ТВОЮ работу, занятость, дизайн или просит примеры/программы. ' +
+      'Это обычный вопрос про тебя, НЕ просьба контактов и НЕ предложение уйти в другой мессенджер. ' +
+      'ОБЯЗАТЕЛЬНО ответь по сути в первом предложении (кем занята / чем / в чём работаешь). ' +
+      'Если просит примеры работ — НЕ пиши «давай пока тут общаться» / «мне так удобнее». ' +
+      'Мягко: файлы сейчас не кидаешь, кратко опиши словами чем занимаешься ' +
+      '(например графический дизайн, макеты, визуал) и какие программы (figma, photoshop — по персонажу). ' +
+      'Если спрашивает «ты не работаешь?» — коротко скажи что работаешь / самозанятая, без философии. ' +
+      'Без «жесть», без «разбираться в людях», без переспроса того, что он только что сказал.'
     );
   }
 
@@ -474,4 +516,11 @@ function startSilenceScheduler(deps) {
   setInterval(tick, 30 * 60 * 1000);
 }
 
-module.exports = { detectHint, shouldForceReplyForFlipPhoto, startSilenceScheduler };
+module.exports = {
+  detectHint,
+  shouldForceReplyForFlipPhoto,
+  startSilenceScheduler,
+  isAboutHerJobQuestion,
+  isDirectQuestion,
+  isContactOrMeetRelated,
+};
