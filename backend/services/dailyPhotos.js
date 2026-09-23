@@ -1,14 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../db');
-const {
-  getActiveClient,
-  isPeerArchived,
-  isNeverContact,
-  saveMessage,
-  NFT_VOICE_AFTER_HOURS,
-} = require('./telegramClient');
 const helpRequestNotifier = require('./helpRequestNotifier');
+
+// telegramClient тянет много зависимостей; saveMessage берём лениво,
+// чтобы не словить циклический require (иначе история флип-фото не пишется).
+function tg() {
+  return require('./telegramClient');
+}
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 
@@ -169,7 +168,7 @@ async function shouldSkipDailyPhoto(accountId, peerId) {
      WHERE account_id = ? AND peer_id = ?`,
     [accountId, String(peerId)],
   );
-  if (Number(age?.hours) >= NFT_VOICE_AFTER_HOURS) return 'nft_day';
+  if (Number(age?.hours) >= tg().NFT_VOICE_AFTER_HOURS) return 'nft_day';
 
   return null;
 }
@@ -200,7 +199,7 @@ async function schedulePendingSends() {
      WHERE cm.role = 'user' AND DATE(cm.created_at) = CURDATE()
      HAVING DATE(started_at) < CURDATE()
        AND TIMESTAMPDIFF(HOUR, started_at, NOW()) < ?`,
-    [NFT_VOICE_AFTER_HOURS],
+    [tg().NFT_VOICE_AFTER_HOURS],
   );
 
   for (const writer of writers) {
@@ -256,6 +255,7 @@ async function sendDuePhotos() {
         continue;
       }
 
+      const { getActiveClient, isNeverContact, isPeerArchived, saveMessage } = tg();
       const client = getActiveClient(row.account_id);
       if (!client) {
         console.error(
@@ -295,10 +295,13 @@ async function sendDuePhotos() {
       try {
         await saveMessage(
           row.account_id,
-          row.peer_id,
-          row.peer_username,
+          String(row.peer_id),
+          row.peer_username || null,
           'assistant',
           flipPhotoHistoryContent(caption),
+        );
+        console.log(
+          `[Аккаунт ${row.account_id}] Daily flip: история записана для ${row.peer_id}`,
         );
       } catch (histErr) {
         console.error(

@@ -94,10 +94,10 @@ const FLIP_PHOTO_IN_HISTORY_RE =
   /\[фото от меня:.*флиппинг NFT/i;
 
 const ASKING_ABOUT_SENT_PHOTO_RE =
-  /(что это|это что|а это что|что за (это|фото|фотк|картинк|скрин|изображен|картинка)|что ты (мне )?(прислал|отправил|скинул|показал|послал)|что за скрин|про (это|тое) фото|объясни (это|фото|скрин)|ты (мне )?(это |тое )?(прислал|отправил|скинул|послал)|я спрашиваю|you sent (this|that)|this (photo|picture|image|screenshot) you sent|what'?s this|what is this|what is that|whats that|what'?s that|what did you send|what (is|was) (that|the|this) (photo|picture|image|screenshot|pic)|explain (this|that|the photo)|what'?s on (the |this |that )?(photo|picture|image|screenshot)|what kind of (photo|picture|image))/i;
+  /(что это|это что|а это что|что за (это|фото|фотк|картинк|скрин|изображен|картинка)|что ты (мне )?(прислал|отправил|скинул|показал|послал)|что за скрин|про (это|тое) фото|объясни (это|фото|скрин)|ты (мне )?(это |тое )?(прислал|отправил|скинул|послал)|я спрашиваю|а это что у тебя|это что у тебя|что у тебя (на )?фото|что это у тебя|что ты скинула|что за скриншот|you sent (this|that)|this (photo|picture|image|screenshot) you sent|what'?s this|what is this|what is that|whats that|what'?s that|what did you send|what (is|was) (that|the|this) (photo|picture|image|screenshot|pic)|explain (this|that|the photo)|what'?s on (the |this |that )?(photo|picture|image|screenshot)|what kind of (photo|picture|image))/i;
 
 const SHORT_PHOTO_POINT_RE =
-  /^(this|that|это|вот это|а это|это что|and this|and that)\s*\??$/i;
+  /^(this|that|это|вот это|а это|это что|and this|and that|а это что у тебя|это что у тебя)\s*\??$/i;
 
 /**
  * Было ли недавно в истории наше daily-фото со скрином флипа.
@@ -129,9 +129,48 @@ const FLIP_PHOTO_QUESTION_HINT =
   'Это скриншот твоей прибыли с флиппинга NFT-токенов: купила дешевле, продала дороже, на картинке цены и разница. ' +
   'Объясни коротко и по-человечески, что это твоя сделка / перепродажа NFT и цифры — покупка, продажа, профит. ' +
   'Можно совсем просто: «флипаю нфт, купила дешевле — продала дороже, вот профит)». ' +
-  'НЕ делай вид, что это ОН тебе прислал. НЕ спрашивай «что интересного показываешь» и не меняй тему. ' +
+  'ЗАПРЕЩЕНО отвечать «это просто фото», «чтобы порадовать», «просто картинка» без объяснения сделки. ' +
+  'НЕ делай вид, что это ОН тебе прислал. НЕ спрашивай «что интересного показываешь» и не меняй тему на «как ты». ' +
   'Если он пишет по-английски — отвечай по-английски (например: "thats my nft flip, bought cheaper sold higher)"). ' +
   '1-2 коротких предложения, без лекции и без давления «давай вместе».';
+
+/**
+ * Было ли недавно отправлено daily-фото с флипом (по таблице daily_photo_sends),
+ * даже если метка в conversation_messages по какой-то причине не записалась.
+ */
+async function wasDailyFlipSentRecently(accountId, peerId, withinHours = 8) {
+  try {
+    const hours = Math.max(1, Math.min(48, Number(withinHours) || 8));
+    const [rows] = await db.execute(
+      `SELECT id FROM daily_photo_sends
+       WHERE account_id = ? AND peer_id = ?
+         AND sent_at IS NOT NULL
+         AND sent_at > (NOW() - INTERVAL ${hours} HOUR)
+       LIMIT 1`,
+      [accountId, String(peerId)],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    console.error('[objectionHandler] wasDailyFlipSentRecently:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Вопрос про скрин флипа: по истории ИЛИ по факту недавней отправки daily-фото.
+ */
+async function shouldForceReplyForFlipPhoto(text, history = [], accountId = null, peerId = null) {
+  if (!isAskingAboutSentPhoto(text)) return false;
+  if (recentFlipPhotoInHistory(history)) return true;
+  if (accountId != null && peerId != null) {
+    return wasDailyFlipSentRecently(accountId, peerId);
+  }
+  return false;
+}
+
+function getFlipPhotoQuestionHint() {
+  return FLIP_PHOTO_QUESTION_HINT;
+}
 
 // Предложение видео-звонка/созвона по видео — реальный видеоконтакт нужно
 // вежливо отклонить под предлогом стеснения, а не соглашаться или игнорировать.
@@ -172,6 +211,11 @@ function isContactOrMeetRelated(text) {
 
 function detectHint(text, history = []) {
   if (!text) return null;
+
+  // Сначала вопрос про наш daily-скрин флипа — важнее других хинтов.
+  if (recentFlipPhotoInHistory(history) && isAskingAboutSentPhoto(text)) {
+    return FLIP_PHOTO_QUESTION_HINT;
+  }
 
   if (BOT_ACCUSATION_RE.test(text)) {
     const recentBot = (Array.isArray(history) ? history : [])
@@ -270,21 +314,8 @@ function detectHint(text, history = []) {
     );
   }
 
-  // Вопрос про скрин флипа важнее общих возражений вроде «потом».
-  if (recentFlipPhotoInHistory(history) && isAskingAboutSentPhoto(text)) {
-    return FLIP_PHOTO_QUESTION_HINT;
-  }
-
   const objection = OBJECTION_PATTERNS.find((p) => p.re.test(text));
   return objection ? objection.hint : null;
-}
-
-/**
- * Нужно ли принудительно отвечать (не уходить в «занята»), потому что
- * человек спрашивает про наш скрин флипа.
- */
-function shouldForceReplyForFlipPhoto(text, history = []) {
-  return recentFlipPhotoInHistory(history) && isAskingAboutSentPhoto(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +584,9 @@ function startSilenceScheduler(deps) {
 module.exports = {
   detectHint,
   shouldForceReplyForFlipPhoto,
+  getFlipPhotoQuestionHint,
+  isAskingAboutSentPhoto,
+  wasDailyFlipSentRecently,
   startSilenceScheduler,
   isAboutHerJobQuestion,
   isDirectQuestion,

@@ -2677,11 +2677,16 @@ async function fireReengage(accountId, peerId) {
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const liveHistory = await getHistory(accountId, peerId);
     const replyHistory = liveHistory.length ? liveHistory : history;
-    const flipPhotoQuestion = objectionHandler.shouldForceReplyForFlipPhoto(
+    const flipPhotoQuestion = await objectionHandler.shouldForceReplyForFlipPhoto(
       text,
       replyHistory,
+      accountId,
+      peerId,
     );
-    const objectionHint = objectionHandler.detectHint(text, replyHistory);
+    let objectionHint = objectionHandler.detectHint(text, replyHistory);
+    if (flipPhotoQuestion) {
+      objectionHint = objectionHandler.getFlipPhotoQuestionHint();
+    }
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, text);
     // На прямой вопрос memory follow-up часто уводит в «философию» вместо ответа.
     const useMemoryHint =
@@ -3124,9 +3129,11 @@ async function processBufferedMessages(
     // самом начале знакомства (пока история короткая).
     // Пока «занята» — сообщение остаётся непрочитанным (галочки только
     // когда реально отвечаем).
-    const flipPhotoQuestion = objectionHandler.shouldForceReplyForFlipPhoto(
+    const flipPhotoQuestion = await objectionHandler.shouldForceReplyForFlipPhoto(
       text,
       history,
+      accountId,
+      peerId,
     );
     if (
       forcedDelayMs == null &&
@@ -3144,7 +3151,7 @@ async function processBufferedMessages(
     // (см. ниже) — если ИИ не ответил / sleep / ошибка, галочек не ставим.
 
     // Медиа-протокол включаем ТОЛЬКО когда собеседник ЯВНО попросил фото/видео/
-    // кружок — ИИ больше не решает сама «по желанию» прислать медиа. Так модел��
+    // кружок — ИИ больше не решает сама «по желанию» прислать медиа. Так модель
     // никогда не вставит токен <<PHOTO>>/<<VIDEO>>/<<CIRCLE>> без прямой просьбы.
     const mediaLink = mediaLinkEarly;
     const mediaEnabled = !!mediaLink && explicitMediaRequest;
@@ -3178,7 +3185,10 @@ async function processBufferedMessages(
     }
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, contextualText);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
-    const objectionHint = objectionHandler.detectHint(text, history);
+    let objectionHint = objectionHandler.detectHint(text, history);
+    if (flipPhotoQuestion) {
+      objectionHint = objectionHandler.getFlipPhotoQuestionHint();
+    }
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, contextualText);
     const useMemoryHint =
       dueMemory?.hint && !objectionHandler.isDirectQuestion(text) ? dueMemory.hint : null;
