@@ -73,9 +73,54 @@ const OBJECTION_PATTERNS = [
 // возражения и анти-детект имеют общую механику (ключевые слова -> подсказка),
 // поэтому удобно держать один детектор.
 const BOT_ACCUSATION_RE = /(ты бот|это бот|бот ли ты|искусственный интеллект|нейросеть|\bии\b|chatgpt|gpt[- ]?\d|ты не человек)/i;
+const FAKE_ACCUSATION_RE = /(фейк|фэйк|\bfake\b|ты фейк|это фейк|и всё[- ]?таки фейк|и все[- ]?таки фейк|не настоящ|впариваешь|накрутка)/i;
 const CONTACT_REQUEST_RE = /(номер телефона|дай (свой )?номер|скинь номер|скинь инст|инстаграм|whatsapp|ватсап|вотсап|как тебя найти|где тебя найти|твой телеграм|дай контакт)/i;
 const LOCATION_ASK_RE =
   /(^|\s)((а\s+)?где\s+ты\b|ты\s+где\b|где\s+сейчас\b|где\s+щас\b|в\s+каком\s+городе\b|откуда\s+ты\b|куда\s+ты\s+(ед|переез)|ты\s+в\s+\S+\s+переез)/i;
+
+// Вопрос про наше daily-фото (скрин прибыли с NFT-флипа).
+const FLIP_PHOTO_IN_HISTORY_RE =
+  /\[фото от меня:.*флиппинг NFT/i;
+
+const ASKING_ABOUT_SENT_PHOTO_RE =
+  /(что это|это что|а это что|что за (это|фото|фотк|картинк|скрин|изображен|картинка)|что ты (мне )?(прислал|отправил|скинул|показал|послал)|что за скрин|про (это|тое) фото|объясни (это|фото|скрин)|ты (мне )?(это |тое )?(прислал|отправил|скинул|послал)|я спрашиваю|you sent (this|that)|this (photo|picture|image|screenshot) you sent|what'?s this|what is this|what is that|whats that|what'?s that|what did you send|what (is|was) (that|the|this) (photo|picture|image|screenshot|pic)|explain (this|that|the photo)|what'?s on (the |this |that )?(photo|picture|image|screenshot)|what kind of (photo|picture|image))/i;
+
+const SHORT_PHOTO_POINT_RE =
+  /^(this|that|это|вот это|а это|это что|and this|and that)\s*\??$/i;
+
+/**
+ * Было ли недавно в истории наше daily-фото со скрином флипа.
+ */
+function recentFlipPhotoInHistory(history) {
+  if (!Array.isArray(history) || history.length === 0) return false;
+  const tail = history.slice(-10);
+  return tail.some(
+    (msg) =>
+      msg &&
+      msg.role === 'assistant' &&
+      FLIP_PHOTO_IN_HISTORY_RE.test(String(msg.content || '')),
+  );
+}
+
+/**
+ * Собеседник спрашивает / указывает на фото, которое мы прислали.
+ */
+function isAskingAboutSentPhoto(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+  const cleaned = raw.replace(/\n\[Ответ на сообщение[^\]]*\]/gi, '').trim();
+  if (SHORT_PHOTO_POINT_RE.test(cleaned)) return true;
+  return ASKING_ABOUT_SENT_PHOTO_RE.test(cleaned);
+}
+
+const FLIP_PHOTO_QUESTION_HINT =
+  'Собеседник спрашивает или указывает на фото/скрин, которое ТЫ недавно прислала. ' +
+  'Это скриншот твоей прибыли с флиппинга NFT-токенов: купила дешевле, продала дороже, на картинке цены и разница. ' +
+  'Объясни коротко и по-человечески, что это твоя сделка / перепродажа NFT и цифры — покупка, продажа, профит. ' +
+  'Можно совсем просто: «флипаю нфт, купила дешевле — продала дороже, вот профит)». ' +
+  'НЕ делай вид, что это ОН тебе прислал. НЕ спрашивай «что интересного показываешь» и не меняй тему. ' +
+  'Если он пишет по-английски — отвечай по-английски (например: "thats my nft flip, bought cheaper sold higher)"). ' +
+  '1-2 коротких предложения, без лекции и без давления «давай вместе».';
 
 // Предложение видео-звонка/созвона по видео — реальный видеоконтакт нужно
 // вежливо отклонить под предлогом стеснения, а не соглашаться или игнорировать.
@@ -91,9 +136,10 @@ const MEET_PLANNING_RE =
 /**
  * Возвращает подсказку для промпта на основе входящего текста: возражение
  * (по NFT-теме) либо анти-детект ситуация (обвинение в боте / запрос контактов).
+ * Если передан history — также ловит вопросы про наше daily-фото с флипом.
  * Возвращает null, если ничего не найдено.
  */
-function detectHint(text) {
+function detectHint(text, history = []) {
   if (!text) return null;
 
   if (BOT_ACCUSATION_RE.test(text)) {
@@ -103,10 +149,19 @@ function detectHint(text) {
     );
   }
 
+  if (FAKE_ACCUSATION_RE.test(text)) {
+    return (
+      'Собеседник говорит, что ты фейк / ненастоящая. Отреагируй по-человечески: лёгкая обида или ирония, коротко — ' +
+      'в духе «ну да, конечно 🙄» или «обидно слышать)» — НЕ оправдывайся длинно, НЕ признавайся, ' +
+      'НЕ объясняй откуда фото/кружок. Переведи тему дальше.'
+    );
+  }
+
   if (CONTACT_REQUEST_RE.test(text)) {
     return (
       'Собеседник просит твои контакты (номер/инстаграм/whatsapp/телеграм). Мягко откажи, без грубости — ' +
-      'например «не даю пока, давай тут общаться)» — и не давай никаких реальных контактов.'
+      'например «не даю пока, давай тут общаться)» — и не давай никаких реальных контактов. ' +
+      'Это НЕ просьба фото/видео/кружка: токены <<PHOTO>>/<<VIDEO>>/<<CIRCLE>> сюда НЕ вставляй.'
     );
   }
 
@@ -139,8 +194,21 @@ function detectHint(text) {
     );
   }
 
+  // Вопрос про скрин флипа важнее общих возражений вроде «потом».
+  if (recentFlipPhotoInHistory(history) && isAskingAboutSentPhoto(text)) {
+    return FLIP_PHOTO_QUESTION_HINT;
+  }
+
   const objection = OBJECTION_PATTERNS.find((p) => p.re.test(text));
   return objection ? objection.hint : null;
+}
+
+/**
+ * Нужно ли принудительно отвечать (не уходить в «занята»), потому что
+ * человек спрашивает про наш скрин флипа.
+ */
+function shouldForceReplyForFlipPhoto(text, history = []) {
+  return recentFlipPhotoInHistory(history) && isAskingAboutSentPhoto(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -406,4 +474,4 @@ function startSilenceScheduler(deps) {
   setInterval(tick, 30 * 60 * 1000);
 }
 
-module.exports = { detectHint, startSilenceScheduler };
+module.exports = { detectHint, shouldForceReplyForFlipPhoto, startSilenceScheduler };

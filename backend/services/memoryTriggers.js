@@ -42,9 +42,35 @@ const FACT_PATTERNS = [
  * чтобы не плодить дубли и не напоминать про одно и то же по десять раз).
  */
 async function extractAndSaveFact(accountId, peerId, text) {
-  if (!text || text.length < 4) return;
+  if (!text || text.length < 2) return;
   try {
-    const match = FACT_PATTERNS.find((p) => p.re.test(text));
+    let match = FACT_PATTERNS.find((p) => p.re.test(text));
+    let factText = text.slice(0, 255);
+
+    // Пачка «Новочеркасск\nА ты откуда?» — первая короткая строка = город.
+    if (!match) {
+      const lines = String(text)
+        .split('\n')
+        .map((line) => line.replace(/\n\[Ответ на сообщение[^\]]*\]/gi, '').trim())
+        .filter(Boolean);
+      if (lines.length > 1) {
+        const first = lines[0].replace(/[).!…]+$/g, '').trim();
+        const restAsk = lines
+          .slice(1)
+          .some((line) => /[?]/.test(line) || /(откуда|знаешь|где|where|from)/i.test(line));
+        if (
+          restAsk &&
+          first.length >= 2 &&
+          first.length <= 40 &&
+          !/[?]/.test(first) &&
+          /^[А-ЯA-ZЁа-яёa-z]/.test(first)
+        ) {
+          match = { type: 'city' };
+          factText = first.slice(0, 255);
+        }
+      }
+    }
+
     if (!match) return;
 
     await ensureSchema();
@@ -61,7 +87,7 @@ async function extractAndSaveFact(accountId, peerId, text) {
     await db.execute(
       `INSERT INTO peer_memory_facts (account_id, peer_id, fact_type, fact_text, created_at)
        VALUES (?, ?, ?, ?, NOW())`,
-      [accountId, peerId, match.type, text.slice(0, 255)],
+      [accountId, peerId, match.type, factText],
     );
   } catch (err) {
     console.error('[memoryTriggers] Не удалось сохранить факт:', err.message);

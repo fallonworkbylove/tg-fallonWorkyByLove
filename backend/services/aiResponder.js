@@ -192,14 +192,14 @@ function buildLanguageReminder(lang) {
       'Do NOT say you cannot understand Russian if they wrote in English. ' +
       'Do NOT switch to Russian. Do NOT sound translated. ' +
       'Warmth in English naturally (miss you, glad you texted, take care) — no Russian words. ' +
-      'Service tokens <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> stay as-is.'
+      'Service tokens <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> <<REACT:emoji>> stay as-is.'
     );
   }
   return (
     'ЯЗЫК: собеседник пишет по-русски. Отвечай ТОЛЬКО на русском, живо и разговорно, как в обычной переписке. ' +
     'Не переходи на английский, если он сам не перешёл на английский текстом. ' +
     'Описание фото/голоса — служебное, это НЕ смена языка: даже если внутри есть английские слова, отвечай по-русски. ' +
-    'Служебные токены <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> оставляй как есть.'
+    'Служебные токены <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> <<REACT:эмодзи>> оставляй как есть.'
   );
 }
 
@@ -372,17 +372,27 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // которые находятся ближе к концу контекста — на длинной истории (20-30
   // сообщений) правило длины, сказанное только в самом начале, размывается.
   const loveReminder =
-    'Тепло обязательно. Пиши как девушка, которой человек правда дорог: много заботы, нежности и радости от переписки. ' +
-    'В большинстве ответов должна чувствоваться любовь — ласковое слово, «рада тебе», «скучала», «береги себя», ' +
-    'что с ним уютно, что он тебе важен. Коротко, внутри тех же 1-2 предложений, не отдельной речью. ' +
-    'Не повторяй одну и ту же ласку подряд и не сыпь «я тебя люблю» в каждом сообщении: сильное признание — иногда, ' +
-    'когда диалог уже тёплый, а не с первых фраз. Сначала ответь на его слова, тепло вплети внутрь. ' +
-    'Если он холоден или грубит — любви меньше, без навязчивости.';
+    'Тепло обязательно, но по-человечески: заботливые слова, а не россыпь смайликов. ' +
+    'Пиши как девушка, которой человек правда дорог — нежность в формулировках, без 😊🥺❤️ в каждом сообщении. ' +
+    'В большинстве ответов должна чувствоваться любовь коротко, внутри тех же 1-2 предложений. ' +
+    'Не повторяй одну и ту же ласку подряд и не сыпь «я тебя люблю» в каждом сообщении. ' +
+    'Сначала ответь на его слова, тепло вплети внутрь. Если он холоден или грубит — любви меньше. ' +
+    'Эмодзи в тексте почти не используй (максимум один редкий, чаще ноль). Скобку «)» как улыбку можно.';
 
   const laughReminder =
     'Если последнее сообщение собеседника тебе реально смешное — шутка, прикол, неожиданная смешная фраза — ' +
-    'добавь в самый конец ответа служебный токен <<LAUGH>>. Это отдельное сообщение «ахаха», не пиши смех в тексте. ' +
+    'можно либо токен <<LAUGH>> (отдельное «ахаха»), либо только реакцию <<REACT:😂>> без текста. ' +
     'Не ставь токен на обычный «хах», смайл, сарказм или просто весёлое настроение. Не на каждое сообщение.';
+
+  const humanStyleReminder =
+    'Стиль: живая переписка в мессенджере, без «ботского» тона. ' +
+    'Почти без эмодзи/смайликов в тексте (не ставь несколько подряд, не украшай каждое сообщение). ' +
+    'Иногда вместо ответа текстом поставь реакцию на сообщение собеседника: токен <<REACT:эмодзи>> ' +
+    'и пустой текст (или очень короткий текст + реакция). Так делают люди, когда не хочется разгонять диалог. ' +
+    'Когда уместна только реакция: короткое «ок/ага/понял», стикер, смешное/милое без вопроса, просто «угу». ' +
+    'На прямой вопрос, просьбу или важную тему — всегда отвечай текстом (реакцию можно добавить сверху). ' +
+    'Разрешённые реакции: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀. ' +
+    'Пример только реакции: <<REACT:👍>>. Пример текст+реакция: «поняла) <<REACT:❤️>>».';
 
   // Жёсткий запрет личных встреч: персонаж в переезде, только переписка.
   const noMeetReminder =
@@ -394,7 +404,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Если в истории ты уже согласилась на встречу — в этом ответе мягко отыграй назад (переезд, на эмоциях сказала).';
 
   const lengthReminder =
-    'Формат ответа: СТРОГО не более 2 коротких предложений. Обычно достаточно '
+    'Формат ответа: СТРОГО не более 2 коротких предложений. Обычно достаточно ' +
     '1 предложения. Пиши коротко, как в реальной переписке в мессенджере — ' +
     'без длинных объяснений, списков и уточнений. Это правило важнее желания ' +
     'рассказать подробнее. ' +
@@ -403,13 +413,21 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'отреагировать на слова собеседника (коротким комментарием), а потом ' +
     'спросить что-то — оставь только один из двух вопросов, а не два подряд. ' +
     'Часто лучше вообще без вопроса — просто живая реакция, как в реальной переписке ' +
-    'человек не задаёт вопрос в каждом сообщении.';
+    'человек не задаёт вопрос в каждом сообщении. ' +
+    'Если факт о собеседнике (город, возраст, имя и т.п.) уже есть в истории или в текущем сообщении — вопрос про этот факт ЗАПРЕЩЁН.';
 
+  const contextGuard = buildContextGuard(history, contextualUserMessage);
+
+  // Порядок: стиль/подсказки СНАЧАЛА, затем история и текущее сообщение В КОНЦЕ —
+  // так модель лучше держит свежий контекст и меньше переспрашивает.
   const messages = [
     { role: 'system', content: finalPrompt },
     { role: 'system', content: roleReminder },
     { role: 'system', content: voiceIntentReminder },
-    ...history.map((h) => ({ role: h.role, content: h.content })),
+    { role: 'system', content: moodReminder },
+    { role: 'system', content: loveReminder },
+    { role: 'system', content: humanStyleReminder },
+    { role: 'system', content: laughReminder },
   ];
 
   // Обучение на прошлом опыте (без fine-tuning): если telegramClient передал
@@ -439,13 +457,16 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
         'Если просит кружок/видеосообщение — токен <<CIRCLE>>. ' +
         'ВАЖНО: если ты решила прислать медиа и вставила токен — текст в этом же сообщении ' +
         'НЕ должен быть отказом или отговоркой. Никаких «пока рано», «не могу», «рано», «попозже», ' +
-        '«не кидаю» вместе с токеном. Отправляешь — значит соглашаешься: пиши дружелюбно и коротко ' +
+        '«не кидаю», «не, давай пока тут общаться», «мне так удобнее» вместе с токеном. ' +
+        'Отправляешь — значит соглашаешься: пиши дружелюбно и коротко ' +
         '(«ща», «щас», «окей держи», «ну лови») или вообще без текста, только токен. ' +
-        'Отнекивание («пока рано», «я не кидаю незнакомым») используй ТОЛЬКО когда просят твои контакты ' +
+        'Отнекивание («пока рано», «я не кидаю незнакомым», «давай пока тут общаться») используй ТОЛЬКО когда просят твои контакты ' +
         '(номер, телеграм, инсту) — и тогда токен НЕ вставляй. ' +
+        'Просьба «запиши кружочек / скинь фото / пришли видео» — это НЕ просьба контактов: соглашайся и ставь токен, без отказа. ' +
         'Если собеседник спрашивает «что это?», «это акции?», «что за картинка?» или похожим образом реагирует на недавно присланное фото, ' +
         'отвечай именно про это последнее фото/медиа и не подтягивай старую тему из истории. ' +
-        'Не описывай, что на фото, словами (ты не знаешь, что именно там). ' +
+        'Если в истории есть пометка «[фото от меня: скриншот прибыли с флиппинга NFT…]» — ты ЗНАЕШЬ, что на фото: ' +
+        'это твой скрин прибыли с перепродажи NFT; объясни это коротко. Иначе не выдумывай детали картинки. ' +
         'ОЧЕНЬ ВАЖНО: не отправляй медиа два раза подряд. Если ты только что уже прислала ' +
         'фото/видео/кружок, а собеседник просто спрашивает про него или продолжает разговор ' +
         '(например «а куда едешь?», «а что там?», «красиво») — отвечай обычным текстом и НЕ вставляй ' +
@@ -511,14 +532,19 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     messages.push({ role: 'system', content: options.complimentHint });
   }
 
-  // lengthReminder идёт последним перед сообщением пользователя — самая
-  // "сильная" позиция в контексте для модели.
   messages.push({ role: 'system', content: noRepeatReminder });
-  messages.push({ role: 'system', content: loveReminder });
-  messages.push({ role: 'system', content: laughReminder });
+  if (contextGuard) {
+    messages.push({ role: 'system', content: contextGuard });
+  }
   messages.push({ role: 'system', content: noMeetReminder });
   messages.push({ role: 'system', content: lengthReminder });
   messages.push({ role: 'system', content: languageReminder });
+
+  for (const h of history || []) {
+    if (!h || !h.content) continue;
+    const role = h.role === 'assistant' ? 'assistant' : 'user';
+    messages.push({ role, content: String(h.content) });
+  }
   messages.push({ role: 'user', content: contextualUserMessage });
 
   // [v0] ВРЕМЕННЫЙ ЛОГ: печатает реально используемую модель и endpoint.
@@ -566,14 +592,105 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
 }
 
 /**
+ * Достаёт уже сказанные факты (город и т.п.) из истории + текущего сообщения,
+ * чтобы модель не переспрашивала («Новочеркасск» → нельзя «а ты откуда?»).
+ */
+function buildContextGuard(history, userMessage) {
+  const recent = [...(Array.isArray(history) ? history.slice(-16) : [])];
+  if (userMessage) recent.push({ role: 'user', content: String(userMessage) });
+
+  const places = [];
+  const BOT_ASKED_PLACE_RE =
+    /(где ты|а ты где|откуда|из какого|в каком городе|а где жив|where (are )?you|where do you live)/i;
+  const PLACE_FROM_PHRASE_RE =
+    /(?:я из|живу в|из города|переехал[аи]? в|я в)\s+([А-ЯA-ZЁ][\wА-Яа-яёЁ\-]+(?:\s+[А-ЯA-ZЁ][\wА-Яа-яёЁ\-]+)?)/i;
+
+  for (let i = 0; i < recent.length; i++) {
+    const msg = recent[i];
+    if (!msg || msg.role !== 'user') continue;
+    const text = String(msg.content || '').trim();
+    if (!text) continue;
+
+    const fromMatch = text.match(PLACE_FROM_PHRASE_RE);
+    if (fromMatch) places.push(fromMatch[1].trim());
+
+    const burstLines = text
+      .split('\n')
+      .map((line) => line.replace(/\n\[Ответ на сообщение[^\]]*\]/gi, '').trim())
+      .filter(Boolean);
+
+    // Пачка «Новочеркасск\nМожет знаешь...\nА ты откуда сам?» — первая
+    // короткая строка без «?» почти наверняка ответ про город.
+    if (burstLines.length > 1) {
+      const first = burstLines[0].replace(/[).!…]+$/g, '').trim();
+      const restAsk = burstLines
+        .slice(1)
+        .some((line) => /[?]/.test(line) || /(откуда|знаешь|где|where|from)/i.test(line));
+      if (
+        restAsk &&
+        first.length >= 2 &&
+        first.length <= 40 &&
+        !/[?]/.test(first) &&
+        !/(привет|хай|hello|hi)\b/i.test(first)
+      ) {
+        places.push(first);
+      }
+    }
+
+    const prev = i > 0 ? recent[i - 1] : null;
+    if (prev && prev.role === 'assistant' && BOT_ASKED_PLACE_RE.test(String(prev.content || ''))) {
+      const answer = burstLines[0] || text.split('\n')[0];
+      const place = String(answer || '')
+        .replace(/[).!…?]+$/g, '')
+        .trim();
+      if (
+        place.length >= 2 &&
+        place.length <= 40 &&
+        !/[?]/.test(place) &&
+        !/(не знаю|хз|фиг|хрен)\b/i.test(place)
+      ) {
+        places.push(place);
+      }
+    }
+  }
+
+  const uniquePlaces = [...new Set(places.map((p) => p.trim()).filter(Boolean))];
+  const parts = [];
+
+  if (uniquePlaces.length) {
+    parts.push(
+      `УЖЕ ИЗВЕСТНО: собеседник назвал место/город — ${uniquePlaces.join(', ')}. ` +
+        'НЕ спрашивай «а ты откуда?», «где ты?», «из какого города?» — он уже сказал. ' +
+        'Можно коротко отреагировать на город, но не переспрашивать.',
+    );
+  }
+
+  if (/(а ты откуда|откуда сам|а ты где|where (are )?you from)/i.test(String(userMessage || ''))) {
+    parts.push(
+      'Собеседник спрашивает, откуда ТЫ. Ответь про себя. ' +
+        'Если он уже назвал свой город в этом же сообщении или только что выше — своим вопросом «а ты откуда?» НЕ отвечай.',
+    );
+  }
+
+  return parts.length ? parts.join(' ') : null;
+}
+
+/**
  * Анти-детект стиль: убирает восклицательные знаки и точки в конце сообщения
  * (живая переписка в мессенджере обычно без них — точка в конце фразы часто
  * читается как «сухо/раздражённо», а обилие «!» типично для ИИ-генерации).
+ * Также срезает россыпь эмодзи — оставляем живой текст со скобкой «)».
  * Применяется всегда, независимо от настроения/времени суток/промпта.
  */
 function applyAntiDetectStyle(text) {
   if (!text) return text;
-  let result = text.replace(/!+/g, '');
+  // Токены <<REACT:😂>> / <<LAUGH>> / <<PHOTO>> не трогаем — эмодзи внутри них нужны.
+  const tokens = [];
+  let result = String(text).replace(/<<[^>\n]+>>/g, (m) => {
+    tokens.push(m);
+    return `\u0000TOK${tokens.length - 1}\u0000`;
+  });
+  result = result.replace(/!+/g, '');
   // Длинное тире (—) и среднее (–) — типичный след ИИ; в переписке обычно дефис или запятая.
   result = result
     .replace(/\u2014/g, '-') // —
@@ -583,10 +700,18 @@ function applyAntiDetectStyle(text) {
     .replace(/-{2,}/g, '-');
   // Турецкие ı/İ иногда проскакивают в «английском» — чиним в латиницу.
   result = result.replace(/\u0131/g, 'i').replace(/\u0130/g, 'I');
+  try {
+    result = result.replace(/\p{Extended_Pictographic}/gu, '');
+  } catch (_) {
+    // ignore
+  }
+  result = result.replace(/[\uFE0F\u200D]/g, '');
+  result = result.replace(/[ \t]{2,}/g, ' ').trim();
   result = result.trimEnd();
   while (result.endsWith('.') && !result.endsWith('..')) {
     result = result.slice(0, -1).trimEnd();
   }
+  result = result.replace(/\u0000TOK(\d+)\u0000/g, (_, i) => tokens[Number(i)] || '');
   return result;
 }
 
@@ -613,13 +738,23 @@ async function transcribeAudio(buffer, filename = 'voice.ogg') {
 }
 
 /**
- * Описывает содержимое фотографии через GPT-4o (vision).
+ * Описывает содержимое фотографии/стикера через GPT-4o (vision).
  * Описание всегда на русском — служебный текст для модели, не речь собеседника.
  * Язык ответа бота выбирается отдельно по истории диалога.
  */
 async function describeImage(buffer, caption = '') {
   try {
     const base64 = buffer.toString('base64');
+    // Стикеры Telegram часто webp — правильный MIME повышает шанс OCR текста.
+    const isWebp =
+      Buffer.isBuffer(buffer) &&
+      buffer.length > 12 &&
+      buffer[8] === 0x57 &&
+      buffer[9] === 0x45 &&
+      buffer[10] === 0x42 &&
+      buffer[11] === 0x50;
+    const mime = isWebp ? 'image/webp' : 'image/jpeg';
+
     const completion = await mediaClient.chat.completions.create({
       model: 'gpt-4o-mini',
       max_tokens: 200,
@@ -630,13 +765,15 @@ async function describeImage(buffer, caption = '') {
             {
               type: 'text',
               text:
-                'Кратко опиши, что на фото, на русском языке. ' +
-                'Если есть люди — упомяни их и обстановку. Только факты, коротко.' +
-                (caption ? ` Подпись к фото: "${caption}".` : ''),
+                'Опиши коротко и по делу, что изображено на этом фото или стикере ' +
+                '(на русском). Если есть люди — опиши их и обстановку. ' +
+                'ОБЯЗАТЕЛЬНО прочитай и процитируй любой текст на картинке ' +
+                '(например «ЗДРАСТИ», «привет», надписи на одежде) — это важно.' +
+                (caption ? ` Подпись/эмодзи: "${caption}".` : ''),
             },
             {
               type: 'image_url',
-              image_url: { url: `data:image/jpeg;base64,${base64}` },
+              image_url: { url: `data:${mime};base64,${base64}` },
             },
           ],
         },

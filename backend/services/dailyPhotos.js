@@ -5,6 +5,7 @@ const {
   getActiveClient,
   isPeerArchived,
   isNeverContact,
+  saveMessage,
   NFT_VOICE_AFTER_HOURS,
 } = require('./telegramClient');
 const helpRequestNotifier = require('./helpRequestNotifier');
@@ -17,6 +18,11 @@ const WINDOW_END_HOUR = 15;
 const PHOTO_TIMEZONE = process.env.WORK_TIMEZONE || 'Europe/Moscow';
 const NFT_VOICE_TAG = '[голосовое: nft.ogg]';
 
+// Метка в истории диалога: модель должна понимать, что это наш скрин флипа,
+// а не «фото от собеседника». objectionHandler ищет этот префикс.
+const FLIP_PHOTO_HISTORY_TAG =
+  '[фото от меня: скриншот прибыли с флиппинга NFT — купила дешевле, продала дороже]';
+
 const CAPTIONS = [
   'сегодня повезло 😊',
   'вот так бы всегда 🥹',
@@ -24,6 +30,11 @@ const CAPTIONS = [
   'на ужин заработала 👍',
   'неожиданно, приятно 🙃',
 ];
+
+function flipPhotoHistoryContent(caption) {
+  const cap = String(caption || '').trim();
+  return cap ? `${FLIP_PHOTO_HISTORY_TAG} Подпись: "${cap}"` : FLIP_PHOTO_HISTORY_TAG;
+}
 
 function pickRandomCaption() {
   return CAPTIONS[Math.floor(Math.random() * CAPTIONS.length)];
@@ -276,7 +287,25 @@ async function sendDuePhotos() {
         continue;
       }
 
-      await client.sendFile(entity, { file: imagePath, caption: pickRandomCaption() });
+      const caption = pickRandomCaption();
+      await client.sendFile(entity, { file: imagePath, caption });
+
+      // Пишем в историю, чтобы на «что это?» / «this one?» модель знала:
+      // это наш скрин прибыли с NFT-флипа, а не загадочная картинка.
+      try {
+        await saveMessage(
+          row.account_id,
+          row.peer_id,
+          row.peer_username,
+          'assistant',
+          flipPhotoHistoryContent(caption),
+        );
+      } catch (histErr) {
+        console.error(
+          `[Аккаунт ${row.account_id}] Фото ушло, но историю не записали (${row.peer_id}):`,
+          histErr.message,
+        );
+      }
 
       await db.execute('UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?', [row.id]);
 
@@ -347,4 +376,10 @@ function startDailyPhotoScheduler() {
   );
 }
 
-module.exports = { startDailyPhotoScheduler, schedulePendingSends, sendDuePhotos };
+module.exports = {
+  startDailyPhotoScheduler,
+  schedulePendingSends,
+  sendDuePhotos,
+  FLIP_PHOTO_HISTORY_TAG,
+  flipPhotoHistoryContent,
+};

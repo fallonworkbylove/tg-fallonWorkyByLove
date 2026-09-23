@@ -1531,9 +1531,23 @@ const MEDIA_TOKEN_RE = /<<\s*(?:PHOTO|VIDEO|CIRCLE)\s*>>/gi;
  * Вырезает из ответа модели медиа-токен и возвращает чистый текст и тип
  * запрошенного медиа ('photo' | 'video' | 'circle' | null).
  */
-// Отказные фразы, которые НЕ должны идти вместе с реальной отправкой медиа.
+// Отказные / «контактные» фразы, которые НЕ должны идти вместе с реальной
+// отправкой медиа. Модель иногда путает отказ в номере с просьбой кружка
+// и пишет «давай пока тут общаться» + <<CIRCLE>> — выглядит как фейк.
 const REFUSAL_RE =
-  /(пока рано|попозже|не могу|не буду|не кину|не кидаю|потом|в другой раз|рано ещё|рано еще|не сейчас|стесняюсь)/i;
+  /(пока рано|попозже|не могу|не буду|не кину|не кидаю|потом|в другой раз|рано ещё|рано еще|не сейчас|стесняюсь|давай пока тут|тут общаться|мне так удобнее|не даю|обща(ться|емся) тут|без (кружк|фото|видео)|не записываю|не снимаю)/i;
+
+/**
+ * Текст противоречит отправке медиа (отказ / «давай только текстом»).
+ */
+function isContradictoryMediaText(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (REFUSAL_RE.test(t)) return true;
+  // Короткий отказ в начале: «не, …», «неа, …», «нет, …»
+  if (/^(не|неа|нет|no|nope)\b/i.test(t)) return true;
+  return false;
+}
 
 // Явная просьба прислать медиа. Нужна, чтобы:
 //  1) такая просьба имела приоритет над голосовыми заготовками (вариант Б);
@@ -1595,11 +1609,11 @@ function extractMediaRequest(reply) {
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 
-  // Подстраховка: если модель всё же прислала отказ ВМЕСТЕ с меди��-токеном
-  // (например «неа, пока рано)» + <<PHOTO>>), убираем противореч��вый текст —
-  // раз медиа реально уходит, отказ выглядит абсурдно. Оставляем пусто:
-  // фото уйдёт со своей случайной дружелюбной подписью.
-  if (mediaType && REFUSAL_RE.test(text)) {
+  // Подстраховка: если модель всё же прислала отказ ВМЕСТЕ с медиа-токеном
+  // (например «не, давай пока тут общаться)» + <<CIRCLE>>), убираем
+  // противоречивый текст — раз медиа реально уходит, отказ выглядит как фейк.
+  // Оставляем пусто: файл уйдёт со своей случайной дружелюбной подписью.
+  if (mediaType && isContradictoryMediaText(text)) {
     text = '';
   }
 
@@ -1629,6 +1643,63 @@ function splitLaugh(reply) {
   const without = String(reply || '').replace(LAUGH_TOKEN_RE, ' ').replace(/[ \t]{2,}/g, ' ').trim();
   const peeled = peelLaugh(without);
   return { text: peeled.text, laugh: token || peeled.laugh };
+}
+
+// Реакции Telegram (обычный набор без premium-custom).
+const REACT_TOKEN_RE = /<<\s*REACT\s*:\s*([^>\n]+)\s*>>/gi;
+const ALLOWED_REACTIONS = new Set([
+  '👍', '❤️', '🔥', '😂', '🥰', '👏', '😁', '🤔', '😢', '🎉',
+  '🙏', '😍', '😭', '😘', '😮', '👀', '💔', '💯', '🤝', '🤗',
+  '😴', '😈', '🤡', '🥴', '🕊', '🍾', '💋', '❤',
+]);
+
+function normalizeReactionEmoji(raw) {
+  const cleaned = String(raw || '').trim();
+  if (!cleaned) return null;
+  // Берём первый символ/кластер эмодзи.
+  const first = [...cleaned][0];
+  if (!first) return null;
+  if (ALLOWED_REACTIONS.has(first)) return first;
+  // Иногда модель пишет ❤ без вариации — приводим к ❤️
+  if (first === '❤') return '❤️';
+  // Неизвестный эмодзи — не шлём (Telegram может отклонить).
+  return null;
+}
+
+/**
+ * Вырезает <<REACT:👍>> из ответа модели.
+ * Возвращает { text, reaction } — reaction это emoticon или null.
+ */
+function extractReaction(reply) {
+  const raw = String(reply || '');
+  const match = raw.match(/<<\s*REACT\s*:\s*([^>\n]+)\s*>>/i);
+  const reaction = match ? normalizeReactionEmoji(match[1]) : null;
+  const text = raw
+    .replace(REACT_TOKEN_RE, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+  return { text, reaction };
+}
+
+async function sendMessageReaction(client, peer, message, emoticon) {
+  const msgId = Number(message?.id);
+  if (!client || !peer || !msgId || !emoticon) return false;
+  try {
+    await client.invoke(
+      new Api.messages.SendReaction({
+        peer,
+        msgId,
+        reaction: [new Api.ReactionEmoji({ emoticon })],
+      }),
+    );
+    return true;
+  } catch (err) {
+    console.error(
+      'Не удалось поставить реакцию:',
+      err.errorMessage || err.message,
+    );
+    return false;
+  }
 }
 
 function laughedRecently(history) {
@@ -2039,8 +2110,85 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
     return attach(rawText);
   }
 
-  // 4. Прочее — возвращаем текст вместе с цитатой, если человек ответил на неё.
+  // 4. Стикер — раньше отбрасывался (пустой message.message), из‑за этого
+  // «ЗДРАСТИ»/привет-стикеры оставались без ответа.
+  if (isStickerMessage(message)) {
+    return attach(await extractStickerText(accountId, message, rawText));
+  }
+
+  // 5. Прочее — возвращаем текст вместе с цитатой, если человек ответил на неё.
   return attach(rawText);
+}
+
+const GREETING_STICKER_TEXT_RE =
+  /(здравств|здрасте|здрасти|здрасьт|привет|приветик|хай|хелло|hello|\bhi\b|good\s*morning|доброе|добрый)/i;
+const GREETING_STICKER_EMOJI_RE = /[👋🤟🤗🙋]|wave/i;
+
+function isStickerMessage(message) {
+  if (!message) return false;
+  if (message.sticker) return true;
+  const doc = message.document;
+  if (!doc || !Array.isArray(doc.attributes)) return false;
+  return doc.attributes.some((attr) => {
+    const name = String(attr?.className || '');
+    return (
+      name.includes('Sticker') ||
+      attr.stickerset != null ||
+      (typeof attr.alt === 'string' && attr.alt && name.includes('DocumentAttribute'))
+    );
+  });
+}
+
+function getStickerEmoji(message) {
+  const doc = message.sticker || message.document;
+  if (!doc || !Array.isArray(doc.attributes)) return '';
+  for (const attr of doc.attributes) {
+    if (typeof attr.alt === 'string' && attr.alt.trim()) return attr.alt.trim();
+  }
+  return '';
+}
+
+/**
+ * Стикер → текст для буфера/AI. Приветственные стикеры нормализуем в «привет»,
+ * чтобы сработали голосовые триггеры и модель ответила приветствием.
+ */
+async function extractStickerText(accountId, message, rawText) {
+  const emoji = getStickerEmoji(message);
+  let description = '';
+
+  const client = getActiveClient(accountId);
+  if (client) {
+    try {
+      const buffer = await client.downloadMedia(message, {});
+      if (buffer && buffer.length) {
+        description = (await describeImage(buffer, emoji || 'стикер')) || '';
+        if (description) {
+          console.log(
+            `[${accountLabel(accountId)}] Стикер распознан: "${description}"`,
+          );
+        }
+      }
+    } catch (e) {
+      console.error(
+        `[${accountLabel(accountId)}] Не удалось скачать/распознать стикер:`,
+        e.message,
+      );
+    }
+  }
+
+  const blob = `${emoji} ${description} ${rawText}`.trim();
+  const isGreeting =
+    GREETING_STICKER_TEXT_RE.test(blob) || GREETING_STICKER_EMOJI_RE.test(emoji);
+
+  if (isGreeting) {
+    // «привет» в начале — для triggers.json (voprosy.ogg) и естественного ответа.
+    const detail = description || emoji || 'поздоровался стикером';
+    return `привет\n[стикер-приветствие]: ${detail}`;
+  }
+
+  // Любой другой стикер всё равно не игнорируем — пусть AI коротко отреагирует.
+  const detail = description || emoji || 'без текста';
+  return `[стикер от собеседника]: ${detail}`;
 }
 
 /**
@@ -2170,7 +2318,7 @@ async function flushMessageBuffer(accountId, peerId, senderName) {
  * это приводило к тому, что реальный вопрос собеседника оставался б��з ответа.
  * Если пауза для этого диалога уже идёт — второй раз не планируем.
  */
-function scheduleReengage(accountId, sender, peerId, senderName, history, text) {
+function scheduleReengage(accountId, sender, peerId, senderName, history, text, message) {
   const key = bufferKey(accountId, peerId);
   if (deferredDialogs.has(key)) return;
 
@@ -2187,7 +2335,7 @@ function scheduleReengage(accountId, sender, peerId, senderName, history, text) 
   // Не держим п��оцесс живым только ради этого таймера.
   if (typeof timer.unref === 'function') timer.unref();
 
-  deferredDialogs.set(key, { timer, sender, senderName, history, text });
+  deferredDialogs.set(key, { timer, sender, senderName, history, text, message });
   console.log(
     `[${accountLabel(accountId)}] «Занята»: молчу ${Math.round(
       delay / 60000,
@@ -2207,7 +2355,7 @@ async function fireReengage(accountId, peerId) {
   deferredDialogs.delete(key);
   if (!entry) return;
 
-  const { sender, senderName, history, text } = entry;
+  const { sender, senderName, history, text, message } = entry;
 
   const client = getActiveClient(accountId);
   if (!client) return;
@@ -2259,7 +2407,13 @@ async function fireReengage(accountId, peerId) {
     }
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, text);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
-    const objectionHint = objectionHandler.detectHint(text);
+    const liveHistory = await getHistory(accountId, peerId);
+    const replyHistory = liveHistory.length ? liveHistory : history;
+    const flipPhotoQuestion = objectionHandler.shouldForceReplyForFlipPhoto(
+      text,
+      replyHistory,
+    );
+    const objectionHint = objectionHandler.detectHint(text, replyHistory);
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, text);
 
     // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на
@@ -2278,10 +2432,10 @@ async function fireReengage(accountId, peerId) {
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
 
-    const rawReply = await generateReply(settings.prompt, history, text, {
+    const rawReply = await generateReply(settings.prompt, replyHistory, text, {
       mediaEnabled,
       noMediaExcuse,
-      campaignHint: nft.hint,
+      campaignHint: flipPhotoQuestion ? null : nft.hint,
       learningSnippet,
       manualSnippet,
       ragSnippet,
@@ -2295,8 +2449,9 @@ async function fireReengage(accountId, peerId) {
     if (dueMemory) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
+    const { text: replyWithoutReact, reaction } = extractReaction(replyWithoutLaugh);
     const { text: reply, mediaType: rawMediaType } =
-      extractMediaRequest(replyWithoutLaugh);
+      extractMediaRequest(replyWithoutReact);
 
     let mediaType = rawMediaType;
     if (explicitMediaRequest && mediaLink && !mediaType) {
@@ -2307,9 +2462,16 @@ async function fireReengage(accountId, peerId) {
     }
 
     let outText = reply;
-    if (!outText && rawMediaType && !mediaType) {
+    if (!outText && rawMediaType && !mediaType && !reaction) {
       const fillers = ['да по делам)', 'та так, по своим)', 'ничего особенного)', 'да ничё такого)'];
       outText = fillers[Math.floor(Math.random() * fillers.length)];
+    }
+
+    if (mediaType && mediaEnabled && isContradictoryMediaText(outText)) {
+      console.log(
+        `[${accountLabel(accountId)}] Убрал отказной текст перед медиа для ${senderName}: "${outText}"`,
+      );
+      outText = '';
     }
 
     if (nft.sayWorkProblem && await claimWorkMention(accountId, peerId)) {
@@ -2317,14 +2479,31 @@ async function fireReengage(accountId, peerId) {
       outText = withWorkProblemLine(outText);
     }
 
+    const reactionOnly = !!reaction && !outText && !mediaType && !nft.sendVoice;
+
     // Небольшая «естественная» пауза перед отправкой — как будто отвлеклась
     // на пару минут, но всё-таки вернулась ответить на вопрос. Длительность
     // индикатора «печатает...» зависит от длины итогового текста.
     const delayMs = delayBeforeSendMs(settings, outText);
-    console.log(
-      `[${accountLabel(accountId)}] Пауза ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
-    );
-    await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
+    if (reactionOnly) {
+      await sleep(800 + Math.floor(Math.random() * 2200));
+    } else {
+      console.log(
+        `[${accountLabel(accountId)}] Пауза ${Math.round(delayMs / 1000)}с перед отложенным ответом для ${senderName}.`,
+      );
+      await waitBeforeReply(client, sender, delayMs, computeTypingMs(outText));
+    }
+
+    if (reaction && message) {
+      const ok = await sendMessageReaction(client, sender, message, reaction);
+      if (ok) {
+        lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
+        await saveMessage(accountId, peerId, senderName, 'assistant', `[реакция:${reaction}]`);
+        console.log(
+          `[${accountLabel(accountId)}] Отложенная реакция ${reaction} для ${senderName}.`,
+        );
+      }
+    }
 
     if (outText) {
       await markPeerAsRead(client, sender, null);
@@ -2337,7 +2516,7 @@ async function fireReengage(accountId, peerId) {
       );
     }
 
-    if (laugh && !nft.sendVoice && !laughedRecently(history)) {
+    if (laugh && !nft.sendVoice && !reactionOnly && !laughedRecently(history)) {
       await sendLaughBubble(client, sender, accountId, peerId, senderName);
     }
 
@@ -2674,14 +2853,19 @@ async function processBufferedMessages(
     // самом начале знакомства (пока история короткая).
     // Пока «занята» — сообщение остаётся непрочитанным (галочки только
     // когда реально отвечаем).
+    const flipPhotoQuestion = objectionHandler.shouldForceReplyForFlipPhoto(
+      text,
+      history,
+    );
     if (
       forcedDelayMs == null &&
       !explicitMediaRequest &&
       !voice &&
+      !flipPhotoQuestion &&
       history.length >= DEFER_MIN_HISTORY &&
       Math.random() < DEFER_CHANCE
     ) {
-      scheduleReengage(accountId, sender, peerId, senderName, history, text);
+      scheduleReengage(accountId, sender, peerId, senderName, history, text, message);
       return;
     }
 
@@ -2723,7 +2907,7 @@ async function processBufferedMessages(
     }
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, contextualText);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
-    const objectionHint = objectionHandler.detectHint(text);
+    const objectionHint = objectionHandler.detectHint(text, history);
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, contextualText);
 
     // Обучение на прошлом опыте: сначала оцениваем реакцию собеседника на
@@ -2745,7 +2929,7 @@ async function processBufferedMessages(
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
       noMediaExcuse,
-      campaignHint: nft.hint,
+      campaignHint: flipPhotoQuestion ? null : nft.hint,
       learningSnippet,
       manualSnippet,
       ragSnippet,
@@ -2760,7 +2944,8 @@ async function processBufferedMessages(
 
     // Отделяем текст от запрошенного типа медиа (токен вырезаем из текста).
     const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
-    const { text: reply, mediaType: rawMediaType } = extractMediaRequest(replyWithoutLaugh);
+    const { text: replyWithoutReact, reaction } = extractReaction(replyWithoutLaugh);
+    const { text: reply, mediaType: rawMediaType } = extractMediaRequest(replyWithoutReact);
 
     // Защита от «медиа два хода подряд»: если модель снова захотела прислать
     // медиа, но прошлый ответ уже был медиа И человек НЕ просил новое явно —
@@ -2784,9 +2969,16 @@ async function processBufferedMessages(
     // текста моде��ь не дала — тогд�� шлём короткую нейтральную фразу, чтобы
     // не промолчать на вопрос.
     let outText = reply;
-    if (!outText && rawMediaType && !mediaType) {
+    if (!outText && rawMediaType && !mediaType && !reaction) {
       const fillers = ['да по делам)', 'та так, по своим)', 'ничего особенного)', 'да ничё такого)'];
       outText = fillers[Math.floor(Math.random() * fillers.length)];
+    }
+
+    if (mediaType && mediaEnabled && isContradictoryMediaText(outText)) {
+      console.log(
+        `[${accountLabel(accountId)}] Убрал отказной текст перед медиа для ${senderName}: "${outText}"`,
+      );
+      outText = '';
     }
 
     if (nft.sayWorkProblem && await claimWorkMention(accountId, peerId)) {
@@ -2794,14 +2986,24 @@ async function processBufferedMessages(
       outText = withWorkProblemLine(outText);
     }
 
+    const reactionOnly = !!reaction && !outText && !mediaType && !voice && !nft.sendVoice;
+
     // 5. Держим случайную паузу с индикатором «печатает...» — так ответ
     // выглядит ��ивым, а не мгновенным. Длительность индикатора зависит от
     // длины итогового текста, чтобы длинные сообщения «печатались» дольше.
-    const textDelayMs = forcedDelayMs != null ? forcedDelayMs : delayBeforeSendMs(settings, outText);
-    console.log(
-      `[${accountLabel(accountId)}] Пауза ${Math.round(textDelayMs / 1000)}с перед ответом для ${senderName}.`,
-    );
-    await waitBeforeReply(client, sender, textDelayMs, computeTypingMs(outText));
+    if (reactionOnly) {
+      const reactDelay = 800 + Math.floor(Math.random() * 2200);
+      console.log(
+        `[${accountLabel(accountId)}] Пауза ${Math.round(reactDelay / 1000)}с перед реакцией для ${senderName}.`,
+      );
+      await sleep(reactDelay);
+    } else {
+      const textDelayMs = forcedDelayMs != null ? forcedDelayMs : delayBeforeSendMs(settings, outText);
+      console.log(
+        `[${accountLabel(accountId)}] Пауза ${Math.round(textDelayMs / 1000)}с перед ответом для ${senderName}.`,
+      );
+      await waitBeforeReply(client, sender, textDelayMs, computeTypingMs(outText));
+    }
 
     // Пока ждали, другой путь мог уже ответить — не шлём дубль.
     const answeredId = lastAnsweredMsgId.get(inFlightKey);
@@ -2819,6 +3021,18 @@ async function processBufferedMessages(
       return;
     }
 
+    if (reaction) {
+      const ok = await sendMessageReaction(client, sender, message, reaction);
+      if (ok) {
+        lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
+        if (msgId) lastAnsweredMsgId.set(inFlightKey, msgId);
+        await saveMessage(accountId, peerId, senderName, 'assistant', `[реакция:${reaction}]`);
+        console.log(
+          `[${accountLabel(accountId)}] Реакция ${reaction} для ${senderName}.`,
+        );
+      }
+    }
+
     if (outText) {
       await markPeerAsRead(client, sender, message);
       await client.sendMessage(sender, { message: outText });
@@ -2829,7 +3043,7 @@ async function processBufferedMessages(
       console.log(`[${accountLabel(accountId)}] Ответ для ${senderName}: "${outText}"`);
     }
 
-    if (laugh && !voice && !nft.sendVoice && !laughedRecently(history)) {
+    if (laugh && !voice && !nft.sendVoice && !reactionOnly && !laughedRecently(history)) {
       await sendLaughBubble(client, sender, accountId, peerId, senderName);
     }
 
@@ -2955,6 +3169,7 @@ async function processBufferedMessages(
         deferred.text = [deferred.text, combined].filter(Boolean).join('\n');
         deferred.sender = pending.sender || deferred.sender;
         deferred.senderName = pending.senderName || deferred.senderName;
+        if (pending.message) deferred.message = pending.message;
         console.log(
           `[${accountLabel(accountId)}] ${pending.senderName}: дописал в паузу «занята», отвечу одним разом.`,
         );
@@ -3147,6 +3362,21 @@ const MORNING_GREETINGS = [
   'утречко доброе, береги себя)',
 ];
 
+const NIGHT_GREETINGS_EN = [
+  'good night, sweet dreams)',
+  'alright, time to sleep, night night',
+  'gonna pass out, sweet dreams, take care',
+  'going to bed, night night, dream of me',
+  'good night, see you tomorrow, gonna miss you',
+];
+const MORNING_GREETINGS_EN = [
+  'good morning, how did you sleep)',
+  'morning, missed you',
+  'heyyy, good morning',
+  'morning, woke up and thought of you',
+  'good morning, take care)',
+];
+
 const MORNING_BY_KIND = {
   robot: MORNING_GREETINGS,
   early: [
@@ -3203,6 +3433,101 @@ const NIGHT_BY_KIND = {
     'не хотела ложиться и вот, отрубаюсь',
   ],
 };
+
+const MORNING_BY_KIND_EN = {
+  robot: MORNING_GREETINGS_EN,
+  early: [
+    'woke up so early lol, good morning)',
+    'up early, hey',
+    'couldnt sleep, already awake',
+    'eyes just opened, morning',
+  ],
+  normal: [
+    'good morning, how did you sleep)',
+    'morning, missed you',
+    'heyyy, good morning',
+    'morning, woke up and thought of you',
+  ],
+  oversleep: [
+    'overslept hard, just woke up',
+    'slept in, morning',
+    'sorry, overslept',
+    'just opened my eyes, slept in',
+  ],
+  lunch: [
+    'literally woke up around lunch haha',
+    'slept till lunch, hey',
+    'got up at lunch, morning)',
+    'morning, only crawled out around lunch',
+  ],
+  late: [
+    'just woke up, slept in properly',
+    'morning, almost slept till lunch',
+    'slept almost till lunch, hey',
+  ],
+};
+
+const NIGHT_BY_KIND_EN = {
+  robot: NIGHT_GREETINGS_EN,
+  early: [
+    'getting sleepy, gonna go to bed',
+    'eyes closing, night night',
+    'hitting the bed early tonight, good night',
+  ],
+  half_past: [
+    'didnt want to sleep but its already half past twelve, night',
+    'could stay up but my eyes are closing',
+    'alright im done, stayed up too late, good night)',
+  ],
+  late: [
+    'couldnt sleep but im crashing now',
+    'stayed up too late, night',
+    'eyes closing on their own, good night',
+  ],
+  three_am: [
+    'its like 3am, im going to sleep',
+    'stayed up till three, good night',
+    'didnt want to go to bed and here we are, crashing',
+  ],
+};
+
+function guessGreetingLang(text) {
+  if (!text || typeof text !== 'string') return null;
+  const letters = text.replace(/[^a-zA-Zа-яёА-ЯЁ]/gi, '');
+  if (letters.length < 2) return null;
+  const cyr = (letters.match(/[а-яёА-ЯЁ]/gi) || []).length;
+  const lat = (letters.match(/[a-zA-Z]/g) || []).length;
+  if (lat > cyr) return 'en';
+  return 'ru';
+}
+
+function pickGreetingPhrases(kind, mood, lang) {
+  if (lang === 'en') {
+    if (kind === 'night') return NIGHT_BY_KIND_EN[mood] || NIGHT_GREETINGS_EN;
+    return MORNING_BY_KIND_EN[mood] || MORNING_GREETINGS_EN;
+  }
+  if (kind === 'night') return NIGHT_BY_KIND[mood] || NIGHT_GREETINGS;
+  return MORNING_BY_KIND[mood] || MORNING_GREETINGS;
+}
+
+async function resolveGreetingLang(client, sender, message) {
+  const lastText = typeof message?.message === 'string' ? message.message : '';
+  if (!message?.out) {
+    return guessGreetingLang(lastText) || 'ru';
+  }
+  try {
+    const msgs = await client.getMessages(sender, { limit: 12 });
+    for (const m of msgs) {
+      if (m.out) continue;
+      const text = typeof m.message === 'string' ? m.message : '';
+      const lang = guessGreetingLang(text);
+      if (lang) return lang;
+    }
+  } catch (_) {
+    // ignore
+  }
+  return guessGreetingLang(lastText) || 'ru';
+}
 
 const WAKE_ROLLS = [
   { id: 'robot', weight: 12, from: 9 * 60, to: 9 * 60 + 8 },
@@ -3416,9 +3741,6 @@ async function sendGreetings(accountId, kind, mood) {
 
     const nowSec = Math.floor(Date.now() / 1000);
     const recentThreshold = nowSec - GREETING_RECENT_DAYS * 24 * 3600;
-    const phrases = kind === 'night'
-      ? (NIGHT_BY_KIND[mood] || NIGHT_GREETINGS)
-      : (MORNING_BY_KIND[mood] || MORNING_GREETINGS);
     let sent = 0;
 
     // Чтобы антифлуд не бил всегда по одним и тем же «хвостовым» диалогам.
@@ -3447,7 +3769,7 @@ async function sendGreetings(accountId, kind, mood) {
       // (разговор на паузе). Непрочитанные ночью не трогаем.
       // Утром пишем «доброе утро» ВСЕМ недавним; если есть непрочитанный
       // вопрос — следом идёт обычный ответ по теме.
-      if (kind === 'night' && hasUnanswered) continue;
+      if (kind === 'night' && !hasUnanswered) continue;
 
       const sender = dialog.entity;
       if (!sender || sender.bot || sender.self || isDeletedUser(sender) || isNeverContact(sender)) continue;
@@ -3468,6 +3790,8 @@ async function sendGreetings(accountId, kind, mood) {
       if (!tail.hasIncoming) continue;
 
       const senderName = sender.username || sender.firstName || peerId;
+      const lang = await resolveGreetingLang(client, sender, message);
+      const phrases = pickGreetingPhrases(kind, mood, lang);
       const phrase = pickRandom(phrases);
       try {
         // Небольшая человеческая пауза между отправками (антифлуд).
