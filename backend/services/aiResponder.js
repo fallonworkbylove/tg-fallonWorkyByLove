@@ -312,15 +312,11 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // На прямой вопрос про ИИ отвечаем естественно, без одной заученной формулы.
   const roleReminder =
     'Строго следуй инструкции персонажа выше и всем её правилам. ' +
-    'Если собеседник прямо спрашивает, ИИ ли ты или бот ли ты, не отвечай шаблонно и не повторяй предыдущую фразу. ' +
-    'Выбери по контексту одну естественную реакцию из примеров: ' +
-    '«ну вот, я тебе пишу, а ты думаешь что я бот((»; ' +
-    '«обидно, если честно. я живой человек вроде(»; ' +
-    '«с чего ты взял? я реально не понимаю, что я такого сказала»; ' +
-    '«а я похожа на ИИ?))»; ' +
-    '«а ты часто с ИИ общаешься, раз такие вопросы задаёшь?))»; ' +
-    '«ну и какие у тебя критерии? давай проверим ахах». ' +
-    'Можно слегка переформулировать под ситуацию, сохранить живой разговорный стиль и не переводить тему без причины.';
+    'Если собеседник называет тебя ботом/ИИ/роботом — НЕ отвечай одной и той же заученной фразой. ' +
+    'Сначала глянь свои недавние ответы в истории: если уже писала «обидно, если честно» / «я живая» — ' +
+    'эту формулировку повторять ЗАПРЕЩЕНО, скажи совсем другим тоном (ирония, лёгкая злость, «ну ок»). ' +
+    'Если упрекает что не спросила имя — сразу спроси имя, без повторной защиты что ты человек. ' +
+    'Коротко, по-живому, без шаблона «я живая, просто общаюсь как мне комфортно» и без резкого «давай о чём-то интересном».';
 
   // Защита от повторов: без явного запрета лёгкая модель регулярно
   // переспрашивает то же самое (например «что делаешь?») спустя пару
@@ -609,7 +605,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const rawText = completion.choices[0]?.message?.content?.trim() || '';
   const cleaned = applyAntiDetectStyle(rawText);
   const strippedFacts = stripReaskedKnownFacts(cleaned, contextGuard);
-  return stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
+  const strippedStay = stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
+  return stripRepeatedBotDefense(strippedStay, history, contextualUserMessage);
 }
 
 /**
@@ -878,6 +875,45 @@ function stripFalseStayHereRefusal(reply, userMessage, history, options = {}) {
     return 'ага) а ты что имел в виду?';
   }
   return text;
+}
+
+const BOT_DEFENSE_OPENER_RE =
+  /^обидно,?\s*если\s+честно[^.!?\n]*[.!)]*\s*/i;
+const BOT_DEFENSE_ALIVE_RE =
+  /я\s+жив(ая|ой)[^.!?\n]*[.!)]*/gi;
+const BOT_DEFENSE_COMFORT_RE =
+  /просто\s+обща(юсь|юсь)\s+так[^.!?\n]*[.!)]*/gi;
+
+/**
+ * Не даёт дважды подряд гнать шаблон «обидно, если честно / я живая».
+ */
+function stripRepeatedBotDefense(reply, history, userMessage) {
+  if (!reply) return reply;
+  const recentAssistant = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-4)
+    .map((h) => String(h.content || ''))
+    .join('\n');
+  const usedOpener = /обидно,?\s*если\s+честно/i.test(recentAssistant);
+  const usedAlive = /я\s+жив(ая|ой)/i.test(recentAssistant);
+  if (!usedOpener && !usedAlive) return reply;
+
+  let text = String(reply);
+  if (usedOpener) text = text.replace(BOT_DEFENSE_OPENER_RE, '');
+  if (usedAlive) {
+    text = text
+      .replace(BOT_DEFENSE_ALIVE_RE, ' ')
+      .replace(BOT_DEFENSE_COMFORT_RE, ' ');
+  }
+  text = text.replace(/[ \t]{2,}/g, ' ').replace(/\s+([).!])/g, '$1').trim();
+
+  if (text.length >= 8) return text;
+
+  const msg = String(userMessage || '');
+  if (/(как\s+меня\s+зовут|мо[её]\s+имя|имени\s+не)/i.test(msg)) {
+    return 'хах ну да) а как тебя зовут?';
+  }
+  return 'ну ок) а что именно тебя смутило в моих словах?';
 }
 
 /**
