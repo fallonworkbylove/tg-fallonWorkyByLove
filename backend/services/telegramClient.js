@@ -1,9 +1,18 @@
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 require('./relaxGramJsPing');
 const { TelegramClient, Api } = require('telegram');
 const { ConnectionTCPFull } = require('telegram/network');
 const { StringSession } = require('telegram/sessions');
+
+const execFileAsync = promisify(execFile);
+// Лимит скачивания входящего видео (одноразовые тоже). Больше — только превью.
+const MAX_INCOMING_VIDEO_BYTES = 28 * 1024 * 1024;
+// Telegram view-once: ttl_seconds == 0x7FFFFFFF
+const VIEW_ONCE_TTL_SECONDS = 0x7fffffff;
 
 // ---------------------------------------------------------------------------
 // Соединение через порт 443.
@@ -2096,12 +2105,16 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
       const buffer = await client.downloadMedia(message, {});
       if (buffer && buffer.length) {
         const description = await describeImage(buffer, rawText);
+        if (isViewOnceOrExpiringMedia(message)) {
+          await markMessageContentsOpened(client, message);
+        }
         if (description) {
           console.log(
             `[${accountLabel(accountId)}] Фото распознано: "${description}"`,
           );
           const caption = rawText ? ` Подпись: "${rawText}".` : '';
-          return attach(`[фото от собеседника]: ${description}.${caption}`);
+          const once = isViewOnceOrExpiringMedia(message) ? 'одноразовое ' : '';
+          return attach(`[${once}фото от собеседника]: ${description}.${caption}`);
         }
       }
     } catch (e) {
@@ -2110,19 +2123,264 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
     return attach(rawText);
   }
 
-  // 4. Стикер — раньше отбрасывался (пустой message.message), из‑за этого
+  // 4. Видео / кружок / одноразовое видео — скачиваем, смотрим кадры, помечаем просмотренным.
+  if (isVideoMessage(message)) {
+    return attach(await extractIncomingVideoText(accountId, message, rawText));
+  }
+
+  // 5. Стикер — раньше отбрасывался (пустой message.message), из‑за этого
   // «ЗДРАСТИ»/привет-стикеры оставались без ответа.
   if (isStickerMessage(message)) {
     return attach(await extractStickerText(accountId, message, rawText));
   }
 
-  // 5. Прочее — возвращаем текст вместе с цитатой, если человек ответил на неё.
+  // 6. Прочее — возвращаем текст вместе с цитатой, если человек ответил на неё.
   return attach(rawText);
 }
 
 const GREETING_STICKER_TEXT_RE =
   /(здравств|здрасте|здрасти|здрасьт|привет|приветик|хай|хелло|hello|\bhi\b|good\s*morning|доброе|добрый)/i;
 const GREETING_STICKER_EMOJI_RE = /[👋🤟🤗🙋]|wave/i;
+
+function mediaTtlSeconds(message) {
+  const ttl = message?.media?.ttlSeconds;
+  return typeof ttl === 'number' ? ttl : null;
+}
+
+function isViewOnceOrExpiringMedia(message) {
+  const ttl = mediaTtlSeconds(message);
+  return ttl != null && ttl > 0;
+}
+
+function isViewOnceMedia(message) {
+  const ttl = mediaTtlSeconds(message);
+  return ttl === VIEW_ONCE_TTL_SECONDS || ttl === 2147483647;
+}
+
+async function markMessageContentsOpened(client, message) {
+  if (!client || !message?.id) return;
+  try {
+    await client.invoke(new Api.messages.ReadMessageContents({ id: [message.id] }));
+  } catch (err) {
+    console.error(
+      `[markMessageContentsOpened] ReadMessageContents #${message.id}:`,
+      err.message,
+    );
+  }
+}
+
+function isVideoMessage(message) {
+  if (!message) return false;
+  if (message.voice || message.audio || message.photo) return false;
+  if (isStickerMessage(message)) return false;
+  if (message.video || message.videoNote || message.gif) return true;
+  if (message.media && message.media.video === true) return true;
+  const doc = message.document;
+  if (!doc) return false;
+  const mime = String(doc.mimeType || '').toLowerCase();
+  if (mime.startsWith('video/')) return true;
+  if (!Array.isArray(doc.attributes)) return false;
+  return doc.attributes.some((attr) => {
+    const name = String(attr?.className || '');
+    return (
+      name.includes('DocumentAttributeVideo') ||
+      name.includes('DocumentAttributeAnimated') ||
+      attr.roundMessage === true
+    );
+  });
+}
+
+/**
+ * Достаёт 1–3 кадра из видео через ffmpeg (нужен на сервере).
+ */
+async function extractVideoFrameBuffers(videoBuffer, maxFrames = 3) {
+  if (!videoBuffer || !videoBuffer.length) return [];
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tgvid-'));
+  const inPath = path.join(tmp, 'in.mp4');
+  try {
+    fs.writeFileSync(inPath, videoBuffer);
+    let duration = 0;
+    try {
+      const { stdout } = await execFileAsync(
+        'ffprobe',
+        [
+          '-v',
+          'error',
+          '-show_entries',
+          'format=duration',
+          '-of',
+          'default=noprint_wrappers=1:nokey=1',
+          inPath,
+        ],
+        { timeout: 20000, windowsHide: true },
+      );
+      duration = Math.max(0, Number.parseFloat(String(stdout).trim()) || 0);
+    } catch (_) {
+      duration = 0;
+    }
+
+    const stamps = [];
+    if (duration >= 0.4) {
+      for (let i = 0; i < maxFrames; i += 1) {
+        const t = ((i + 0.35) / maxFrames) * duration;
+        stamps.push(Math.min(Math.max(0, t), Math.max(0, duration - 0.05)));
+      }
+    } else {
+      stamps.push(0);
+    }
+
+    const frames = [];
+    for (let i = 0; i < stamps.length; i += 1) {
+      const outPath = path.join(tmp, `frame_${i}.jpg`);
+      try {
+        await execFileAsync(
+          'ffmpeg',
+          [
+            '-y',
+            '-ss',
+            stamps[i].toFixed(2),
+            '-i',
+            inPath,
+            '-frames:v',
+            '1',
+            '-q:v',
+            '3',
+            outPath,
+          ],
+          { timeout: 25000, windowsHide: true },
+        );
+        if (fs.existsSync(outPath)) {
+          const buf = fs.readFileSync(outPath);
+          if (buf.length > 100) frames.push(buf);
+        }
+      } catch (_) {
+        // один кадр не вышел — пробуем следующий
+      }
+    }
+    return frames;
+  } finally {
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch (_) {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Видео / одноразовое видео / кружок → текст для AI.
+ * Скачиваем файл, смотрим кадры (vision), при наличии звука — Whisper,
+ * для TTL/view-once помечаем просмотренным через ReadMessageContents.
+ */
+async function extractIncomingVideoText(accountId, message, rawText) {
+  const client = getActiveClient(accountId);
+  const viewOnce = isViewOnceMedia(message);
+  const expiring = isViewOnceOrExpiringMedia(message);
+  const label = viewOnce
+    ? 'одноразовое видео'
+    : message.videoNote
+      ? 'кружок'
+      : 'видео';
+
+  if (!client) {
+    return rawText || `[${label} от собеседника]`;
+  }
+
+  let opened = false;
+  const markOpened = async () => {
+    if (opened || !expiring) return;
+    opened = true;
+    await markMessageContentsOpened(client, message);
+  };
+
+  try {
+    const buffer = await client.downloadMedia(message, {});
+    if (!buffer || !buffer.length) {
+      console.log(
+        `[${accountLabel(accountId)}] ${label}: пустой downloadMedia`,
+      );
+      return rawText || `[${label} от собеседника]: не удалось скачать`;
+    }
+
+    let frameBuffers = [];
+    let transcript = '';
+
+    if (buffer.length <= MAX_INCOMING_VIDEO_BYTES) {
+      frameBuffers = await extractVideoFrameBuffers(buffer, 3);
+      try {
+        transcript = (await transcribeAudio(buffer, 'video.mp4')) || '';
+      } catch (e) {
+        console.error(
+          `[${accountLabel(accountId)}] Whisper по видео:`,
+          e.message,
+        );
+      }
+    } else {
+      console.log(
+        `[${accountLabel(accountId)}] ${label} слишком большое (${buffer.length} байт) — только превью`,
+      );
+      try {
+        const thumb = await client.downloadMedia(message, { thumb: 0 });
+        if (thumb && thumb.length) frameBuffers = [thumb];
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    if (!frameBuffers.length) {
+      try {
+        const thumb = await client.downloadMedia(message, { thumb: 0 });
+        if (thumb && thumb.length) frameBuffers.push(thumb);
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    const descriptions = [];
+    for (const frame of frameBuffers.slice(0, 3)) {
+      try {
+        const d = await describeImage(frame, rawText || `кадр из ${label}`);
+        if (d) descriptions.push(d);
+      } catch (e) {
+        console.error(
+          `[${accountLabel(accountId)}] Vision по кадру видео:`,
+          e.message,
+        );
+      }
+    }
+
+    await markOpened();
+
+    const parts = [];
+    if (descriptions.length) {
+      parts.push(
+        descriptions.length === 1
+          ? descriptions[0]
+          : descriptions.map((d, i) => `(кадр ${i + 1}) ${d}`).join(' '),
+      );
+    }
+    if (transcript) {
+      parts.push(`на видео сказано: «${transcript}»`);
+    }
+    if (!parts.length) {
+      parts.push('короткое видео, деталей не разобрала');
+    }
+
+    const caption = rawText ? ` Подпись: "${rawText}".` : '';
+    const result = `[${label} от собеседника]: ${parts.join('. ')}.${caption}`;
+    console.log(
+      `[${accountLabel(accountId)}] ${label} обработано: "${result.slice(0, 180)}"`,
+    );
+    return result;
+  } catch (err) {
+    console.error(
+      `[${accountLabel(accountId)}] Не удалось обработать ${label}:`,
+      err.message,
+    );
+    await markOpened();
+    return rawText || `[${label} от собеседника]`;
+  }
+}
 
 function isStickerMessage(message) {
   if (!message) return false;
@@ -2234,7 +2492,7 @@ async function handleIncomingMessage(accountId, event) {
     // только когда реально отвечаем.
 
     // Фильтр 3: извлекаем текст. Голосовые расшифровываем (Whisper),
-    // фото распознаём (vision) — так бот «слышит» и «видит» сообщения.
+    // фото/видео распознаём (vision + кадры), одноразовые медиа открываем.
     // Для чатов из списка исключений распознавание фото пропускается.
     const text = await extractIncomingText(accountId, message, peerId, peerUsername);
     if (!text || !text.trim()) return;
