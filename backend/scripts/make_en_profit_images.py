@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EN cards: clean panel + RU quote chrome, English labels, TON/$ only."""
+"""EN cards: clean panel inside RU message bounds (keep wallpaper margins)."""
 from __future__ import annotations
 
 import os
@@ -24,28 +24,61 @@ def src_path(fname: str) -> str:
     return p if os.path.exists(p) else os.path.join(SRC_FALLBACK, fname)
 
 
+def find_white_card_x(im: Image.Image, panel_y: int) -> tuple[int, int]:
+    """Left/right of white message card inside screenshot (wallpaper margins stay)."""
+    w, h = im.size
+    y = min(panel_y + 80, h - 10)
+    left = 0
+    right = w - 1
+    for x in range(w):
+        r, g, b = im.getpixel((x, y))
+        if r > 240 and g > 240 and b > 240:
+            left = x
+            break
+    for x in range(w - 1, -1, -1):
+        r, g, b = im.getpixel((x, y))
+        if r > 240 and g > 240 and b > 240:
+            right = x
+            break
+    return left, right
+
+
 def render_boxer() -> str:
     fname = "profits2.jpg"
     ru = Image.open(src_path(fname)).convert("RGB")
     im = ru.copy()
-    draw = ImageDraw.Draw(im)
     w, h = im.size
     panel_y = 608
+    left, right = find_white_card_x(ru, panel_y)
+    # keep a couple px inside for AA
+    left = max(0, left)
+    right = min(w - 1, right)
 
-    # Clean white panel (no ghosting)
-    draw.rectangle((0, panel_y, w, h), fill=(255, 255, 255))
+    # Preserve wallpaper margins from RU, only wipe the white card body
+    margins_left = ru.crop((0, panel_y, left, h))
+    margins_right = ru.crop((right + 1, panel_y, w, h))
 
-    # Paste original Telegram quote chrome from RU (bar + ”), wipe only text area
-    quote = ru.crop((40, 888, 600, 940))
-    q = quote.copy()
-    qd = ImageDraw.Draw(q)
-    qd.rectangle((18, 6, 500, 46), fill=(236, 246, 250))  # soft fill matching RU quote
-    im.paste(q, (40, 888))
+    draw = ImageDraw.Draw(im)
+    draw.rectangle((left, panel_y, right, h - 1), fill=(255, 255, 255))
+
+    # Quote chrome from RU, clipped to card
+    qy0, qy1 = 888, 940
+    qx0, qx1 = max(left + 4, 40), min(right - 4, 600)
+    quote = ru.crop((qx0, qy0, qx1, qy1)).copy()
+    qd = ImageDraw.Draw(quote)
+    qw, qh = quote.size
+    # wipe text, keep left bar (~4px) and right ” (~24px)
+    qd.rectangle((10, 4, max(11, qw - 26), qh - 4), fill=(236, 246, 250))
+    im.paste(quote, (qx0, qy0))
+
+    # restore wallpaper margins so white never sticks past the photo/message edge
+    im.paste(margins_left, (0, panel_y))
+    im.paste(margins_right, (right + 1, panel_y))
 
     ink = (18, 22, 28)
     font_title = find_font(26)
     font_body = find_font(22)
-    pad = 43
+    pad = left + 22
 
     draw = ImageDraw.Draw(im)
     draw.text((pad, 633), "BOXER #25", fill=ink, font=font_title)
@@ -58,6 +91,7 @@ def render_boxer() -> str:
     out = os.path.join(OUT, fname)
     os.makedirs(OUT, exist_ok=True)
     im.save(out, quality=95, optimize=True)
+    print(f"boxer card x={left}..{right} (kept wallpaper margins)")
     return out
 
 
@@ -77,15 +111,12 @@ def render_dark(fname: str, title: str, buy: str, sell: str, diff: str, pad: int
     draw = ImageDraw.Draw(im)
     draw.rectangle((0, panel_y, w, h), fill=bg + (255,))
 
-    # Quote chrome from RU
     qy0, qy1 = 508, min(h - 2, 536)
-    quote = ru.crop((pad - 4, qy0, min(w - 8, pad + 310), qy1))
-    q = quote.copy()
-    qd = ImageDraw.Draw(q)
-    # wipe inner text, keep left bar (~3-5px) and right edge with ”
-    qw, qh = q.size
+    quote = ru.crop((pad - 4, qy0, min(w - 8, pad + 310), qy1)).copy()
+    qd = ImageDraw.Draw(quote)
+    qw, qh = quote.size
     qd.rectangle((8, 2, max(9, qw - 22), qh - 2), fill=(30, 45, 62, 255))
-    im.paste(q, (pad - 4, qy0), q if q.mode == "RGBA" else None)
+    im.paste(quote, (pad - 4, qy0), quote if quote.mode == "RGBA" else None)
 
     font_title = find_font(15)
     font_body = find_font(13)
