@@ -659,7 +659,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const strippedStay = stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
   const strippedBot = humanizeBotAccusationReply(strippedStay, history, contextualUserMessage);
   const strippedMeet = stripMeetAgreement(strippedBot, contextualUserMessage, options);
-  const strippedName = fixIgnoredNameQuestion(strippedMeet, contextualUserMessage, finalPrompt);
+  const strippedCall = stripVideoCallAgreement(strippedMeet, contextualUserMessage, options);
+  const strippedName = fixIgnoredNameQuestion(strippedCall, contextualUserMessage, finalPrompt);
   const strippedQ = stripHabitualTrailingQuestion(strippedName, history, contextualUserMessage);
   const varied = varyTrailingSmile(strippedQ, history);
   return clipOverlongReply(varied);
@@ -887,8 +888,8 @@ function stripFalseStayHereRefusal(reply, userMessage, history, options = {}) {
   const textIn = String(userMessage || '');
   const hint = String(options.objectionHint || '');
   const allowed =
-    /(номер|инст|whatsapp|ватсап|контакт|встрет|погуля|видео\s*звон|созвон|facetime)/i.test(textIn) ||
-    /(просит твои контакты|зовёт встретиться|созвониться по видео)/i.test(hint);
+    /(номер|инст|whatsapp|ватсап|контакт|встрет|погуля|видео\s*звон|созвон|facetime|по\s+видео|звон)/i.test(textIn) ||
+    /(просит твои контакты|зовёт встретиться|созвониться по видео|предлагает звонок)/i.test(hint);
   if (allowed) return reply;
 
   let text = String(reply);
@@ -1103,6 +1104,63 @@ const MEET_AGREE_RE =
   /(?:^|[.!\s)])\s*(?:скоро\s+)?увидимся[^.!?\n]*[.!)]*/gi;
 const MEET_AGREE_EXTRA_RE =
   /(?:жду\s+тебя\s+тоже|тоже\s+жду|приеду\s+(?:к\s+тебе|скоро)|давай\s+встретимся|встретимся\s+скоро|обязательно\s+увидимся)[^.!?\n]*[.!)]*/gi;
+
+/**
+ * Срезает согласие на звонок/«по видео». Если модель ответила «ага)» —
+ * подменяем на отказ из‑за стеснения.
+ */
+const CALL_AGREE_SHORT_RE =
+  /^(?:ага|угу|да|ок|окей|okay|ok|давай|конечно|хорошо|го|ладно|можно|yes|sure|yep|yeah)(?:\s*[)!.]*)?$/i;
+const CALL_AGREE_PHRASE_RE =
+  /(?:давай\s+созвон|давай\s+по\s+видео|давай\s+звон|звони\b|набери\b|созвонимся|могу\s+по\s+видео|сейчас\s+позвон|вот\s+(?:мой\s+)?номер|facetime|zoom\.us)/i;
+
+const CALL_REFUSALS_RU = [
+  'ой я на видео стесняюсь, давай лучше тут)',
+  'не люблю созваниваться, давай текстом)',
+  'на звонках мне неловко, давай тут)',
+];
+const CALL_REFUSALS_EN = [
+  'im shy on video, text is better)',
+  'dont really do calls, lets keep chatting here)',
+];
+
+function pickCallRefusal(userMessage) {
+  const en = /\b(call|video|facetime|zoom)\b/i.test(String(userMessage || ''));
+  const bank = en ? CALL_REFUSALS_EN : CALL_REFUSALS_RU;
+  return bank[Math.floor(Math.random() * bank.length)];
+}
+
+function stripVideoCallAgreement(reply, userMessage, options = {}) {
+  if (!reply) return reply;
+  const { isVideoCallRequest } = require('./objectionHandler');
+  const textIn = String(userMessage || '');
+  const hint = String(options.objectionHint || '');
+  const isCall =
+    isVideoCallRequest(textIn) || /предлагает звонок|по видео|созвон/i.test(hint);
+  if (!isCall) return reply;
+
+  const before = String(reply).trim();
+  let text = before
+    .replace(CALL_AGREE_PHRASE_RE, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([).!])/g, '$1')
+    .trim();
+
+  if (CALL_AGREE_SHORT_RE.test(before) || CALL_AGREE_SHORT_RE.test(text) || text.length < 6) {
+    return pickCallRefusal(textIn);
+  }
+
+  // Согласие спрятано в длинном ответе («ага давай»: / «ок, звони»)
+  if (
+    /(?:^|[.!\s])(?:ага|угу|давай|ок|окей|конечно|хорошо)\b/i.test(before) &&
+    /(?:звон|видео|созвон|call)/i.test(before)
+  ) {
+    return pickCallRefusal(textIn);
+  }
+
+  if (before !== text && text.length >= 8) return text;
+  return before;
+}
 
 /**
  * Срезает согласие на личную встречу («скоро увидимся»), даже если хинт
