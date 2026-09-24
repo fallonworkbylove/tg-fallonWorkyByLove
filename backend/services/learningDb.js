@@ -57,6 +57,20 @@ const PENDING_MAX_AGE_HOURS = 6;
 // более свежим (стиль переписки и трендовые фразы меняются со временем).
 const RECENCY_DECAY = 0.985;
 
+// Эти фразы нельзя показывать как «удачные» — иначе learning снова учит
+// соглашаться на встречи (см. «скоро увидимся» / «погуляем когда приеду»).
+const MEET_LEAK_REPLY_RE =
+  /(скоро\s+)?увидимся|встретимся|погуляем|жду\s+тебя\s+тоже|когда\s+я\s+приеду|приеду\s+и\s+погул|обязательно\s+увид|давай\s+встрети|где\s+планируешь\s+встрет/i;
+
+function isMeetLeakReply(text) {
+  return MEET_LEAK_REPLY_RE.test(String(text || ''));
+}
+
+function filterMeetLeaks(rows, direction) {
+  if (direction !== 'best' || !Array.isArray(rows)) return rows || [];
+  return rows.filter((r) => !isMeetLeakReply(r.bot_reply));
+}
+
 // Этапы диалога — используются, чтобы подсказки были в тему момента, а не
 // случайным успешным примером из совершенно другой ситуации.
 const STAGES = ['early_chat', 'objection_handling', 'nft_pitch', 'general'];
@@ -290,43 +304,47 @@ async function getPatternsByStage(stage, { direction, limit, minUses, rateThresh
     // который всегда должен показываться как "никогда так не делай"
     // (используется в направлении worst).
     const pinnedBadFlag = direction === 'best' ? 0 : 1;
-    const [pinned] = await db.execute(
+    const fetchLimit = Math.max(wantedLimit * 4, 16);
+    const [pinnedRaw] = await db.execute(
       `SELECT trigger_msg, bot_reply, success_rate, stage, pinned, pinned_bad
        FROM bot_patterns
        WHERE pinned = 1 AND pinned_bad = ?
        ORDER BY updated_at DESC
-       LIMIT ${wantedLimit}`,
+       LIMIT ${fetchLimit}`,
       [pinnedBadFlag],
     );
+    const pinned = filterMeetLeaks(pinnedRaw, direction).slice(0, wantedLimit);
     if (pinned.length >= wantedLimit) return pinned;
     const remainingLimit = wantedLimit - pinned.length;
 
     // Сначала пробуем строго по текущему этапу; если примеров мало —
     // дополняем общими (stage не совпадает), чтобы подсказка не была пустой.
     // Закреплённые записи исключаем из обычной выборки, чтобы не показать
-    // их дважды.
-    const [staged] = await db.execute(
+    // их дважды. Берём с запасом — часть отфильтруем как «утечку встреч».
+    const [stagedRaw] = await db.execute(
       `SELECT trigger_msg, bot_reply, success_rate, stage, pinned, pinned_bad,
               (CASE WHEN ? = 'best' THEN success_rate ELSE (1 - success_rate) END)
                 * POW(${RECENCY_DECAY}, DATEDIFF(NOW(), updated_at)) AS weight
        FROM bot_patterns
        WHERE uses >= ? AND ${rateCondition} AND stage = ? AND pinned = 0
        ORDER BY weight DESC, uses DESC
-       LIMIT ${remainingLimit}`,
+       LIMIT ${fetchLimit}`,
       [direction, minUses, rateThreshold, stage],
     );
+    const staged = filterMeetLeaks(stagedRaw, direction).slice(0, remainingLimit);
     if (pinned.length + staged.length >= wantedLimit) return [...pinned, ...staged];
 
-    const [general] = await db.execute(
+    const [generalRaw] = await db.execute(
       `SELECT trigger_msg, bot_reply, success_rate, stage, pinned, pinned_bad,
               (CASE WHEN ? = 'best' THEN success_rate ELSE (1 - success_rate) END)
                 * POW(${RECENCY_DECAY}, DATEDIFF(NOW(), updated_at)) AS weight
        FROM bot_patterns
        WHERE uses >= ? AND ${rateCondition} AND stage != ? AND pinned = 0
        ORDER BY weight DESC, uses DESC
-       LIMIT ${remainingLimit}`,
+       LIMIT ${fetchLimit}`,
       [direction, minUses, rateThreshold, stage],
     );
+    const general = filterMeetLeaks(generalRaw, direction);
 
     const combined = [...pinned, ...staged, ...general].slice(0, wantedLimit);
     return combined;

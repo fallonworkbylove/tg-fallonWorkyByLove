@@ -450,11 +450,12 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const noMeetReminder =
     'ЗАПРЕТ ВСТРЕЧ: никогда не соглашайся увидеться лично, погулять, на свидание, кофе офлайн или «подъехать». ' +
     'Ты сейчас в переезде (сборы, коробки, дела с мамой) — на встречи нет времени и возможности. ' +
-    'Если зовут встретиться / гулять / назначают набережную, район, день недели — мягко откажи из‑за переезда и предложи общаться тут в переписке. ' +
+    'Если пишут «жду тебя» / «краса, жду» / зовут встретиться — НЕ пиши «скоро увидимся» и НЕ обещай приехать. ' +
+    'Можно тепло поблагодарить и мягко сказать что с переездом пока только переписка. ' +
     'Не спрашивай «где погуляем?» и «когда планируешь?» — это уже согласие. ' +
-    'Не назначай и не подтверждай место/время. Без обещаний «после переезда обязательно встретимся в понедельник». ' +
-    'Если в истории ты уже согласилась на встречу — в этом ответе мягко отыграй назад (переезд, на эмоциях сказала). ' +
-    'Фразу «давай пока тут общаться» используй ТОЛЬКО при отказе от встречи/контактов — не на обычные вопросы.';
+    'Не назначай и не подтверждай место/время. Без «после переезда обязательно встретимся». ' +
+    'Если в истории уже согласилась — мягко отыграй назад. ' +
+    '«давай пока тут общаться» — ТОЛЬКО при отказе от встречи/контактов.';
 
   const lengthReminder =
     'ДЛИНА: обычно ОДНА короткая фраза (3-12 слов). Максимум 2 коротких предложения. ' +
@@ -655,7 +656,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const strippedFacts = stripReaskedKnownFacts(cleaned, contextGuard);
   const strippedStay = stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
   const strippedBot = stripRepeatedBotDefense(strippedStay, history, contextualUserMessage);
-  const strippedQ = stripHabitualTrailingQuestion(strippedBot, history, contextualUserMessage);
+  const strippedMeet = stripMeetAgreement(strippedBot, contextualUserMessage, options);
+  const strippedQ = stripHabitualTrailingQuestion(strippedMeet, history, contextualUserMessage);
   return clipOverlongReply(strippedQ);
 }
 
@@ -967,6 +969,39 @@ function stripRepeatedBotDefense(reply, history, userMessage) {
     return 'хах ну да)';
   }
   return 'ну ок)';
+}
+
+const MEET_AGREE_RE =
+  /(?:^|[.!\s)])\s*(?:скоро\s+)?увидимся[^.!?\n]*[.!)]*/gi;
+const MEET_AGREE_EXTRA_RE =
+  /(?:жду\s+тебя\s+тоже|тоже\s+жду|приеду\s+(?:к\s+тебе|скоро)|давай\s+встретимся|встретимся\s+скоро|обязательно\s+увидимся)[^.!?\n]*[.!)]*/gi;
+
+/**
+ * Срезает согласие на личную встречу («скоро увидимся»), даже если хинт
+ * не сработал (например «жду тебя краса» без слова «встреча»).
+ */
+function stripMeetAgreement(reply, userMessage, options = {}) {
+  if (!reply) return reply;
+  const before = String(reply);
+  let text = before
+    .replace(MEET_AGREE_RE, ' ')
+    .replace(MEET_AGREE_EXTRA_RE, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([).!])/g, '$1')
+    .trim();
+
+  if (before === text) return before;
+
+  if (text.length >= 8) return text;
+
+  const hint = String(options.objectionHint || '');
+  const waiting =
+    /жду\s+тебя|ждём\s+тебя|встрет|увидим/i.test(String(userMessage || '')) ||
+    /зовёт встретиться|жду тебя/i.test(hint);
+  if (waiting) {
+    return 'спасибо) мне тоже приятно, но с переездом пока только тут)';
+  }
+  return text.length >= 3 ? text : 'ага)';
 }
 
 /**
