@@ -40,6 +40,58 @@ const CAPTIONS_EN = [
   'unexpected but nice 🙃',
 ];
 
+// Цифры в подписи сообщения (не вшиты в картинку) — в чате это фото + текст, не «карточка».
+const FLIP_DEALS = {
+  'profits1.png': {
+    title: 'T1000 #32',
+    buyTon: '450.9021',
+    sellTon: '716.09',
+    diffTon: '265.1879',
+    buyRu: '62,022.80₽',
+    sellRu: '98,500.11₽',
+    diffRu: '36,477.31₽',
+    buyEn: '$689.14',
+    sellEn: '$1,094.45',
+    diffEn: '$405.30',
+  },
+  'profits2.jpg': {
+    title: 'BOXER #25',
+    buyTon: '301.5967',
+    sellTon: '578.22',
+    diffTon: '276.6233',
+    buyRu: '29,938.04₽',
+    sellRu: '57,397.08₽',
+    diffRu: '27,459.04₽',
+    buyEn: '$332.64',
+    sellEn: '$637.75',
+    diffEn: '$305.10',
+  },
+  'profits3.png': {
+    title: 'Meebit #18494',
+    buyTon: '232.6196',
+    sellTon: '460.91',
+    diffTon: '228.2904',
+    buyRu: '31,997.45₽',
+    sellRu: '63,399.41₽',
+    diffRu: '31,401.96₽',
+    buyEn: '$355.53',
+    sellEn: '$704.44',
+    diffEn: '$348.91',
+  },
+  'profits4.png': {
+    title: 'alien fren #9671',
+    buyTon: '872.98',
+    sellTon: '1043.24',
+    diffTon: '170.26',
+    buyRu: '120,080.75₽',
+    sellRu: '143,500.47₽',
+    diffRu: '23,419.72₽',
+    buyEn: '$1,334.23',
+    sellEn: '$1,594.45',
+    diffEn: '$260.22',
+  },
+};
+
 function flipPhotoHistoryContent(caption, isRussian = true) {
   const tag = isRussian ? FLIP_PHOTO_HISTORY_TAG_RU : FLIP_PHOTO_HISTORY_TAG_EN;
   const cap = String(caption || '').trim();
@@ -47,9 +99,37 @@ function flipPhotoHistoryContent(caption, isRussian = true) {
   return isRussian ? `${tag} Подпись: "${cap}"` : `${tag} Caption: "${cap}"`;
 }
 
-function pickRandomCaption(isRussian = true) {
+function pickRandomHook(isRussian = true) {
   const bank = isRussian ? CAPTIONS_RU : CAPTIONS_EN;
   return bank[Math.floor(Math.random() * bank.length)];
+}
+
+function formatDealCaption(deal, isRussian, hook) {
+  if (!deal) return hook;
+  if (isRussian) {
+    return [
+      hook,
+      '',
+      deal.title,
+      `Цена покупки: ${deal.buyTon} TON (${deal.buyRu})`,
+      `Цена продажи: ${deal.sellTon} TON (${deal.sellRu})`,
+      `Разница: ${deal.diffTon} TON (${deal.diffRu})`,
+    ].join('\n');
+  }
+  return [
+    hook,
+    '',
+    deal.title,
+    `Purchase price: ${deal.buyTon} TON (${deal.buyEn})`,
+    `Sale price: ${deal.sellTon} TON (${deal.sellEn})`,
+    `Difference: ${deal.diffTon} TON (${deal.diffEn})`,
+  ].join('\n');
+}
+
+function buildFlipCaption(imagePath, isRussian = true) {
+  const base = path.basename(String(imagePath || ''));
+  const deal = FLIP_DEALS[base] || null;
+  return formatDealCaption(deal, isRussian, pickRandomHook(isRussian));
 }
 
 let schemaReady = false;
@@ -75,12 +155,16 @@ async function ensureSchema() {
 }
 
 function getImagesFolders() {
+  // Арт NFT без панели цифр. Если задан IMAGES_FOLDER_ART — только он
+  // (иначе случайно уйдут старые «карточки» с вшитым текстом).
+  const art = String(process.env.IMAGES_FOLDER_ART || '').trim();
+  if (art) return [art];
   return [process.env.IMAGES_FOLDER, process.env.IMAGES_FOLDER_2]
     .filter((folder) => folder && folder.trim())
     .map((folder) => folder.trim());
 }
 
-/** Папки с английскими скринами прибыли (подписи Purchase/Sale/Difference). */
+/** @deprecated язык теперь в caption; оставлено для совместимости .env */
 function getImagesFoldersEn() {
   return [process.env.IMAGES_FOLDER_EN, process.env.IMAGES_FOLDER_EN_2]
     .filter((folder) => folder && folder.trim())
@@ -282,12 +366,11 @@ async function sendDuePhotos() {
       }
 
       const isRussian = await conversationIsRussian(row.account_id, row.peer_id);
-      const foldersRu = getImagesFolders();
-      const foldersEn = getImagesFoldersEn();
-      const folders = !isRussian && foldersEn.length > 0 ? foldersEn : foldersRu;
+      // Одна папка с артом NFT; RU/EN только в тексте подписи (как обычное сообщение).
+      const folders = getImagesFolders();
       if (folders.length === 0) {
         console.error(
-          'Не настроена ни одна папка с готовыми фото (IMAGES_FOLDER / IMAGES_FOLDER_EN).',
+          'Не настроена папка с фото NFT (IMAGES_FOLDER_ART / IMAGES_FOLDER).',
         );
         continue;
       }
@@ -309,7 +392,7 @@ async function sendDuePhotos() {
         continue;
       }
 
-      const caption = pickRandomCaption(isRussian);
+      const caption = buildFlipCaption(imagePath, isRussian);
       await client.sendFile(entity, { file: imagePath, caption });
 
       // Пишем в историю, чтобы на «что это?» / «this one?» модель знала:
