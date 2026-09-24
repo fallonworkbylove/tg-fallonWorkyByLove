@@ -3383,7 +3383,7 @@ async function processBufferedMessages(
       complimentHint,
     });
     if (!rawReply) return;
-    if (dueMemory && useMemoryHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
+    if (dueMemory && useMemoryHint && !sessionForgetHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     // Отделяем текст от запрошенного типа медиа (токен вырезаем из текста).
     const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
