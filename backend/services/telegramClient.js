@@ -810,12 +810,17 @@ function pickReplyDelayMs(settings) {
     return Math.min(90, Math.max(8, Math.round(v)));
   };
 
-  let min = clamp(settings && settings.reply_delay_min, 25);
-  let max = clamp(settings && settings.reply_delay_max, 50);
-  // Старые дефолты 3–8 секунд слишком быстрые: абзац улетал в ту же минуту.
-  if (min <= 8 && max <= 15) {
-    min = 25;
-    max = 50;
+  let min = clamp(settings && settings.reply_delay_min, 8);
+  let max = clamp(settings && settings.reply_delay_max, 20);
+  // Старые «мгновенные» 1–3с поднимаем; сверхдолгие 25–50с укорачиваем —
+  // набор и так даёт 5–10с индикатора.
+  if (min <= 3 && max <= 8) {
+    min = 8;
+    max = 18;
+  }
+  if (min >= 25 && max >= 40) {
+    min = 8;
+    max = 20;
   }
   if (min > max) [min, max] = [max, min];
 
@@ -839,10 +844,10 @@ function delayBeforeSendMs(settings, text) {
  * набора на смартфоне), итог ограничивается разумными рамками 1.2-9 сек.
  */
 function computeTypingMs(text) {
-  const MIN_MS = 4000;
-  const MAX_MS = 40000;
+  // Индикатор «печатает» 5–10 сек — как набор на телефоне, не мгновенно.
+  const MIN_MS = 5000;
+  const MAX_MS = 10000;
   const len = (text || '').length;
-  // 4–7 символов/сек — набор на телефоне с паузами, не скорость печати.
   const charsPerSec = 4 + Math.random() * 3;
   const ms = (len / charsPerSec) * 1000;
   return Math.min(MAX_MS, Math.max(MIN_MS, Math.round(ms)));
@@ -1018,21 +1023,83 @@ function isServiceMessage(message) {
  * Достаёт последние сообщения диалога (в хронологическом порядке).
  */
 async function getHistory(accountId, peerId) {
-  // ВНИМАНИЕ: mysql2 не умеет подставлять число в `LIMIT ?` через
-  // prepared statement (ошибка "Incorrect arguments to mysqld_stmt_execute").
-  // HISTORY_LIMIT ����� наш�� собственная числовая константа, не пользовательский
-  // ввод, поэтому её безопасно встроить в текст запроса напрямую.
+  // mysql2 не принимает LIMIT ? — HISTORY_LIMIT вшиваем числом.
   const limit = Number(HISTORY_LIMIT) || 20;
+  // Берём с запасом по времени, чтобы отрезать сессию после паузы ≥72ч.
   const [rows] = await db.execute(
-    `SELECT role, content FROM conversation_messages
+    `SELECT role, content, created_at FROM conversation_messages
      WHERE account_id = ? AND peer_id = ?
      ORDER BY id DESC
-     LIMIT ${limit}`,
+     LIMIT ${Math.max(limit * 3, 60)}`,
     [accountId, peerId],
   );
-  // Из БД пришло от новых к старым — разворачиваем в хронологию.
-  return rows.reverse();
+  const chronological = rows.reverse();
+  return filterHistoryToCurrentSession(chronological, limit);
 }
+
+/**
+ * Как человек: после паузы ≥72ч «забываем» старый диалог.
+ * В промпт попадает только текущая сессия (после последнего большого гэпа).
+ */
+function filterHistoryToCurrentSession(rows, limit) {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  let sessionStart = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const prev = new Date(rows[i - 1].created_at).getTime();
+    const cur = new Date(rows[i].created_at).getTime();
+    if (!Number.isFinite(prev) || !Number.isFinite(cur)) continue;
+    const gapHours = (cur - prev) / (60 * 60 * 1000);
+    if (gapHours >= 72) sessionStart = i;
+  }
+  return rows.slice(sessionStart).slice(-limit).map((r) => ({
+    role: r.role,
+    content: r.content,
+    created_at: r.created_at,
+  }));
+}
+
+/** Сессия только что началась после ≥72ч паузы — модели нельзя ссылаться на «старое». */
+function isFreshSessionAfterGap(history) {
+  if (!Array.isArray(history) || history.length === 0) return false;
+  // Если в урезанной истории мало сообщений и первое свежее — скорее новая сессия.
+  return history.length <= 4;
+}
+
+/**
+ * Эмоции по паузе: радость после долгого возврата, лёгкая обида если игнорил.
+ * history — до текущего входящего (ещё не сохранено).
+ */
+function buildEmotionHint(history) {
+  if (!Array.isArray(history) || history.length === 0) return null;
+  const last = history[history.length - 1];
+  if (!last || !last.created_at) return null;
+  const idleHours = (Date.now() - new Date(last.created_at).getTime()) / (60 * 60 * 1000);
+  if (!Number.isFinite(idleHours) || idleHours < 0) return null;
+
+  if (idleHours >= 18) {
+    return (
+      'ЭМОЦИЯ: он написал после долгого молчания (много часов/сутки+). ' +
+      'Лёгкая радость что объявился — коротко и тепло («о живой)», «ну наконец)» и т.п.). ' +
+      'БЕЗ допроса и без вопроса в конце обязательного.'
+    );
+  }
+  if (idleHours >= 6 && last.role === 'assistant') {
+    return (
+      'ЭМОЦИЯ: ты писала, он долго не отвечал и вот объявился. Можно чуть задеть / сарказм ' +
+      '(«ну надо же», «а я уж думала пропал)») — одно короткое предложение, без драмы и без эссе.'
+    );
+  }
+  return null;
+}
+
+function buildSessionForgetHint(historyWasTrimmed) {
+  if (!historyWasTrimmed) return null;
+  return (
+    'ПАМЯТЬ: это как будто новый заход в переписку после длинной паузы. ' +
+    'НЕ ссылайся на старые темы/факты которых нет в истории выше. Общайся как с начала знакомства, тепло и коротко.'
+  );
+}
+
 
 /**
  * Диалог на русском? Голосовые заготовки (русские ogg) не шлём англоязычным.
@@ -2712,6 +2779,9 @@ async function fireReengage(accountId, peerId) {
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
 
+    const emotionHint = buildEmotionHint(replyHistory);
+    const sessionForgetHint = buildSessionForgetHint(replyHistory.length <= 4);
+
     const rawReply = await generateReply(settings.prompt, replyHistory, text, {
       mediaEnabled,
       noMediaExcuse,
@@ -2721,12 +2791,14 @@ async function fireReengage(accountId, peerId) {
       ragSnippet,
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
-      memoryHint: useMemoryHint,
+      emotionHint,
+      sessionForgetHint,
+      memoryHint: sessionForgetHint ? null : useMemoryHint,
       objectionHint,
       complimentHint,
     });
     if (!rawReply) return;
-    if (dueMemory && useMemoryHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
+    if (dueMemory && useMemoryHint && !sessionForgetHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
     const { text: replyWithoutReact, reaction } = extractReaction(replyWithoutLaugh);
@@ -2787,9 +2859,8 @@ async function fireReengage(accountId, peerId) {
 
     if (outText) {
       await markPeerAsRead(client, sender, null);
-      await client.sendMessage(sender, { message: outText });
+      await sendHumanText(client, sender, accountId, peerId, senderName, outText);
       lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
-      await saveMessage(accountId, peerId, senderName, 'assistant', outText);
       await learningDb.recordBotReply(accountId, peerId, text, outText, learningStage);
       console.log(
         `[${accountLabel(accountId)}] Отложенный ответ для ${senderName}: "${outText}"`,
@@ -2869,6 +2940,76 @@ async function fireReengage(accountId, peerId) {
  * гене����ация AI-ответа с учётом истории и отправка собеседнику.
  * ��аботает уже ��о СКЛЕЕННЫМ текстом всех сообщений серии.
  */
+
+/** ~12% шанс: отправить с опечаткой, затем поправку отдельным сообщением. */
+function maybeTypoPair(text) {
+  const src = String(text || '').trim();
+  if (!src || src.length < 6 || src.length > 90) return null;
+  if (/<<|\[реакция:|\[голос|\[фото|\[медиа/i.test(src)) return null;
+  if (Math.random() > 0.12) return null;
+
+  const words = src.split(/(\s+)/);
+  const candidates = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (!/^[а-яёa-z]{4,}$/i.test(w)) continue;
+    candidates.push(i);
+  }
+  if (!candidates.length) return null;
+  const idx = candidates[Math.floor(Math.random() * candidates.length)];
+  const word = words[idx];
+  const letters = word.split('');
+  const mode = Math.random();
+  if (mode < 0.4 && letters.length >= 4) {
+    const j = 1 + Math.floor(Math.random() * (letters.length - 2));
+    [letters[j], letters[j + 1]] = [letters[j + 1], letters[j]];
+  } else if (mode < 0.7) {
+    const j = 1 + Math.floor(Math.random() * (letters.length - 1));
+    letters.splice(j, 1);
+  } else {
+    const j = 1 + Math.floor(Math.random() * (letters.length - 1));
+    const pool = /[а-яё]/i.test(word) ? 'аеиоуклмнпрст' : 'aeiouklmnprst';
+    letters.splice(j, 0, pool[Math.floor(Math.random() * pool.length)]);
+  }
+  const broken = letters.join('');
+  if (broken.toLowerCase() === word.toLowerCase()) return null;
+  words[idx] = broken;
+  const wrong = words.join('');
+  const fixVariants = [
+    `*${word}`,
+    `ой, ${word}`,
+    `${word}*`,
+  ];
+  const fix = fixVariants[Math.floor(Math.random() * fixVariants.length)];
+  return { wrong, fix, original: src };
+}
+
+async function sendHumanText(client, sender, accountId, peerId, senderName, outText) {
+  const pair = maybeTypoPair(outText);
+  if (!pair) {
+    await client.sendMessage(sender, { message: outText });
+    await saveMessage(accountId, peerId, senderName, 'assistant', outText);
+    return;
+  }
+  await client.sendMessage(sender, { message: pair.wrong });
+  await saveMessage(accountId, peerId, senderName, 'assistant', pair.wrong);
+  await sleep(700 + Math.random() * 1400);
+  try {
+    await client.invoke(
+      new Api.messages.SetTyping({
+        peer: sender,
+        action: new Api.SendMessageTypingAction(),
+      }),
+    );
+  } catch (_) {}
+  await sleep(900 + Math.random() * 1600);
+  await client.sendMessage(sender, { message: pair.fix });
+  await saveMessage(accountId, peerId, senderName, 'assistant', pair.fix);
+  console.log(
+    `[${accountLabel(accountId)}] Опечатка→правка для ${senderName}: "${pair.wrong}" → "${pair.fix}"`,
+  );
+}
+
 async function processBufferedMessages(
   accountId,
   sender,
@@ -3223,6 +3364,9 @@ async function processBufferedMessages(
     // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
 
+    const emotionHint = buildEmotionHint(history);
+    const sessionForgetHint = buildSessionForgetHint(history.length <= 4);
+
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
       noMediaExcuse,
@@ -3232,7 +3376,9 @@ async function processBufferedMessages(
       ragSnippet,
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
-      memoryHint: useMemoryHint,
+      emotionHint,
+      sessionForgetHint,
+      memoryHint: sessionForgetHint ? null : useMemoryHint,
       objectionHint,
       complimentHint,
     });
@@ -3332,10 +3478,9 @@ async function processBufferedMessages(
 
     if (outText) {
       await markPeerAsRead(client, sender, message);
-      await client.sendMessage(sender, { message: outText });
+      await sendHumanText(client, sender, accountId, peerId, senderName, outText);
       lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
       if (msgId) lastAnsweredMsgId.set(inFlightKey, msgId);
-      await saveMessage(accountId, peerId, senderName, 'assistant', outText);
       await learningDb.recordBotReply(accountId, peerId, text, outText, learningStage);
       console.log(`[${accountLabel(accountId)}] Ответ для ${senderName}: "${outText}"`);
     }
@@ -3851,7 +3996,7 @@ const dailyLifeByAccount = new Map();
 // Кому писать: диалоги с активностью за последние N дней.
 const GREETING_RECENT_DAYS = 3;
 // Максимум приветствий за один перех��д (антифлуд Telegram).
-const GREETING_MAX_DIALOGS = 15;
+const GREETING_MAX_DIALOGS = 22;
 
 // Последнее со��тояние «рабочее время?» по аккаунту — для детекта перехода.
 const workStateByAccount = new Map();
@@ -3934,6 +4079,8 @@ function rollDailyLife(dateKey) {
     sleepKind = sleepMin >= 26 * 60 ? 'three_am' : sleepMin >= 24 * 60 ? 'late' : 'half_past';
   }
 
+  // Дневной «пэк» — сама пишет, если он затих (инициатива).
+  const afternoonMin = randInt(14 * 60 + 30, 17 * 60 + 30);
   return {
     dateKey,
     wakeMin,
@@ -3942,6 +4089,8 @@ function rollDailyLife(dateKey) {
     sleepKind,
     morningSent: false,
     nightSent: false,
+    afternoonMin,
+    afternoonSent: false,
     lastMin: null,
     booted: true,
   };
@@ -3991,6 +4140,20 @@ function tickDailyLife(accountId) {
     });
   }
 
+  if (
+    !life.afternoonSent &&
+    life.afternoonMin != null &&
+    crossedMinute(lastMin, now.minutes, life.afternoonMin)
+  ) {
+    life.afternoonSent = true;
+    sendIdlePokes(accountId).catch((err) => {
+      console.error(
+        `[${accountLabel(accountId)}] Ошибка дневной инициативы:`,
+        err.message,
+      );
+    });
+  }
+
   const sameDaySleep = life.sleepMin < 24 * 60 ? life.sleepMin : null;
   if (!life.nightSent && sameDaySleep != null && crossedMinute(lastMin, now.minutes, sameDaySleep)) {
     life.nightSent = true;
@@ -4019,6 +4182,81 @@ function tickDailyLife(accountId) {
 /**
  * Рассылает приветствие ('night' | 'morning') недавним активным диалогам.
  */
+
+const IDLE_POKE_RU = [
+  'ты пропал совсем)',
+  'ку, как ты там',
+  'эей',
+  'ну что молчишь)',
+  'ау',
+];
+const IDLE_POKE_EN = [
+  'hey you alive?',
+  'yo',
+  'missed you a bit)',
+  'u there?',
+];
+
+/**
+ * Днём сама пишет тем, кто давно молчит (последнее слово было за нами).
+ * Инициатива без «доброго утра» — живой пэк.
+ */
+async function sendIdlePokes(accountId) {
+  if (greetingInFlight.has(accountId)) return;
+  greetingInFlight.add(accountId);
+  try {
+    const client = getActiveClient(accountId);
+    if (!client) return;
+    const settings = await getAccountSettings(accountId);
+    if (!settings || !settings.is_autoreply_enabled) return;
+
+    let dialogs;
+    try {
+      dialogs = await client.getDialogs({ limit: 60 });
+    } catch (e) {
+      return;
+    }
+
+    let sent = 0;
+    for (const dialog of dialogs) {
+      if (sent >= 6) break;
+      if (!dialog.isUser || dialog.archived) continue;
+      const message = dialog.message;
+      if (!message || !message.out) continue; // последнее слово за нами
+      const ageH = (Date.now() / 1000 - (message.date || 0)) / 3600;
+      if (ageH < 5 || ageH > 36) continue;
+
+      const sender = dialog.entity;
+      if (!sender || sender.bot || sender.self || isDeletedUser(sender) || isNeverContact(sender)) continue;
+      const peerId = String(sender.id);
+      if (await isPeerBlacklisted(accountId, peerId)) continue;
+      if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) continue;
+      if (await shouldSkipProactivePeer(client, sender)) continue;
+      if (processingInFlight.has(bufferKey(accountId, peerId))) continue;
+      if (deferredDialogs.has(bufferKey(accountId, peerId))) continue;
+
+      const tail = await getDialogTail(accountId, peerId);
+      if (!tail.hasIncoming) continue;
+
+      const lang = await resolveGreetingLang(client, sender, message);
+      const bank = lang === 'en' ? IDLE_POKE_EN : IDLE_POKE_RU;
+      const phrase = bank[Math.floor(Math.random() * bank.length)];
+      const senderName = sender.username || sender.firstName || peerId;
+      try {
+        await sleep(2500 + Math.random() * 4000);
+        await client.sendMessage(sender, { message: phrase });
+        await saveMessage(accountId, peerId, senderName, 'assistant', phrase);
+        sent += 1;
+        console.log(
+          `[${accountLabel(accountId)}] Дневная инициатива → ${senderName}: "${phrase}"`,
+        );
+      } catch (_) {}
+    }
+  } finally {
+    greetingInFlight.delete(accountId);
+  }
+}
+
 async function sendGreetings(accountId, kind, mood) {
   if (greetingInFlight.has(accountId)) return;
   greetingInFlight.add(accountId);
