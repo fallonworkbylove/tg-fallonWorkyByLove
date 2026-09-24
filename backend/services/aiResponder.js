@@ -464,6 +464,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Без списков, абзацев и «потому что…». Дефис «-», не тире «—». ' +
     'ВОПРОС В КОНЦЕ: по умолчанию БЕЗ вопроса. Вопрос редко, примерно каждый 5-й ответ. ' +
     'ЗАПРЕЩЕНО почти каждое сообщение заканчивать «а ты?», «а ты откуда?», «а ты чем занимаешься?», «что интересного?». ' +
+    'Если ТЫ только что задала вопрос, а он ответил — НЕ добивай уточняющим вопросом на ту же тему (это выглядит как допрос). ' +
     'Сказала про себя (город/работу) — НЕ зеркаль «а ты?». Просто точка или скобка. ' +
     'Чаще просто среагируй: «ахах норм)», «звучит тяжёло», «ого». ' +
     'Факт из истории (город/работа/имя) — не переспрашивай.';
@@ -661,7 +662,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const strippedMeet = stripMeetAgreement(strippedBot, contextualUserMessage, options);
   const strippedCall = stripVideoCallAgreement(strippedMeet, contextualUserMessage, options);
   const strippedName = fixIgnoredNameQuestion(strippedCall, contextualUserMessage, finalPrompt);
-  const strippedQ = stripHabitualTrailingQuestion(strippedName, history, contextualUserMessage);
+  const strippedAbout = fixIgnoredAboutHerself(strippedName, contextualUserMessage, finalPrompt);
+  const strippedQ = stripHabitualTrailingQuestion(strippedAbout, history, contextualUserMessage);
   const varied = varyTrailingSmile(strippedQ, history);
   return clipOverlongReply(varied);
 }
@@ -944,7 +946,10 @@ const BOT_DEFENSE_ALIVE_RE =
 const BOT_DEFENSE_COMFORT_RE =
   /(просто\s+обща(юсь|емся)\s+так|мы\s+просто\s+обща(емся|емся)|не\s+переживай|вс[её]\s+нормально|не\s+волнуйся|давай\s+просто\s+общать)[^.!?\n]*[.!)]*/gi;
 const BOT_ACCUSATION_USER_RE =
-  /(ты\s+бот|это\s+бот|бот\s+ли\s+ты|какой[- ]?то\s+бот|как\s+бот|как\s+робот|обща(ешьс|ешс)я\s+как\s+(бот|робот)|кажется[^.!?\n]{0,40}бот|похоже[^.!?\n]{0,30}бот|как\s+будто[^.!?\n]{0,20}бот|отвечаешь[^.!?\n]{0,30}бот|(снова|опять)\s+кажется|мне\s+снова\s+кажется|нейросеть|chatgpt|gpt[- ]?\d|ты\s+не\s+человек|you('?re|\s+are)\s+a?\s*bot|are\s+you\s+a?\s*bot)/i;
+  /(ты\s+бот|это\s+бот|бот\s+ли\s+ты|какой[- ]?то\s+бот|как\s+бот|как\s+робот|с\s+роботом|обща(ешьс|ешс)я\s+как\s+(бот|робот)|как\s+будто\s+с\s+роботом|прогоня(ешь|ете)\s*.{0,30}нейросет|через\s+нейросет|кажется[^.!?\n]{0,40}бот|похоже[^.!?\n]{0,30}бот|как\s+будто[^.!?\n]{0,20}бот|отвечаешь[^.!?\n]{0,30}бот|(снова|опять)\s+кажется|мне\s+снова\s+кажется|нейросеть|chatgpt|gpt[- ]?\d|ты\s+не\s+человек|you('?re|\s+are)\s+a?\s*bot|are\s+you\s+a?\s*bot)/i;
+
+const BOT_DEFENSE_SCRIPT_RE =
+  /(?:никто|нкито)\s+ещё\s+так\s+не\s+говорил[^.!?\n]*[.!)]*|я\s+просто\s+общаюсь\s+как\s+могу[^.!?\n]*[.!)]*|просто\s+общаюсь\s+как\s+могу[^.!?\n]*[.!)]*/gi;
 
 const BOT_ACCUSATION_FIRST_RU = [
   'хах ну ты серьёзно)',
@@ -973,11 +978,36 @@ const BOT_ACCUSATION_AGAIN_EN = [
 ];
 
 /**
- * На «ты бот» / «кажется бот» — живая короткая реакция, не саппорт-утешение.
+ * На «ты бот» / «нейросеть» — живая короткая реакция, не саппорт-утешение.
+ * Ловит и короткий follow-up («да)») после обвинения в истории.
  */
+function recentUserBotAccusation(history, userMessage) {
+  if (BOT_ACCUSATION_USER_RE.test(String(userMessage || ''))) return true;
+  const recent = (Array.isArray(history) ? history : []).slice(-6);
+  for (let i = recent.length - 1; i >= 0; i -= 1) {
+    const h = recent[i];
+    if (!h || h.role !== 'user') continue;
+    if (BOT_ACCUSATION_USER_RE.test(String(h.content || ''))) return true;
+    // короткое «да)» сразу после обвинения — тоже зона защиты
+    break;
+  }
+  // «да)» / «да» после того как в последних user-репликах было обвинение
+  const shortYes = /^(да|ага|угу|yes|yeah)\s*\)?$/i.test(String(userMessage || '').trim());
+  if (!shortYes) return false;
+  return recent.some(
+    (h) => h && h.role === 'user' && BOT_ACCUSATION_USER_RE.test(String(h.content || '')),
+  );
+}
+
 function humanizeBotAccusationReply(reply, history, userMessage) {
   if (!reply) return reply;
-  if (!BOT_ACCUSATION_USER_RE.test(String(userMessage || ''))) {
+  const isAccusation = recentUserBotAccusation(history, userMessage);
+  if (!isAccusation) {
+    // Даже вне прямого обвинения срезаем шаблонную защиту
+    let cleaned = String(reply).replace(BOT_DEFENSE_SCRIPT_RE, ' ').replace(/[ \t]{2,}/g, ' ').trim();
+    if (cleaned !== String(reply).trim() && cleaned.length >= 3) {
+      return stripRepeatedBotDefense(cleaned, history, userMessage);
+    }
     return stripRepeatedBotDefense(reply, history, userMessage);
   }
 
@@ -987,7 +1017,7 @@ function humanizeBotAccusationReply(reply, history, userMessage) {
     .map((h) => String(h.content || ''))
     .join('\n');
   const alreadyDefended =
-    /(обидно|я\s+жив|не\s+бот|не\s+ии|похоже\s+на|с\s+чего\s+ты\s+взял|хах\s+(ну\s+ты|опять)|зациклил|ладно\s+верь|странно\s+звучит|не\s+переживай|вс[её]\s+нормально)/i.test(
+    /(обидно|я\s+жив|не\s+бот|не\s+ии|похоже\s+на|с\s+чего\s+ты\s+взял|хах\s+(ну\s+ты|опять)|зациклил|ладно\s+верь|странно\s+звучит|не\s+переживай|вс[её]\s+нормально|никто\s+ещё|общаюсь\s+как\s+могу)/i.test(
       recentAssistant,
     );
 
@@ -995,6 +1025,7 @@ function humanizeBotAccusationReply(reply, history, userMessage) {
     .replace(BOT_DEFENSE_OPENER_RE, '')
     .replace(BOT_DEFENSE_ALIVE_RE, ' ')
     .replace(BOT_DEFENSE_COMFORT_RE, ' ')
+    .replace(BOT_DEFENSE_SCRIPT_RE, ' ')
     .replace(/не\s+подтверждаю[^.!?\n]*[.!)]*/gi, ' ')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\s+([).!])/g, '$1')
@@ -1003,12 +1034,16 @@ function humanizeBotAccusationReply(reply, history, userMessage) {
   const stillSoft =
     !text ||
     text.length < 4 ||
-    /(вс[её]\s+нормально|не\s+переживай|просто\s+обща|я\s+жив|обидно|мы\s+просто)/i.test(text) ||
+    /(вс[её]\s+нормально|не\s+переживай|просто\s+обща|я\s+жив|обидно|мы\s+просто|никто\s+ещё|общаюсь\s+как\s+могу)/i.test(
+      text,
+    ) ||
     /\?/.test(text);
 
   const isEn =
     /[a-z]{3,}/i.test(String(userMessage || '')) && !/[а-яё]{3,}/i.test(String(userMessage || ''));
-  const bank = alreadyDefended
+  const shortYes = /^(да|ага|угу|yes|yeah)\s*\)?$/i.test(String(userMessage || '').trim());
+  const useAgain = alreadyDefended || shortYes;
+  const bank = useAgain
     ? isEn
       ? BOT_ACCUSATION_AGAIN_EN
       : BOT_ACCUSATION_AGAIN_RU
@@ -1016,7 +1051,7 @@ function humanizeBotAccusationReply(reply, history, userMessage) {
       ? BOT_ACCUSATION_FIRST_EN
       : BOT_ACCUSATION_FIRST_RU;
 
-  if (stillSoft || Math.random() < 0.55) {
+  if (stillSoft || useAgain || Math.random() < 0.7) {
     return bank[Math.floor(Math.random() * bank.length)];
   }
   text = text
@@ -1098,6 +1133,37 @@ function fixIgnoredNameQuestion(reply, userMessage, prompt) {
   if (hasName && !isDeferral) return reply;
   if (name) return `${name.toLowerCase()})`;
   return text && !isDeferral ? text : 'саша)';
+}
+
+const ABOUT_SELF_EMPTY_RE =
+  /^(ой\s+)?(никто|нкито|не\s+знаю|хз|ну\s+так|ок|ага|угу)\s*\)?\s*$/i;
+
+/**
+ * «Расскажи о себе / допрос» — не «ой никто», а коротко про себя.
+ */
+function fixIgnoredAboutHerself(reply, userMessage, prompt) {
+  const msg = String(userMessage || '');
+  const asks =
+    /(расскажи\s+(о\s+себе|про\s+себя)|про\s+себя|интересы|образован|допрос|допрашива|tell\s+me\s+about\s+yourself)/i.test(
+      msg,
+    );
+  if (!asks) return reply;
+
+  const text = String(reply || '').trim();
+  if (text && !ABOUT_SELF_EMPTY_RE.test(text) && text.length >= 12) return reply;
+
+  const name = extractCharacterName(prompt);
+  const jobBits = [];
+  if (/дизайн/i.test(String(prompt || ''))) jobBits.push('дизайном занимаюсь');
+  if (/figma|photoshop|самозанят/i.test(String(prompt || ''))) {
+    jobBits.push('в основном в figma');
+  }
+  const about = jobBits[0] || 'в основном дома и по работе кручусь';
+  if (/допрос|допрашива/i.test(msg)) {
+    return `хах ну да любопытная) ${about}`;
+  }
+  if (name) return `${about}, ${name.toLowerCase()}`;
+  return `${about})`;
 }
 
 const MEET_AGREE_RE =
@@ -1218,6 +1284,21 @@ function stripHabitualTrailingQuestion(reply, history, userMessage) {
     text = text.replace(mirrorTail, '').replace(softMirror, '').trim();
     if (text.length >= 3) return text;
     return userQ ? 'ага' : 'ага)';
+  }
+
+  // Только что задала вопрос — на его ответ НЕ добивать ещё одним (допрос).
+  const lastAssistantHadQ = recent.length > 0 && /\?/.test(recent[recent.length - 1]);
+  if (lastAssistantHadQ) {
+    const strippedHard = text
+      .replace(
+        /\s*[.!]?\s*(?:а\s+)?(?:ты|вам|тебе|какие?|что|как|где|когда|почему|зачем|who|what|why|how|where)[^?]*\?\s*$/i,
+        '',
+      )
+      .replace(/\s*\?[) ]*$/g, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim();
+    if (strippedHard.length >= 3) return strippedHard;
+    return userQ ? 'поняла)' : 'ага)';
   }
 
   if (!recentHadQ && Math.random() < 0.18) return reply;
