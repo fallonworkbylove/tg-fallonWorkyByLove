@@ -1,152 +1,213 @@
 #!/usr/bin/env python3
-"""Rebuild English profit screenshots from RU assets (labels + USD)."""
+"""English profit screenshots: original NFT art + Telegram-like panel (matches RU layout)."""
 from __future__ import annotations
 
 import os
 from PIL import Image, ImageDraw, ImageFont
 
-SRC = os.path.join(os.path.dirname(__file__), "..", "images_folder_probe")
-OUT = os.path.join(os.path.dirname(__file__), "..", "images_folder_en")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(HERE, "..", "images_folder_probe")
+SRC_FALLBACK = os.path.join(HERE, "..", "images_folder")
+OUT = os.path.join(HERE, "..", "images_folder_en")
 
-# title, buy_ton, buy_usd, sell_ton, sell_usd, diff_ton, diff_usd,
-# panel_y_frac, bg, text, accent, title_color
 SPECS = [
-    (
-        "profits1.png",
-        "T1000 #32",
-        "450.9021",
-        "689.14",
-        "716.09",
-        "1,094.45",
-        "265.1879",
-        "405.30",
-        0.70,
-        (24, 37, 51),
-        (255, 255, 255),
-        (120, 200, 230),
-        (255, 255, 255),
-    ),
-    (
-        "profits2.jpg",
-        "BOXER #25",
-        "301.5967",
-        "332.64",
-        "578.22",
-        "637.75",
-        "276.6233",
-        "305.10",
-        0.66,
-        (255, 255, 255),
-        (20, 25, 35),
-        (70, 160, 210),
-        (20, 25, 35),
-    ),
-    (
-        "profits3.png",
-        "Meebit #18494",
-        "232.6196",
-        "355.53",
-        "460.91",
-        "704.44",
-        "228.2904",
-        "348.91",
-        0.70,
-        (24, 37, 51),
-        (255, 255, 255),
-        (120, 200, 230),
-        (255, 255, 255),
-    ),
-    (
-        "profits4.png",
-        "alien fren #9671",
-        "872.98",
-        "1,334.23",
-        "1,043.24",
-        "1,594.45",
-        "170.26",
-        "260.22",
-        0.70,
-        (24, 37, 51),
-        (255, 255, 255),
-        (120, 200, 230),
-        (255, 255, 255),
-    ),
+    {
+        "file": "profits1.png",
+        "panel_y": 432,
+        "extend": 24,
+        "title": "T1000 #32",
+        "buy": ("450.9021", "689.14"),
+        "sell": ("716.09", "1,094.45"),
+        "diff": ("265.1879", "405.30"),
+        "theme": "dark",
+        "pad_x": 19,
+        "title_dy": 8,
+        "gap_title": 18,
+        "gap_lines": 8,
+        "gap_before_diff": 10,
+        "fs_title": 15,
+        "fs_body": 13,
+    },
+    {
+        "file": "profits2.jpg",
+        "panel_y": 608,
+        "extend": 0,
+        "title": "BOXER #25",
+        "buy": ("301.5967", "332.64"),
+        "sell": ("578.22", "637.75"),
+        "diff": ("276.6233", "305.10"),
+        "theme": "light",
+        "pad_x": 43,
+        "title_dy": 28,
+        "gap_title": 42,
+        "gap_lines": 28,
+        "gap_before_diff": 32,
+        "fs_title": 26,
+        "fs_body": 22,
+    },
+    {
+        "file": "profits3.png",
+        "panel_y": 432,
+        "extend": 24,
+        "title": "Meebit #18494",
+        "buy": ("232.6196", "355.53"),
+        "sell": ("460.91", "704.44"),
+        "diff": ("228.2904", "348.91"),
+        "theme": "dark",
+        "pad_x": 15,
+        "title_dy": 8,
+        "gap_title": 18,
+        "gap_lines": 8,
+        "gap_before_diff": 10,
+        "fs_title": 14,
+        "fs_body": 13,
+    },
+    {
+        "file": "profits4.png",
+        "panel_y": 432,
+        "extend": 24,
+        "title": "alien fren #9671",
+        "buy": ("872.98", "1,334.23"),
+        "sell": ("1043.24", "1,594.45"),
+        "diff": ("170.26", "260.22"),
+        "theme": "dark",
+        "pad_x": 14,
+        "title_dy": 8,
+        "gap_title": 18,
+        "gap_lines": 8,
+        "gap_before_diff": 10,
+        "fs_title": 14,
+        "fs_body": 13,
+    },
 ]
 
 
-def main() -> None:
-    os.makedirs(OUT, exist_ok=True)
-    font_candidates = [
-        r"C:\Windows\Fonts\segoeui.ttf",
-        r"C:\Windows\Fonts\arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ]
-    font_path = next(p for p in font_candidates if os.path.exists(p))
+def find_font(bold: bool) -> str:
+    names = (
+        ["segoeuib.ttf", "arialbd.ttf", "calibrib.ttf", "DejaVuSans-Bold.ttf"]
+        if bold
+        else ["segoeui.ttf", "arial.ttf", "calibri.ttf", "DejaVuSans.ttf"]
+    )
+    for root in (
+        r"C:\Windows\Fonts",
+        "/usr/share/fonts/truetype/dejavu",
+        "/usr/share/fonts/truetype/liberation",
+    ):
+        for name in names:
+            path = os.path.join(root, name)
+            if os.path.exists(path):
+                return path
+    raise FileNotFoundError("No usable font")
 
-    for (
-        fname,
-        title,
-        bt,
-        bu,
-        st,
-        su,
-        dt,
-        du,
-        yfrac,
-        bg,
-        tc,
-        ac,
-        title_c,
-    ) in SPECS:
-        im = Image.open(os.path.join(SRC, fname)).convert("RGBA")
-        w, h = im.size
-        y0 = int(h * yfrac)
+
+def sample_panel_bg(im: Image.Image, panel_y: int) -> tuple[int, int, int]:
+    w, h = im.size
+    samples = []
+    for y in range(panel_y + 2, min(panel_y + 36, h - 2)):
+        for x in (w // 2, w // 3, 2 * w // 3):
+            samples.append(im.getpixel((x, y))[:3])
+    samples.sort(key=lambda c: sum(c))
+    return samples[len(samples) // 2]
+
+
+def src_path(fname: str) -> str:
+    p = os.path.join(SRC, fname)
+    if os.path.exists(p):
+        return p
+    return os.path.join(SRC_FALLBACK, fname)
+
+
+def render(spec: dict) -> str:
+    base = Image.open(src_path(spec["file"])).convert("RGBA")
+    w, h = base.size
+    panel_y = spec["panel_y"]
+    extend = int(spec["extend"])
+    theme = spec["theme"]
+    bg = sample_panel_bg(base, panel_y)
+
+    if extend:
+        im = Image.new("RGBA", (w, h + extend), bg + (255,))
+        im.paste(base, (0, 0))
+    else:
+        im = base.copy()
+
+    draw = ImageDraw.Draw(im)
+    draw.rectangle((0, panel_y, w, im.size[1]), fill=bg + (255,))
+
+    font_title = ImageFont.truetype(find_font(True), spec["fs_title"])
+    font_body = ImageFont.truetype(find_font(True), spec["fs_body"])
+    font_quote = ImageFont.truetype(find_font(True), max(spec["fs_body"] + 2, 15))
+
+    if theme == "dark":
+        text_color = (255, 255, 255)
+        accent = (144, 214, 230)
+        quote_fill = (30, 45, 62)
+    else:
+        text_color = (20, 24, 30)
+        accent = (100, 175, 200)
+        quote_fill = (232, 244, 248)
+
+    pad = spec["pad_x"]
+    buy_t, buy_u = spec["buy"]
+    sell_t, sell_u = spec["sell"]
+    diff_t, diff_u = spec["diff"]
+
+    y = panel_y + spec["title_dy"]
+    draw.text((pad, y), spec["title"], fill=text_color + (255,), font=font_title)
+    y = draw.textbbox((pad, y), spec["title"], font=font_title)[3] + spec["gap_title"]
+
+    line1 = f"Purchase price: {buy_t} TON (${buy_u})"
+    draw.text((pad, y), line1, fill=text_color + (255,), font=font_body)
+    y = draw.textbbox((pad, y), line1, font=font_body)[3] + spec["gap_lines"]
+
+    line2 = f"Sale price: {sell_t} TON (${sell_u})"
+    draw.text((pad, y), line2, fill=text_color + (255,), font=font_body)
+    y = draw.textbbox((pad, y), line2, font=font_body)[3] + spec["gap_before_diff"]
+
+    diff = f"Difference: {diff_t} TON (${diff_u})"
+    bb = draw.textbbox((0, 0), diff, font=font_body)
+    tw, th = bb[2] - bb[0], bb[3] - bb[1]
+    pad_x, pad_y = 10, 5
+    bar_w = 3
+    box_x = pad - 2
+    box_w = min(w - box_x - 8, tw + pad_x * 2 + bar_w + 18)
+    box_h = th + pad_y * 2
+
+    # ensure quote fits
+    if y + box_h > im.size[1] - 4:
+        extra = y + box_h + 6 - im.size[1]
+        bigger = Image.new("RGBA", (w, im.size[1] + extra), bg + (255,))
+        bigger.paste(im, (0, 0))
+        im = bigger
         draw = ImageDraw.Draw(im)
-        draw.rectangle([0, y0, w, h], fill=bg + (255,))
 
-        fs_title = max(18, int(w * 0.055))
-        fs_body = max(14, int(w * 0.042))
-        font_title = ImageFont.truetype(font_path, fs_title)
-        font_body = ImageFont.truetype(font_path, fs_body)
+    draw.rounded_rectangle(
+        (box_x, y, box_x + box_w, y + box_h),
+        radius=5,
+        fill=quote_fill + (255,),
+    )
+    draw.rectangle((box_x, y + 3, box_x + bar_w, y + box_h - 3), fill=accent + (255,))
+    draw.text(
+        (box_x + bar_w + pad_x - 2, y + pad_y - 1),
+        diff,
+        fill=text_color + (255,),
+        font=font_body,
+    )
+    draw.text((box_x + box_w - 15, y), "”", fill=accent + (255,), font=font_quote)
 
-        pad_x = int(w * 0.06)
-        line_h = int(fs_body * 1.55)
-        y = y0 + int(h * 0.03)
+    os.makedirs(OUT, exist_ok=True)
+    out_name = "profits2.jpg" if spec["file"].endswith(".jpg") else spec["file"]
+    out_path = os.path.join(OUT, out_name)
+    if out_name.endswith(".jpg"):
+        im.convert("RGB").save(out_path, quality=94, optimize=True)
+    else:
+        im.save(out_path, optimize=True)
+    return out_path
 
-        draw.text((pad_x, y), title, fill=title_c + (255,), font=font_title)
-        y += int(fs_title * 1.45)
 
-        for line in (
-            f"Purchase price: {bt} TON (${bu})",
-            f"Sale price: {st} TON (${su})",
-        ):
-            draw.text((pad_x, y), line, fill=tc + (255,), font=font_body)
-            y += line_h
-
-        diff = f"Difference: {dt} TON (${du})"
-        bar_w = max(3, int(w * 0.012))
-        block_pad = int(fs_body * 0.35)
-        bbox = draw.textbbox((0, 0), diff, font=font_body)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        strip = (245, 250, 255, 255) if bg[0] > 200 else (30, 48, 68, 255)
-        draw.rectangle(
-            [pad_x - 4, y - block_pad, pad_x + tw + int(w * 0.08), y + th + block_pad],
-            fill=strip,
-        )
-        draw.rectangle(
-            [pad_x - 4, y - block_pad, pad_x - 4 + bar_w, y + th + block_pad],
-            fill=ac + (255,),
-        )
-        draw.text((pad_x + bar_w + 6, y), diff, fill=tc + (255,), font=font_body)
-
-        if fname.endswith(".jpg"):
-            out_path = os.path.join(OUT, "profits2.jpg")
-            im.convert("RGB").save(out_path, quality=92)
-        else:
-            out_path = os.path.join(OUT, fname)
-            im.save(out_path)
-        print("wrote", out_path)
+def main() -> None:
+    for spec in SPECS:
+        print("wrote", render(spec))
 
 
 if __name__ == "__main__":
