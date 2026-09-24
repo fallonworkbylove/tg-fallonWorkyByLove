@@ -62,13 +62,34 @@ const RECENCY_DECAY = 0.985;
 const MEET_LEAK_REPLY_RE =
   /(скоро\s+)?увидимся|встретимся|погуляем|жду\s+тебя\s+тоже|когда\s+я\s+приеду|приеду\s+и\s+погул|обязательно\s+увид|давай\s+встрети|где\s+планируешь\s+встрет/i;
 
+// Отсев «поисковых»/ИИ-фраз из лучших примеров (по правилам живого промпта).
+const AI_ESSAY_REPLY_RE =
+  /действительно\s+может|всегда\s+помогает|важно\s+помнить|в\s+итоге|кроме\s+того|таким\s+образом|это\s+хорошо,?\s+потому|уверенность\s+всегда|музыка\s+действительно|пробуждать\s+воспоминан/i;
+
 function isMeetLeakReply(text) {
   return MEET_LEAK_REPLY_RE.test(String(text || ''));
 }
 
+/** Подходит ли фраза под «живой» промпт: коротко, без встреч/эссе/списков. */
+function isHumanStyleReply(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (isMeetLeakReply(t)) return false;
+  if (t.length < 2 || t.length > 140) return false;
+  if (/\n/.test(t)) return false;
+  if (AI_ESSAY_REPLY_RE.test(t)) return false;
+  if (/(^|\n)\s*[-•*]\s+/m.test(t)) return false;
+  const clauses = t.split(/[.!?]+/).map((s) => s.trim()).filter(Boolean);
+  if (clauses.length > 3) return false;
+  return true;
+}
+
 function filterMeetLeaks(rows, direction) {
-  if (direction !== 'best' || !Array.isArray(rows)) return rows || [];
-  return rows.filter((r) => !isMeetLeakReply(r.bot_reply));
+  if (!Array.isArray(rows)) return [];
+  if (direction === 'best') {
+    return rows.filter((r) => isHumanStyleReply(r.bot_reply));
+  }
+  return rows;
 }
 
 // Этапы диалога — используются, чтобы подсказки были в тему момента, а не
@@ -416,7 +437,12 @@ async function getWorstPatterns(limit = 4, minUses = 2, maxRate = 0.35, stage = 
  */
 async function buildLearningSnippet(stage = 'general') {
   if (!LEARNING_ENABLED) return '';
-  const [good, bad] = await Promise.all([getBestPatterns(6, 2, 0.55, stage), getWorstPatterns(4, 2, 0.35, stage)]);
+  const [good, bad] = await Promise.all([
+    // minUses=1: в пул попадают и одноразовые удачные фразы; «человечность»
+    // режет isHumanStyleReply (длина, без встреч/эссе).
+    getBestPatterns(8, 1, 0.5, stage),
+    getWorstPatterns(4, 2, 0.35, stage),
+  ]);
   if (!good.length && !bad.length) return '';
 
   let snippet = '\n\n=== ОБУЧЕНИЕ НА ПРОШЛОМ ОПЫТЕ (это не гипотеза, это реально сработавшие диалоги) ===\n';
