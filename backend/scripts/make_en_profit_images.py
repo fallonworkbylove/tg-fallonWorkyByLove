@@ -21,12 +21,12 @@ SPECS = [
         "diff": ("265.1879", "405.30"),
         "theme": "dark",
         "pad_x": 19,
-        "title_dy": 9,
-        "gap_title": 20,
-        "gap_lines": 10,
-        "gap_before_diff": 12,
-        "fs_title": 15,
-        "fs_body": 13,
+        "title_dy": 8,
+        "gap_title": 14,
+        "gap_lines": 6,
+        "gap_before_diff": 8,
+        "fs_title": 14,
+        "fs_body": 12,
     },
     {
         "file": "profits2.jpg",
@@ -54,11 +54,11 @@ SPECS = [
         "theme": "dark",
         "pad_x": 15,
         "title_dy": 8,
-        "gap_title": 20,
-        "gap_lines": 10,
-        "gap_before_diff": 12,
+        "gap_title": 14,
+        "gap_lines": 6,
+        "gap_before_diff": 8,
         "fs_title": 14,
-        "fs_body": 13,
+        "fs_body": 12,
     },
     {
         "file": "profits4.png",
@@ -69,12 +69,12 @@ SPECS = [
         "diff": ("170.26", "260.22"),
         "theme": "dark",
         "pad_x": 14,
-        "title_dy": 9,
-        "gap_title": 20,
-        "gap_lines": 10,
-        "gap_before_diff": 12,
+        "title_dy": 8,
+        "gap_title": 14,
+        "gap_lines": 6,
+        "gap_before_diff": 8,
         "fs_title": 14,
-        "fs_body": 13,
+        "fs_body": 12,
     },
 ]
 
@@ -163,18 +163,24 @@ def render(spec: dict) -> str:
     box_w = min(w - box_x - 8, tw + pad_x * 2 + bar_w + 18)
     box_h = th + pad_y * 2
 
-    # Keep quote fully inside original canvas (same size as RU card).
-    if y + box_h > h - 4:
-        y = max(panel_y + 8, h - 4 - box_h)
+    # Keep quote inside canvas; never move it up over previous lines.
+    if y + box_h > h - 2:
+        pad_y = max(2, h - 2 - y - th)
+        box_h = th + pad_y * 2
+    if y + box_h > h:
+        box_h = max(th + 2, h - y)
 
     draw.rounded_rectangle(
-        (box_x, y, box_x + box_w, y + box_h),
+        (box_x, y, box_x + box_w, min(y + box_h, h - 1)),
         radius=5,
         fill=quote_fill + (255,),
     )
-    draw.rectangle((box_x, y + 3, box_x + bar_w, y + box_h - 3), fill=accent + (255,))
+    draw.rectangle(
+        (box_x, y + 2, box_x + bar_w, min(y + box_h, h - 1) - 2),
+        fill=accent + (255,),
+    )
     draw.text(
-        (box_x + bar_w + pad_x - 2, y + pad_y - 1),
+        (box_x + bar_w + pad_x - 2, y + max(1, pad_y - 1)),
         diff,
         fill=text_color + (255,),
         font=font_body,
