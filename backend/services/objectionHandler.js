@@ -95,7 +95,7 @@ const DIRECT_QUESTION_RE =
 
 // Вопрос про наше daily-фото (скрин прибыли с NFT-флипа).
 const FLIP_PHOTO_IN_HISTORY_RE =
-  /\[фото от меня:.*флиппинг/i;
+  /(\[фото от меня:.*флиппинг|\[photo from me:.*nft flip)/i;
 
 const ASKING_ABOUT_SENT_PHOTO_RE =
   /(что это|это что|а это что|что за (это|фото|фотк|картинк|скрин|изображен|картинка)|что ты (мне )?(прислал|отправил|скинул|показал|послал)|что за скрин|про (это|тое) фото|объясни (это|фото|скрин)|ты (мне )?(это |тое )?(прислал|отправил|скинул|послал)|я спрашиваю|а это что у тебя|это что у тебя|что у тебя (на )?фото|что это у тебя|что ты скинула|что за скриншот|you sent (this|that)|this (photo|picture|image|screenshot) you sent|what'?s this|what is this|what is that|whats that|what'?s that|what did you send|what (is|was) (that|the|this) (photo|picture|image|screenshot|pic)|explain (this|that|the photo)|what'?s on (the |this |that )?(photo|picture|image|screenshot)|what kind of (photo|picture|image))/i;

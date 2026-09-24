@@ -18,11 +18,13 @@ const PHOTO_TIMEZONE = process.env.WORK_TIMEZONE || 'Europe/Moscow';
 const NFT_VOICE_TAG = '[голосовое: nft.ogg]';
 
 // Метка в истории диалога: модель должна понимать, что это наш скрин флипа,
-// а не «фото от собеседника». objectionHandler ищет этот префикс.
-const FLIP_PHOTO_HISTORY_TAG =
+// а не «фото от собеседника». objectionHandler ищет этот префикс (RU/EN).
+const FLIP_PHOTO_HISTORY_TAG_RU =
   '[фото от меня: скриншот прибыли с флиппинга NFT — купила дешевле, продала дороже]';
+const FLIP_PHOTO_HISTORY_TAG_EN =
+  '[photo from me: NFT flip profit screenshot — bought cheaper, sold higher]';
 
-const CAPTIONS = [
+const CAPTIONS_RU = [
   'сегодня повезло 😊',
   'вот так бы всегда 🥹',
   'работает же, хаха',
@@ -30,13 +32,24 @@ const CAPTIONS = [
   'неожиданно, приятно 🙃',
 ];
 
-function flipPhotoHistoryContent(caption) {
+const CAPTIONS_EN = [
+  'got lucky today 😊',
+  'wish it was always like this 🥹',
+  'it actually works lol',
+  'made enough for dinner 👍',
+  'unexpected but nice 🙃',
+];
+
+function flipPhotoHistoryContent(caption, isRussian = true) {
+  const tag = isRussian ? FLIP_PHOTO_HISTORY_TAG_RU : FLIP_PHOTO_HISTORY_TAG_EN;
   const cap = String(caption || '').trim();
-  return cap ? `${FLIP_PHOTO_HISTORY_TAG} Подпись: "${cap}"` : FLIP_PHOTO_HISTORY_TAG;
+  if (!cap) return tag;
+  return isRussian ? `${tag} Подпись: "${cap}"` : `${tag} Caption: "${cap}"`;
 }
 
-function pickRandomCaption() {
-  return CAPTIONS[Math.floor(Math.random() * CAPTIONS.length)];
+function pickRandomCaption(isRussian = true) {
+  const bank = isRussian ? CAPTIONS_RU : CAPTIONS_EN;
+  return bank[Math.floor(Math.random() * bank.length)];
 }
 
 let schemaReady = false;
@@ -63,6 +76,13 @@ async function ensureSchema() {
 
 function getImagesFolders() {
   return [process.env.IMAGES_FOLDER, process.env.IMAGES_FOLDER_2]
+    .filter((folder) => folder && folder.trim())
+    .map((folder) => folder.trim());
+}
+
+/** Папки с английскими скринами прибыли (подписи Purchase/Sale/Difference). */
+function getImagesFoldersEn() {
+  return [process.env.IMAGES_FOLDER_EN, process.env.IMAGES_FOLDER_EN_2]
     .filter((folder) => folder && folder.trim())
     .map((folder) => folder.trim());
 }
@@ -251,7 +271,8 @@ async function sendDuePhotos() {
         continue;
       }
 
-      const { getActiveClient, isNeverContact, isPeerArchived, saveMessage } = tg();
+      const { getActiveClient, isNeverContact, isPeerArchived, saveMessage, conversationIsRussian } =
+        tg();
       const client = getActiveClient(row.account_id);
       if (!client) {
         console.error(
@@ -260,9 +281,14 @@ async function sendDuePhotos() {
         continue;
       }
 
-      const folders = getImagesFolders();
+      const isRussian = await conversationIsRussian(row.account_id, row.peer_id);
+      const foldersRu = getImagesFolders();
+      const foldersEn = getImagesFoldersEn();
+      const folders = !isRussian && foldersEn.length > 0 ? foldersEn : foldersRu;
       if (folders.length === 0) {
-        console.error('Не настроена ни одна папка с готовыми фото (IMAGES_FOLDER / IMAGES_FOLDER_2).');
+        console.error(
+          'Не настроена ни одна папка с готовыми фото (IMAGES_FOLDER / IMAGES_FOLDER_EN).',
+        );
         continue;
       }
 
@@ -283,7 +309,7 @@ async function sendDuePhotos() {
         continue;
       }
 
-      const caption = pickRandomCaption();
+      const caption = pickRandomCaption(isRussian);
       await client.sendFile(entity, { file: imagePath, caption });
 
       // Пишем в историю, чтобы на «что это?» / «this one?» модель знала:
@@ -294,10 +320,10 @@ async function sendDuePhotos() {
           String(row.peer_id),
           row.peer_username || null,
           'assistant',
-          flipPhotoHistoryContent(caption),
+          flipPhotoHistoryContent(caption, isRussian),
         );
         console.log(
-          `[Аккаунт ${row.account_id}] Daily flip: история записана для ${row.peer_id}`,
+          `[Аккаунт ${row.account_id}] Daily flip (${isRussian ? 'RU' : 'EN'}): история записана для ${row.peer_id}`,
         );
       } catch (histErr) {
         console.error(
@@ -379,6 +405,9 @@ module.exports = {
   startDailyPhotoScheduler,
   schedulePendingSends,
   sendDuePhotos,
-  FLIP_PHOTO_HISTORY_TAG,
+  FLIP_PHOTO_HISTORY_TAG_RU,
+  FLIP_PHOTO_HISTORY_TAG_EN,
+  // backwards-compatible alias
+  FLIP_PHOTO_HISTORY_TAG: FLIP_PHOTO_HISTORY_TAG_RU,
   flipPhotoHistoryContent,
 };

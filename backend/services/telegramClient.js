@@ -1195,19 +1195,41 @@ const NFT_WORK_MENTION_MAX_MS = 50 * 60 * 1000;
 const NFT_DIALOG_SESSION_GAP_HOURS = 72;
 // Нет входящих от человека столько часов — активного диалога нет, NFT не ведём.
 const NFT_ACTIVE_DIALOGUE_IDLE_HOURS = 72;
-const WORK_PROBLEM_PHRASES = [
+const WORK_PROBLEM_PHRASES_RU = [
   'минутку, по работе отвлекусь)',
   'щас чуть по работе)',
   'ой, работу гляну быстро)',
   'секунду, рабочее)',
+];
+const WORK_PROBLEM_PHRASES_EN = [
+  'one sec, work thing)',
+  'brb quick work stuff',
+  'oops gotta check something for work)',
+  'hold on, work)',
+];
+
+// Живая инициатива перед «по работе», чтобы не кидать проблему в пустоту.
+const WORK_LEAD_IN_POKE_RU = [
+  'ты как там)',
+  'ку',
+  'эей',
+  'ну что ты',
+  'хех привет)',
+];
+const WORK_LEAD_IN_POKE_EN = [
+  'hey',
+  'yo',
+  'u there?',
+  'hey how r u',
 ];
 
 let nftScheduleReady = false;
 const nftWorkMentionInFlight = new Set();
 const nftVoiceTickInFlight = new Set();
 
-function pickWorkProblemPhrase() {
-  return WORK_PROBLEM_PHRASES[Math.floor(Math.random() * WORK_PROBLEM_PHRASES.length)];
+function pickWorkProblemPhrase(isRussian = true) {
+  const bank = isRussian ? WORK_PROBLEM_PHRASES_RU : WORK_PROBLEM_PHRASES_EN;
+  return bank[Math.floor(Math.random() * bank.length)];
 }
 
 function withWorkProblemLine(text) {
@@ -1220,7 +1242,8 @@ function withWorkProblemLine(text) {
 async function maybeSendWorkAside(client, sender, accountId, peerId, senderName, enabled) {
   if (!enabled) return false;
   if (!(await claimWorkMention(accountId, peerId))) return false;
-  const line = pickWorkProblemPhrase();
+  const isRussian = await conversationIsRussian(accountId, peerId);
+  const line = pickWorkProblemPhrase(isRussian);
   try {
     await sleep(2500 + Math.random() * 3500);
     await client.sendMessage(sender, { message: line });
@@ -4512,6 +4535,7 @@ async function tickNftWorkMentions(accountId) {
       const tail = await getDialogTail(accountId, peerId);
       if (!tail.hasIncoming) continue;
       if (tail.lastRole !== 'assistant' && tail.lastRole !== 'user') continue;
+      // Человек написал и ждёт ответа — не лезем с «по работе», ответим обычным ходом.
       if (tail.lastRole === 'user') continue;
       let entity;
       try {
@@ -4522,14 +4546,21 @@ async function tickNftWorkMentions(accountId) {
       if (!entity || entity.bot || entity.self) continue;
       if (await shouldSkipProactivePeer(client, entity)) continue;
       if (!(await claimWorkMention(accountId, peerId))) continue;
-      const phrase = pickWorkProblemPhrase();
       const senderName = entity.username || entity.firstName || peerId;
       try {
+        // Не кидаем «по работе» в пустоту: сначала живая инициатива, потом проблема.
+        const isRussian = await conversationIsRussian(accountId, peerId);
+        const pokeBank = isRussian ? WORK_LEAD_IN_POKE_RU : WORK_LEAD_IN_POKE_EN;
+        const poke = pokeBank[Math.floor(Math.random() * pokeBank.length)];
         await sleep(1500 + Math.random() * 2500);
+        await client.sendMessage(entity, { message: poke });
+        await saveMessage(accountId, peerId, senderName, 'assistant', poke);
+        await sleep(4000 + Math.random() * 5000);
+        const phrase = pickWorkProblemPhrase(isRussian);
         await client.sendMessage(entity, { message: phrase });
         await saveMessage(accountId, peerId, senderName, 'assistant', phrase);
         console.log(
-          `[${accountLabel(accountId)}] Перед NFT-голосовым для ${senderName}: "${phrase}"`,
+          `[${accountLabel(accountId)}] Перед NFT: инициатива + «по работе» для ${senderName}: "${poke}" → "${phrase}"`,
         );
       } catch (err) {
         await releaseWorkMention(accountId, peerId);
@@ -4784,4 +4815,5 @@ module.exports = {
   archivePeer,
   NFT_VOICE_AFTER_HOURS,
   getDialogAgeHours,
+  conversationIsRussian,
   };
