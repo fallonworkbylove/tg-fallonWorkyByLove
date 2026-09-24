@@ -362,11 +362,11 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // На прямой вопрос про ИИ отвечаем естественно, без одной заученной формулы.
   const roleReminder =
     'Строго следуй инструкции персонажа выше и всем её правилам. ' +
-    'Если собеседник называет тебя ботом/ИИ/роботом — НЕ отвечай одной и той же заученной фразой. ' +
-    'Сначала глянь свои недавние ответы в истории: если уже писала «обидно, если честно» / «я живая» — ' +
-    'эту формулировку повторять ЗАПРЕЩЕНО, скажи совсем другим тоном (ирония, лёгкая злость, «ну ок»). ' +
-    'Если упрекает что не спросила имя — сразу спроси имя, без повторной защиты что ты человек. ' +
-    'Коротко, по-живому, без шаблона «я живая, просто общаюсь как мне комфортно» и без резкого «давай о чём-то интересном».';
+    'Если собеседник называет тебя ботом/ИИ — НЕ оправдывайся как саппорт. ' +
+    'ЗАПРЕЩЕНО: «всё нормально», «не переживай», «мы просто общаемся», «я живая», «обидно если честно». ' +
+    'Коротко и по-человечески: «хах», сарказм, «ну ок)» — без вопроса в конце. ' +
+    'Если уже отвечала на «ты бот» — не повторяй ту же защиту, скажи иначе и короче. ' +
+    'Если упрекает что не спросила имя — сразу спроси имя, без лекции что ты человек.';
 
   // Защита от повторов: без явного запрета лёгкая модель регулярно
   // переспрашивает то же самое (например «что делаешь?») спустя пару
@@ -408,7 +408,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const moodReminder =
     'Подстрой тон под настроение собеседника, но НЕ проговаривай анализ («вижу ты грустишь»). ' +
     'Грустит — мягче. Злится всерьёз — спокойно. Дразнит / шутит / пишет «ты бот» игриво — ' +
-    'можно лёгкий сарказм или иронию в одно короткое предложение. ' +
+    'лёгкий сарказм или «хах» в одно короткое предложение, БЕЗ утешений «не переживай». ' +
     'Хорошее настроение — легко и коротко, без эссе.';
 
   // Жёсткое напоминание про длину. Ставим его ОТДЕЛЬНО от roleReminder и
@@ -422,7 +422,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'НЕ будь холодной/сухой «по делу» и НЕ будь прилипчивой: без «я тебя люблю», «дорожу тобой», «ты мне так важен» в каждом ответе. ' +
     'Лёгкая нежность — иногда, когда диалог уже тёплый или он сам флиртует; иначе просто тепло и спокойно. ' +
     'Если он холоден или грубит — тепла меньше, без уговоров. ' +
-    'Эмодзи почти не используй (чаще ноль). Скобку «)» как улыбку можно.';
+    'Эмодзи почти не используй (чаще ноль). Скобку «)» как улыбку можно, но НЕ в каждом сообщении.';
 
   const laughReminder =
     'Если последнее сообщение собеседника тебе реально смешное — шутка, прикол, неожиданная смешная фраза — ' +
@@ -430,21 +430,21 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Не ставь токен на обычный «хах», смайл, сарказм или просто весёлое настроение. Не на каждое сообщение.';
 
   const humanStyleReminder =
-    'Стиль: живая переписка в Telegram — не бот, не Википедия, не поисковик, не продажник. ' +
-    'ЗАПРЕЩЕНО: длинные объяснения, списки имён/фактов столкой, фразы вроде «уверенность всегда помогает», ' +
-    '«музыка действительно может пробуждать», «это хорошо, потому что…», энциклопедия про фильм/актёров. ' +
+    'Стиль: живая девушка в Telegram, не бот и не колл-центр. ' +
+    'ЗАПРЕЩЕНО: длинные объяснения, списки, фразы «уверенность всегда помогает», «не переживай», «всё нормально мы просто общаемся». ' +
     'На «какой любимый актёр / фильм» — 1 имя или «хз, том харди наверно)» — НЕ список из трёх. ' +
-    'На медиа (фото/видео/кружок) которое ОН уже прислал — реагируй на содержимое, НЕ пиши «покажи» / «что интересного». ' +
-    'Почти без эмодзи. Иногда только реакция <<REACT:эмодзи>> без текста (на «ок/ага/угу», стикер, просто милое). ' +
-    'На прямой вопрос — короткий текст. Реакции: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
+    'На медиа которое ОН уже прислал — реагируй на содержимое, НЕ пиши «покажи». ' +
+    'Почти без эмодзи. Иногда только <<REACT:эмодзи>> без текста. ' +
+    'На прямой вопрос — короткий ответ БЕЗ зеркального «а ты?». ' +
+    'Реакции: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
 
   // Главный анти-тупость гард: сначала ответ по сути, без чужих скриптов.
   const answerFirstReminder =
     'Сначала по делу на то, что он СЕЙЧАС написал — коротко. ' +
     'Если в одном сообщении несколько реплик (например «ещё вопросик» + «как зовут тебя?») — отвечай на ГЛАВНЫЙ вопрос (имя/факты), не на «ещё вопросик» фразой «спрашивай)». ' +
     'Вопрос «как тебя зовут / как зовут тебя» — сразу назови своё имя из промпта. ЗАПРЕЩЕНО: «спрашивай», «валяй», «конечно спрашивай». ' +
-    'Вопрос про тебя — прямой ответ в первой фразе, без философии. ' +
-    'Если он прислал фото/видео/голос — реагируй на СОДЕРЖИМОЕ (уже видно), не проси «покажи» / «скинь». ' +
+    'Вопрос про тебя (город/работа) — ответь про себя и СТОП. Не добавляй «а ты откуда?» / «а ты чем занимаешься?». ' +
+    'Если он прислал фото/видео/голос — реагируй на СОДЕРЖИМОЕ, не проси «покажи». ' +
     'НЕ пиши «давай тут общаться», если он не просил контакты/встречу. ' +
     'НЕ эссе, НЕ мораль, НЕ впаривание NFT. Живая короткая реакция.';
 
@@ -462,10 +462,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const lengthReminder =
     'ДЛИНА: обычно ОДНА короткая фраза (3-12 слов). Максимум 2 коротких предложения. ' +
     'Без списков, абзацев и «потому что…». Дефис «-», не тире «—». ' +
-    'ВОПРОС В КОНЦЕ: по умолчанию БЕЗ вопроса. Вопрос только иногда (~каждый 4-й ответ), ' +
-    'когда тема реально просит уточнения. ЗАПРЕЩЕНО почти каждое сообщение заканчивать вопросом ' +
-    '(«а ты?», «что интересного?», «тебе это интересно?», «какие треки любишь?»). ' +
-    'Чаще просто среагируй: «ахах норм)», «звучит тяжёло», «ого крутая тачка». ' +
+    'ВОПРОС В КОНЦЕ: по умолчанию БЕЗ вопроса. Вопрос редко, примерно каждый 5-й ответ. ' +
+    'ЗАПРЕЩЕНО почти каждое сообщение заканчивать «а ты?», «а ты откуда?», «а ты чем занимаешься?», «что интересного?». ' +
+    'Сказала про себя (город/работу) — НЕ зеркаль «а ты?». Просто точка или скобка. ' +
+    'Чаще просто среагируй: «ахах норм)», «звучит тяжёло», «ого». ' +
     'Факт из истории (город/работа/имя) — не переспрашивай.';
 
   const contextGuard = buildContextGuard(history, contextualUserMessage);
@@ -657,11 +657,12 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const cleaned = applyAntiDetectStyle(rawText);
   const strippedFacts = stripReaskedKnownFacts(cleaned, contextGuard);
   const strippedStay = stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
-  const strippedBot = stripRepeatedBotDefense(strippedStay, history, contextualUserMessage);
+  const strippedBot = humanizeBotAccusationReply(strippedStay, history, contextualUserMessage);
   const strippedMeet = stripMeetAgreement(strippedBot, contextualUserMessage, options);
   const strippedName = fixIgnoredNameQuestion(strippedMeet, contextualUserMessage, finalPrompt);
   const strippedQ = stripHabitualTrailingQuestion(strippedName, history, contextualUserMessage);
-  return clipOverlongReply(strippedQ);
+  const varied = varyTrailingSmile(strippedQ, history);
+  return clipOverlongReply(varied);
 }
 
 /**
@@ -940,7 +941,89 @@ const BOT_DEFENSE_OPENER_RE =
 const BOT_DEFENSE_ALIVE_RE =
   /я\s+жив(ая|ой)[^.!?\n]*[.!)]*/gi;
 const BOT_DEFENSE_COMFORT_RE =
-  /просто\s+обща(юсь|юсь)\s+так[^.!?\n]*[.!)]*/gi;
+  /(просто\s+обща(юсь|емся)\s+так|мы\s+просто\s+обща(емся|емся)|не\s+переживай|вс[её]\s+нормально|не\s+волнуйся|давай\s+просто\s+общать)[^.!?\n]*[.!)]*/gi;
+const BOT_ACCUSATION_USER_RE =
+  /(ты\s+бот|это\s+бот|бот\s+ли\s+ты|какой[- ]?то\s+бот|как\s+бот|как\s+робот|обща(ешьс|ешс)я\s+как\s+(бот|робот)|кажется[^.!?\n]{0,40}бот|похоже[^.!?\n]{0,30}бот|как\s+будто[^.!?\n]{0,20}бот|отвечаешь[^.!?\n]{0,30}бот|(снова|опять)\s+кажется|мне\s+снова\s+кажется|нейросеть|chatgpt|gpt[- ]?\d|ты\s+не\s+человек|you('?re|\s+are)\s+a?\s*bot|are\s+you\s+a?\s*bot)/i;
+
+const BOT_ACCUSATION_FIRST_RU = [
+  'хах ну ты серьёзно)',
+  'странно звучит)',
+  'да ладно тебе)',
+  'ну ок)',
+  'хах)',
+];
+const BOT_ACCUSATION_AGAIN_RU = [
+  'хах опять)',
+  'ну ты зациклился)',
+  'ладно верь)',
+  'окей)',
+  'ну как скажешь)',
+];
+const BOT_ACCUSATION_FIRST_EN = [
+  'lol u serious?',
+  'weird take)',
+  'nah)',
+  'ok then)',
+];
+const BOT_ACCUSATION_AGAIN_EN = [
+  'lol again?',
+  'ok believe what u want)',
+  'sure)',
+];
+
+/**
+ * На «ты бот» / «кажется бот» — живая короткая реакция, не саппорт-утешение.
+ */
+function humanizeBotAccusationReply(reply, history, userMessage) {
+  if (!reply) return reply;
+  if (!BOT_ACCUSATION_USER_RE.test(String(userMessage || ''))) {
+    return stripRepeatedBotDefense(reply, history, userMessage);
+  }
+
+  const recentAssistant = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-4)
+    .map((h) => String(h.content || ''))
+    .join('\n');
+  const alreadyDefended =
+    /(обидно|я\s+жив|не\s+бот|не\s+ии|похоже\s+на|с\s+чего\s+ты\s+взял|хах\s+(ну\s+ты|опять)|зациклил|ладно\s+верь|странно\s+звучит|не\s+переживай|вс[её]\s+нормально)/i.test(
+      recentAssistant,
+    );
+
+  let text = String(reply)
+    .replace(BOT_DEFENSE_OPENER_RE, '')
+    .replace(BOT_DEFENSE_ALIVE_RE, ' ')
+    .replace(BOT_DEFENSE_COMFORT_RE, ' ')
+    .replace(/не\s+подтверждаю[^.!?\n]*[.!)]*/gi, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([).!])/g, '$1')
+    .trim();
+
+  const stillSoft =
+    !text ||
+    text.length < 4 ||
+    /(вс[её]\s+нормально|не\s+переживай|просто\s+обща|я\s+жив|обидно|мы\s+просто)/i.test(text) ||
+    /\?/.test(text);
+
+  const isEn =
+    /[a-z]{3,}/i.test(String(userMessage || '')) && !/[а-яё]{3,}/i.test(String(userMessage || ''));
+  const bank = alreadyDefended
+    ? isEn
+      ? BOT_ACCUSATION_AGAIN_EN
+      : BOT_ACCUSATION_AGAIN_RU
+    : isEn
+      ? BOT_ACCUSATION_FIRST_EN
+      : BOT_ACCUSATION_FIRST_RU;
+
+  if (stillSoft || Math.random() < 0.55) {
+    return bank[Math.floor(Math.random() * bank.length)];
+  }
+  text = text
+    .replace(/\s*[.!]?\s*(?:а\s+)?(?:ты|вам|what|why|how)[^?]*\?\s*$/i, '')
+    .replace(/\s*\?\s*$/g, '')
+    .trim();
+  return text.length >= 3 ? text : bank[Math.floor(Math.random() * bank.length)];
+}
 
 /**
  * Не даёт дважды подряд гнать шаблон «обидно, если честно / я живая».
@@ -1051,34 +1134,75 @@ function stripMeetAgreement(reply, userMessage, options = {}) {
 
 /**
  * Если последние ответы ассистента уже заканчивались вопросом — срезаем
- * хвостовой вопрос у текущего (ломает шаблон «реакция + вопрос»).
- * На прямой вопрос собеседника не режем.
+ * хвостовой вопрос. Зеркальные «а ты откуда / чем занимаешься» режем всегда.
  */
 function stripHabitualTrailingQuestion(reply, history, userMessage) {
   if (!reply) return reply;
-  const userQ = /\?/.test(String(userMessage || '')) ||
-    /(что|как|где|когда|почему|зачем|кто|какой|какая|какие|whom|what|why|how|where)\b/i.test(
-      String(userMessage || ''),
-    );
-  // Он спросил — можно ответить без встречного вопроса; режем всё равно если привычка.
+  const userText = String(userMessage || '');
+  const userQ =
+    /\?/.test(userText) ||
+    /(что|как|где|когда|почему|зачем|кто|какой|какая|какие|whom|what|why|how|where)\b/i.test(userText);
+
   const recent = (Array.isArray(history) ? history : [])
     .filter((h) => h && h.role === 'assistant')
     .slice(-3)
     .map((h) => String(h.content || ''));
   const recentHadQ = recent.filter((t) => /\?/.test(t)).length >= 1;
-  if (!recentHadQ && Math.random() < 0.28) return reply;
 
   let text = String(reply).trim();
-  // Срезаем последнее вопросительное предложение / хвост после ) или .
+
+  const mirrorTail =
+    /\s*[.,!]?\s*(?:а\s+)?ты\s+(?:откуда|где|чем\s+занима|кем\s+работа|как\s+там|что\s+делаешь|из\s+какого)[^?]*\?\s*$/i;
+  const softMirror =
+    /\s*[.,!]?\s*(?:а\s+ты\??|а\s+у\s+тебя\??|and\s+you\??|what\s+about\s+you\??)\s*$/i;
+
+  if (mirrorTail.test(text) || softMirror.test(text)) {
+    text = text.replace(mirrorTail, '').replace(softMirror, '').trim();
+    if (text.length >= 3) return text;
+    return userQ ? 'ага' : 'ага)';
+  }
+
+  if (!recentHadQ && Math.random() < 0.18) return reply;
+
   const stripped = text
-    .replace(/\s*[.!]?\s*(?:а\s+)?(?:ты|вам|тебе|какие?|что|как|где|когда|почему|зачем|who|what|why|how|where)[^?]*\?\s*$/i, '')
+    .replace(
+      /\s*[.!]?\s*(?:а\s+)?(?:ты|вам|тебе|какие?|что|как|где|когда|почему|зачем|who|what|why|how|where)[^?]*\?\s*$/i,
+      '',
+    )
     .replace(/\s*\?[) ]*$/g, '')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 
-  if (stripped.length >= 3) return stripped.replace(/[ \t]+$/g, '').trim();
-  // Если после среза почти пусто и он не спрашивал — короткая реакция без ?
+  if (stripped.length >= 3) return stripped;
   if (!userQ) return 'ага)';
+  return text;
+}
+
+/**
+ * Не в каждом сообщении «)» — иначе выглядит как шаблон.
+ */
+function varyTrailingSmile(reply, history) {
+  if (!reply) return reply;
+  let text = String(reply).trim();
+  if (!/\)+\s*$/.test(text)) return text;
+
+  const recent = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-3)
+    .map((h) => String(h.content || '').trim());
+  const recentParens = recent.filter((t) => /\)+\s*$/.test(t)).length;
+
+  if (recentParens >= 2 && Math.random() < 0.7) {
+    text = text.replace(/\)+\s*$/, '').trim();
+    return text.length >= 2 ? text : reply;
+  }
+  if (recentParens >= 1 && Math.random() < 0.4) {
+    text = text.replace(/\)+\s*$/, '').trim();
+    return text.length >= 2 ? text : reply;
+  }
+  if (/\)\s*$/.test(text) && !/\)\)\s*$/.test(text) && Math.random() < 0.12) {
+    return `${text})`;
+  }
   return text;
 }
 
