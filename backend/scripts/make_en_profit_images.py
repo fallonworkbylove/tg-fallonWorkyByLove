@@ -11,12 +11,22 @@ SRC_FALLBACK = os.path.join(HERE, "..", "images_folder")
 OUT = os.path.join(HERE, "..", "images_folder_en")
 
 
-def find_font(size: int) -> ImageFont.FreeTypeFont:
-    for name in ("segoeuib.ttf", "arialbd.ttf", "calibrib.ttf"):
+def find_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    names = (
+        ("segoeuib.ttf", "arialbd.ttf", "calibrib.ttf")
+        if bold
+        else ("segoeui.ttf", "arial.ttf", "calibri.ttf")
+    )
+    for name in names:
         path = os.path.join(r"C:\Windows\Fonts", name)
         if os.path.exists(path):
             return ImageFont.truetype(path, size)
-    return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
+    fallback = (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        if bold
+        else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    )
+    return ImageFont.truetype(fallback, size)
 
 
 def src_path(fname: str) -> str:
@@ -95,37 +105,66 @@ def render_boxer() -> str:
     return out
 
 
+def _find_dark_quote(ru: Image.Image) -> tuple[int, int, int, int, tuple[int, int, int]]:
+    """RU Difference quote: (x0, y0, x1, y1, fill). Matches accent+fill+” chrome."""
+    rgb = ru.convert("RGB")
+    w, h = rgb.size
+    qf = (33, 58, 72)
+    ys = [y for y in range(h) if sum(1 for x in range(w) if rgb.getpixel((x, y)) == qf) > 20]
+    if not ys:
+        raise RuntimeError("quote band not found")
+    y0, y1 = ys[0], ys[-1] + 1
+    mid = ys[len(ys) // 2]
+    xs = [x for x in range(w) if rgb.getpixel((x, mid)) == qf]
+    # include cyan accent bar to the left of fill
+    x0 = xs[0]
+    for x in range(xs[0] - 1, max(-1, xs[0] - 8), -1):
+        r, g, b = rgb.getpixel((x, mid))
+        if b > 180 and g > 150 and r < 160:
+            x0 = x
+        elif (r, g, b) != (24, 37, 51):
+            break
+        else:
+            break
+    # include closing ” to the right of fill
+    x1 = xs[-1] + 1
+    for x in range(xs[-1] + 1, min(w, xs[-1] + 40)):
+        r, g, b = rgb.getpixel((x, mid))
+        if b > 180 and g > 150 and r < 200:
+            x1 = x + 1
+        elif (r, g, b) == (24, 37, 51):
+            break
+    return x0, y0, x1, y1, qf
+
+
 def render_dark(fname: str, title: str, buy: str, sell: str, diff: str, pad: int) -> str:
+    """Dark EN cards: wipe panel, RU quote chrome in place, EN labels."""
     ru = Image.open(src_path(fname)).convert("RGBA")
     w, h = ru.size
     panel_y = 432
-    samples = [
-        ru.getpixel((x, y))[:3]
-        for y in range(panel_y + 4, panel_y + 24)
-        for x in (w // 2, w // 3)
-    ]
-    samples.sort(key=lambda c: sum(c))
-    bg = samples[len(samples) // 2]
+    panel_bg = (24, 37, 51)
+    ink = (255, 255, 255)
+
+    qx0, qy0, qx1, qy1, quote_fill = _find_dark_quote(ru)
+    quote = ru.crop((qx0, qy0, qx1, qy1)).copy()
+    qd = ImageDraw.Draw(quote)
+    qw, qh = quote.size
+    # keep left accent (~3px) and right ” (~22px); wipe RU text
+    qd.rectangle((6, 2, max(7, qw - 22), qh - 2), fill=quote_fill + (255,))
 
     im = ru.copy()
     draw = ImageDraw.Draw(im)
-    draw.rectangle((0, panel_y, w, h), fill=bg + (255,))
+    draw.rectangle((0, panel_y, w, h), fill=panel_bg + (255,))
+    im.paste(quote, (qx0, qy0), quote if quote.mode == "RGBA" else None)
 
-    qy0, qy1 = 508, min(h - 2, 536)
-    quote = ru.crop((pad - 4, qy0, min(w - 8, pad + 310), qy1)).copy()
-    qd = ImageDraw.Draw(quote)
-    qw, qh = quote.size
-    qd.rectangle((8, 2, max(9, qw - 22), qh - 2), fill=(30, 45, 62, 255))
-    im.paste(quote, (pad - 4, qy0), quote if quote.mode == "RGBA" else None)
-
-    font_title = find_font(15)
-    font_body = find_font(13)
-    ink = (255, 255, 255, 255)
+    font_title = find_font(15, bold=True)
+    font_body = find_font(13, bold=False)
     draw = ImageDraw.Draw(im)
-    draw.text((pad, 441), title, fill=ink, font=font_title)
-    draw.text((pad, 477), buy, fill=ink, font=font_body)
-    draw.text((pad, 495), sell, fill=ink, font=font_body)
-    draw.text((pad + 10, 514), diff, fill=ink, font=font_body)
+    draw.text((pad, 441), title, fill=ink + (255,), font=font_title)
+    draw.text((pad, 477), buy, fill=ink + (255,), font=font_body)
+    draw.text((pad, 495), sell, fill=ink + (255,), font=font_body)
+    # RU Difference text baseline ~519
+    draw.text((qx0 + 10, 514), diff, fill=ink + (255,), font=font_body)
 
     out = os.path.join(OUT, fname)
     os.makedirs(OUT, exist_ok=True)
