@@ -154,21 +154,37 @@ async function ensureSchema() {
   schemaReady = true;
 }
 
-function getImagesFolders() {
-  // Арт NFT без панели цифр. Если задан IMAGES_FOLDER_ART — только он
-  // (иначе случайно уйдут старые «карточки» с вшитым текстом).
-  const art = String(process.env.IMAGES_FOLDER_ART || '').trim();
-  if (art) return [art];
+function getImagesFoldersRu() {
+  // Оригинальные карточки с русским текстом на картинке.
   return [process.env.IMAGES_FOLDER, process.env.IMAGES_FOLDER_2]
     .filter((folder) => folder && folder.trim())
     .map((folder) => folder.trim());
 }
 
-/** @deprecated язык теперь в caption; оставлено для совместимости .env */
 function getImagesFoldersEn() {
+  // EN: арт без панели + цифры в caption; если арта нет — EN-карточки.
+  const art = String(process.env.IMAGES_FOLDER_ART || '').trim();
+  if (art) return [art];
   return [process.env.IMAGES_FOLDER_EN, process.env.IMAGES_FOLDER_EN_2]
     .filter((folder) => folder && folder.trim())
     .map((folder) => folder.trim());
+}
+
+/** @deprecated use getImagesFoldersRu / getImagesFoldersEn */
+function getImagesFolders() {
+  return getImagesFoldersRu();
+}
+
+function pickFlipSend(isRussian) {
+  const folders = isRussian ? getImagesFoldersRu() : getImagesFoldersEn();
+  const imagePath = pickRandomImage(folders);
+  if (!imagePath) return null;
+  // RU: цифры уже на карточке — только короткая живая подпись.
+  // EN: арт + цены в подписи сообщения.
+  const caption = isRussian
+    ? pickRandomHook(true)
+    : buildFlipCaption(imagePath, false);
+  return { imagePath, caption };
 }
 
 function pickRandomImage(folders) {
@@ -366,11 +382,10 @@ async function sendDuePhotos() {
       }
 
       const isRussian = await conversationIsRussian(row.account_id, row.peer_id);
-      // Одна папка с артом NFT; RU/EN только в тексте подписи (как обычное сообщение).
-      const folders = getImagesFolders();
-      if (folders.length === 0) {
+      const flip = pickFlipSend(isRussian);
+      if (!flip) {
         console.error(
-          'Не настроена папка с фото NFT (IMAGES_FOLDER_ART / IMAGES_FOLDER).',
+          'Нет фото для daily flip (IMAGES_FOLDER для RU / IMAGES_FOLDER_ART для EN).',
         );
         continue;
       }
@@ -386,13 +401,7 @@ async function sendDuePhotos() {
         continue;
       }
 
-      const imagePath = pickRandomImage(folders);
-      if (!imagePath) {
-        console.error(`[Аккаунт ${row.account_id}] В папке с фото нет доступных файлов.`);
-        continue;
-      }
-
-      const caption = buildFlipCaption(imagePath, isRussian);
+      const { imagePath, caption } = flip;
       await client.sendFile(entity, { file: imagePath, caption });
 
       // Пишем в историю, чтобы на «что это?» / «this one?» модель знала:
