@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""English profit screenshots: original NFT art + Telegram-like panel (matches RU layout)."""
+"""EN profit cards: same layout as RU originals, TON + USD only (no rubles)."""
 from __future__ import annotations
 
 import os
@@ -10,45 +10,43 @@ SRC = os.path.join(HERE, "..", "images_folder_probe")
 SRC_FALLBACK = os.path.join(HERE, "..", "images_folder")
 OUT = os.path.join(HERE, "..", "images_folder_en")
 
+# Exact panel starts from RU originals; keep same canvas size (no extend).
 SPECS = [
     {
         "file": "profits1.png",
         "panel_y": 432,
-        "extend": 24,
         "title": "T1000 #32",
         "buy": ("450.9021", "689.14"),
         "sell": ("716.09", "1,094.45"),
         "diff": ("265.1879", "405.30"),
         "theme": "dark",
         "pad_x": 19,
-        "title_dy": 8,
-        "gap_title": 18,
-        "gap_lines": 8,
-        "gap_before_diff": 10,
+        "title_dy": 9,
+        "gap_title": 20,
+        "gap_lines": 10,
+        "gap_before_diff": 12,
         "fs_title": 15,
         "fs_body": 13,
     },
     {
         "file": "profits2.jpg",
         "panel_y": 608,
-        "extend": 0,
         "title": "BOXER #25",
         "buy": ("301.5967", "332.64"),
         "sell": ("578.22", "637.75"),
         "diff": ("276.6233", "305.10"),
         "theme": "light",
         "pad_x": 43,
-        "title_dy": 28,
-        "gap_title": 42,
-        "gap_lines": 28,
-        "gap_before_diff": 32,
+        "title_dy": 25,
+        "gap_title": 48,
+        "gap_lines": 36,
+        "gap_before_diff": 40,
         "fs_title": 26,
         "fs_body": 22,
     },
     {
         "file": "profits3.png",
         "panel_y": 432,
-        "extend": 24,
         "title": "Meebit #18494",
         "buy": ("232.6196", "355.53"),
         "sell": ("460.91", "704.44"),
@@ -56,26 +54,25 @@ SPECS = [
         "theme": "dark",
         "pad_x": 15,
         "title_dy": 8,
-        "gap_title": 18,
-        "gap_lines": 8,
-        "gap_before_diff": 10,
+        "gap_title": 20,
+        "gap_lines": 10,
+        "gap_before_diff": 12,
         "fs_title": 14,
         "fs_body": 13,
     },
     {
         "file": "profits4.png",
         "panel_y": 432,
-        "extend": 24,
         "title": "alien fren #9671",
         "buy": ("872.98", "1,334.23"),
-        "sell": ("1043.24", "1,594.45"),
+        "sell": ("1,043.24", "1,594.45"),
         "diff": ("170.26", "260.22"),
         "theme": "dark",
         "pad_x": 14,
-        "title_dy": 8,
-        "gap_title": 18,
-        "gap_lines": 8,
-        "gap_before_diff": 10,
+        "title_dy": 9,
+        "gap_title": 20,
+        "gap_lines": 10,
+        "gap_before_diff": 12,
         "fs_title": 14,
         "fs_body": 13,
     },
@@ -121,18 +118,11 @@ def render(spec: dict) -> str:
     base = Image.open(src_path(spec["file"])).convert("RGBA")
     w, h = base.size
     panel_y = spec["panel_y"]
-    extend = int(spec["extend"])
     theme = spec["theme"]
     bg = sample_panel_bg(base, panel_y)
-
-    if extend:
-        im = Image.new("RGBA", (w, h + extend), bg + (255,))
-        im.paste(base, (0, 0))
-    else:
-        im = base.copy()
-
+    im = base.copy()
     draw = ImageDraw.Draw(im)
-    draw.rectangle((0, panel_y, w, im.size[1]), fill=bg + (255,))
+    draw.rectangle((0, panel_y, w, h), fill=bg + (255,))
 
     font_title = ImageFont.truetype(find_font(True), spec["fs_title"])
     font_body = ImageFont.truetype(find_font(True), spec["fs_body"])
@@ -173,13 +163,9 @@ def render(spec: dict) -> str:
     box_w = min(w - box_x - 8, tw + pad_x * 2 + bar_w + 18)
     box_h = th + pad_y * 2
 
-    # ensure quote fits
-    if y + box_h > im.size[1] - 4:
-        extra = y + box_h + 6 - im.size[1]
-        bigger = Image.new("RGBA", (w, im.size[1] + extra), bg + (255,))
-        bigger.paste(im, (0, 0))
-        im = bigger
-        draw = ImageDraw.Draw(im)
+    # Keep quote fully inside original canvas (same size as RU card).
+    if y + box_h > h - 4:
+        y = max(panel_y + 8, h - 4 - box_h)
 
     draw.rounded_rectangle(
         (box_x, y, box_x + box_w, y + box_h),

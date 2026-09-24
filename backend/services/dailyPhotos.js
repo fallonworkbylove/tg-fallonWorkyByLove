@@ -162,9 +162,7 @@ function getImagesFoldersRu() {
 }
 
 function getImagesFoldersEn() {
-  // EN: арт без панели + цифры в caption; если арта нет — EN-карточки.
-  const art = String(process.env.IMAGES_FOLDER_ART || '').trim();
-  if (art) return [art];
+  // EN-карточки того же формата, что RU, но TON/$ (без рублей).
   return [process.env.IMAGES_FOLDER_EN, process.env.IMAGES_FOLDER_EN_2]
     .filter((folder) => folder && folder.trim())
     .map((folder) => folder.trim());
@@ -179,11 +177,8 @@ function pickFlipSend(isRussian) {
   const folders = isRussian ? getImagesFoldersRu() : getImagesFoldersEn();
   const imagePath = pickRandomImage(folders);
   if (!imagePath) return null;
-  // RU: цифры уже на карточке — только короткая живая подпись.
-  // EN: арт + цены в подписи сообщения.
-  const caption = isRussian
-    ? pickRandomHook(true)
-    : buildFlipCaption(imagePath, false);
+  // И RU, и EN: цифры уже на карточке — только короткая живая подпись.
+  const caption = pickRandomHook(isRussian);
   return { imagePath, caption };
 }
 
@@ -385,7 +380,7 @@ async function sendDuePhotos() {
       const flip = pickFlipSend(isRussian);
       if (!flip) {
         console.error(
-          'Нет фото для daily flip (IMAGES_FOLDER для RU / IMAGES_FOLDER_ART для EN).',
+          'Нет фото для daily flip (IMAGES_FOLDER для RU / IMAGES_FOLDER_EN для EN).',
         );
         continue;
       }
