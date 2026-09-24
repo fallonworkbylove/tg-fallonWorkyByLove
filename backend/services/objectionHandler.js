@@ -85,6 +85,10 @@ const LOCATION_ASK_RE =
 const ABOUT_HER_JOB_RE =
   /(ты\s+не\s+работаешь|ты\s+работаешь\b|а\s+ты\s+работа|где\s+(ты\s+)?работаешь|чем\s+(ты\s+)?занимаешься|кем\s+(ты\s+)?работа|ты\s+где\s+работа|дизайном\s+чего|дизайн\s+чего|в\s+каких\s+программ|какими\s+программ|покажи\s+(примеры|работы|портфолио)|примеры\s+(своих\s+)?работ|скинь\s+(работы|портфолио|примеры)|what\s+do\s+you\s+do|where\s+do\s+you\s+work|do\s+you\s+work)/i;
 
+// Спрашивает ЕЁ имя («как зовут тебя»), не своё («как меня зовут»).
+const ASKING_HER_NAME_RE =
+  /(как\s+(тебя|вас)\s+зовут|как\s+зовут\s+тебя|а\s+тебя\s+как\s+зовут|тво[её]\s+имя|what'?s\s+your\s+name|your\s+name\??)/i;
+
 // Прямой вопрос / просьба — memory follow-up и «философия» не должны перебивать ответ.
 const DIRECT_QUESTION_RE =
   /(\?|что\s+ты\s+имеешь|в\s+смысле|почему\s+ты|зачем\s+ты|когда\s+ты|куда\s+ты|в\s+каких\s+числах|прилетаешь|приедешь|покажи|расскажи|объясни|what\s+do\s+you\s+mean|why\s+do\s+you)/i;
@@ -193,10 +197,19 @@ function isAboutHerJobQuestion(text) {
   return ABOUT_HER_JOB_RE.test(String(text || ''));
 }
 
+function isAskingHerName(text) {
+  return ASKING_HER_NAME_RE.test(String(text || ''));
+}
+
 function isDirectQuestion(text) {
   const t = String(text || '').trim();
   if (!t) return false;
-  return DIRECT_QUESTION_RE.test(t) || isAboutHerJobQuestion(t) || LOCATION_ASK_RE.test(t);
+  return (
+    DIRECT_QUESTION_RE.test(t) ||
+    isAboutHerJobQuestion(t) ||
+    LOCATION_ASK_RE.test(t) ||
+    isAskingHerName(t)
+  );
 }
 
 function isContactOrMeetRelated(text) {
@@ -215,6 +228,17 @@ function detectHint(text, history = []) {
   // Сначала вопрос про наш daily-скрин флипа — важнее других хинтов.
   if (recentFlipPhotoInHistory(history) && isAskingAboutSentPhoto(text)) {
     return FLIP_PHOTO_QUESTION_HINT;
+  }
+
+  // «Как зовут тебя?» — ответить СВОИМ именем, не «спрашивай)».
+  if (isAskingHerName(text)) {
+    return (
+      'Собеседник спрашивает КАК ТЕБЯ ЗОВУТ (твоё имя). ' +
+      'ОБЯЗАТЕЛЬНО в первом предложении назови своё имя из промпта персонажа. ' +
+      'Пример тона: «саша)» / «меня вика)» — коротко. ' +
+      'ЗАПРЕЩЕНО отвечать «спрашивай», «валяй», «давай», «конечно спрашивай» — вопрос УЖЕ задан. ' +
+      'Не путай с «как меня зовут» (его имя) — он спрашивает ПРО ТЕБЯ.'
+    );
   }
 
   if (BOT_ACCUSATION_RE.test(text)) {
@@ -586,6 +610,7 @@ module.exports = {
   wasDailyFlipSentRecently,
   startSilenceScheduler,
   isAboutHerJobQuestion,
+  isAskingHerName,
   isDirectQuestion,
   isContactOrMeetRelated,
 };

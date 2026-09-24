@@ -441,6 +441,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // Главный анти-тупость гард: сначала ответ по сути, без чужих скриптов.
   const answerFirstReminder =
     'Сначала по делу на то, что он СЕЙЧАС написал — коротко. ' +
+    'Если в одном сообщении несколько реплик (например «ещё вопросик» + «как зовут тебя?») — отвечай на ГЛАВНЫЙ вопрос (имя/факты), не на «ещё вопросик» фразой «спрашивай)». ' +
+    'Вопрос «как тебя зовут / как зовут тебя» — сразу назови своё имя из промпта. ЗАПРЕЩЕНО: «спрашивай», «валяй», «конечно спрашивай». ' +
     'Вопрос про тебя — прямой ответ в первой фразе, без философии. ' +
     'Если он прислал фото/видео/голос — реагируй на СОДЕРЖИМОЕ (уже видно), не проси «покажи» / «скинь». ' +
     'НЕ пиши «давай тут общаться», если он не просил контакты/встречу. ' +
@@ -657,7 +659,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const strippedStay = stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
   const strippedBot = stripRepeatedBotDefense(strippedStay, history, contextualUserMessage);
   const strippedMeet = stripMeetAgreement(strippedBot, contextualUserMessage, options);
-  const strippedQ = stripHabitualTrailingQuestion(strippedMeet, history, contextualUserMessage);
+  const strippedName = fixIgnoredNameQuestion(strippedMeet, contextualUserMessage, finalPrompt);
+  const strippedQ = stripHabitualTrailingQuestion(strippedName, history, contextualUserMessage);
   return clipOverlongReply(strippedQ);
 }
 
@@ -969,6 +972,48 @@ function stripRepeatedBotDefense(reply, history, userMessage) {
     return 'хах ну да)';
   }
   return 'ну ок)';
+}
+
+/**
+ * Достаёт имя персонажа из промпта аккаунта.
+ */
+function extractCharacterName(prompt) {
+  const p = String(prompt || '');
+  const patterns = [
+    /тебя зовут\s+([А-ЯЁA-Z][а-яёa-zA-Z]{1,20})/i,
+    /меня зовут\s+([А-ЯЁA-Z][а-яёa-zA-Z]{1,20})/i,
+    /зовут\s+([А-ЯЁA-Z][а-яёa-zA-Z]{1,20})/i,
+    /имя[:\s]+([А-ЯЁA-Z][а-яёa-zA-Z]{1,20})/i,
+    /ты\s*[—\-–]\s*([А-ЯЁA-Z][а-яёa-zA-Z]{1,20})\b/i,
+  ];
+  for (const re of patterns) {
+    const m = p.match(re);
+    if (m && m[1]) return m[1];
+  }
+  return null;
+}
+
+const NAME_DEFERRAL_RE =
+  /^(конечно,?\s*)?(спрашивай|валяй|давай|задавай|слушай|ок|ага|угу)\s*\)?\s*$/i;
+
+/**
+ * Если спросили её имя, а модель ответила «спрашивай)» — подставляем имя из промпта.
+ */
+function fixIgnoredNameQuestion(reply, userMessage, prompt) {
+  const askHer =
+    /(как\s+(тебя|вас)\s+зовут|как\s+зовут\s+тебя|а\s+тебя\s+как\s+зовут|тво[её]\s+имя|what'?s\s+your\s+name)/i.test(
+      String(userMessage || ''),
+    );
+  if (!askHer) return reply;
+
+  const name = extractCharacterName(prompt);
+  const text = String(reply || '').trim();
+  const hasName = name && new RegExp(name, 'i').test(text);
+  const isDeferral = !text || NAME_DEFERRAL_RE.test(text) || /спрашивай|валяй|задавай вопрос/i.test(text);
+
+  if (hasName && !isDeferral) return reply;
+  if (name) return `${name.toLowerCase()})`;
+  return text && !isDeferral ? text : 'саша)';
 }
 
 const MEET_AGREE_RE =

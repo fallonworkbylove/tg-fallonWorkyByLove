@@ -1211,11 +1211,41 @@ function pickWorkProblemPhrase() {
 }
 
 function withWorkProblemLine(text) {
+  // Больше НЕ подмешиваем «по работе» в тот же ответ — это выглядело как
+  // единственная «инициатива» NFT-кампании вместо живого ответа.
+  return String(text || '').trim();
+}
+
+/** После нормального ответа — отдельным сообщением «секунду, рабочее)» если пора. */
+async function maybeSendWorkAside(client, sender, accountId, peerId, senderName, enabled) {
+  if (!enabled) return false;
+  if (!(await claimWorkMention(accountId, peerId))) return false;
   const line = pickWorkProblemPhrase();
-  const body = String(text || '').trim();
-  if (!body) return line;
-  if (/проблем[а-яё]*\s+с\s+работ/i.test(body)) return body;
-  return `${body}\n${line}`;
+  try {
+    await sleep(2500 + Math.random() * 3500);
+    await client.sendMessage(sender, { message: line });
+    await saveMessage(accountId, peerId, senderName, 'assistant', line);
+    console.log(
+      `[${accountLabel(accountId)}] Отдельным сообщением «по работе» для ${senderName}: "${line}"`,
+    );
+    return true;
+  } catch (err) {
+    await releaseWorkMention(accountId, peerId).catch(() => {});
+    console.error(
+      `[${accountLabel(accountId)}] Не удалось отправить «по работе» ${senderName}:`,
+      err.message,
+    );
+    return false;
+  }
+}
+
+function shouldSuppressNftForTurn(text, { flipPhotoQuestion = false, explicitMediaRequest = false } = {}) {
+  if (flipPhotoQuestion || explicitMediaRequest) return true;
+  if (objectionHandler.isAskingHerName(text)) return true;
+  if (objectionHandler.isDirectQuestion(text)) return true;
+  if (objectionHandler.isAboutHerJobQuestion(text)) return true;
+  if (objectionHandler.isContactOrMeetRelated(text)) return true;
+  return false;
 }
 
 function pickWorkMentionAt(scheduledAt) {
@@ -1565,12 +1595,11 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
       const sayWorkProblem = !plan.workMentionSent && isWorkMentionWindow(plan.scheduledAt, now);
       return {
         hint:
-          'Голосовое с просьбой ещё НЕ отправляй и не анонсируй. Не пиши, что возишься с токеном, ' +
-          'что нужна помощь, и что сейчас запишешь голосовое. Сначала ответь на сообщение. ' +
-          (sayWorkProblem
-            ? 'В конце, мимоходом, одной короткой фразой можно сказать, что чуть отвлечёшься по работе. Это фон, не вместо ответа.'
-            : 'Отвечай только на текущее сообщение, как обычно. Без продаж и без NFT.'),
+          'Голосовое с просьбой ещё НЕ отправляй и не анонсируй. Не пиши про токен/помощь/nft. ' +
+          'Сначала ОБЯЗАТЕЛЬНО ответь по делу на его сообщение (имя, вопрос, шутка — что написал). ' +
+          'Без продаж. Обычный живой ответ.',
         sendVoice: false,
+        // «по работе» уходит отдельным сообщением кодом, не вместо ответа.
         sayWorkProblem,
       };
     }
@@ -1592,18 +1621,16 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
     return { hint: null, sendVoice: false };
   }
 
-  // ~35% ответов — иначе модель впихивает NFT почти в каждый удобный момент.
-  if (Math.random() > 0.35) {
+  // ~12% ответов — иначе NFT впихивается слишком часто и выглядит как кампания.
+  if (Math.random() > 0.12) {
     return { hint: null, sendVoice: false };
   }
 
   return {
     hint:
-      '2-й день знакомства. Можно ОДИН раз очень вскользь, только если реально уместно по теме ' +
-      '(он сам спросил про работу/чем занята/деньги), намекнуть что иногда крутишь мелкие сделки с nft. ' +
-      'Это фон на полфразы, НЕ главная тема. Сначала ответь на его слова. ' +
-      'ЗАПРЕЩЕНО: объяснять NFT, уговаривать, «давай вместе», ссылки, суммы, давление. ' +
-      'Если намёк будет хоть чуть натянутым — просто пропусти, лучше промолчать про nft.',
+      '2-й день знакомства. Можно ОДИН раз очень вскользь, только если он САМ спросил про работу/деньги, ' +
+      'намекнуть что иногда крутишь мелкие сделки. Полфразы, НЕ главная тема. Сначала ответь на его слова. ' +
+      'Если намёк натянут — пропусти. Без уговоров, ссылок, сумм.',
     sendVoice: false,
   };
 }
@@ -2733,6 +2760,15 @@ async function fireReengage(accountId, peerId) {
     const mediaEnabled = !!mediaLink && explicitMediaRequest;
     const noMediaExcuse = explicitMediaRequest && !mediaLink;
     const nft = await getNftCampaignState(accountId, peerId, history.length);
+    const suppressNft = shouldSuppressNftForTurn(text, {
+      flipPhotoQuestion: false,
+      explicitMediaRequest: isExplicitMediaRequest(text),
+    });
+    if (suppressNft) {
+      nft.hint = null;
+      nft.sendVoice = false;
+      nft.sayWorkProblem = false;
+    }
     if (!isRussianConversation(text, history)) {
       nft.sendVoice = false;
     }
@@ -2785,7 +2821,7 @@ async function fireReengage(accountId, peerId) {
     const rawReply = await generateReply(settings.prompt, replyHistory, text, {
       mediaEnabled,
       noMediaExcuse,
-      campaignHint: flipPhotoQuestion ? null : nft.hint,
+      campaignHint: suppressNft || flipPhotoQuestion ? null : nft.hint,
       learningSnippet,
       manualSnippet,
       ragSnippet,
@@ -2826,10 +2862,8 @@ async function fireReengage(accountId, peerId) {
       outText = '';
     }
 
-    if (nft.sayWorkProblem && await claimWorkMention(accountId, peerId)) {
-      workMentionClaimed = true;
-      outText = withWorkProblemLine(outText);
-    }
+    // «по работе» — только после ответа, отдельным сообщением (maybeSendWorkAside).
+    const pendingWorkAside = !!nft.sayWorkProblem;
 
     const reactionOnly = !!reaction && !outText && !mediaType && !nft.sendVoice;
 
@@ -3080,6 +3114,9 @@ async function processBufferedMessages(
 
     if (await isPeerBlacklisted(accountId, peerId)) {
       console.log(`[${accountLabel(accountId)}] ${senderName} в blacklist — не отвечаю.`);
+      if (pendingWorkAside) {
+        await maybeSendWorkAside(client, sender, accountId, peerId, senderName, true);
+      }
       return;
     }
     // Если этому собеседнику ранее ушло голосовое с просьбой о помощи — проверяем
@@ -3320,6 +3357,15 @@ async function processBufferedMessages(
 
     // NFT-кампания: 1–2 день — мягкое упоминание темы, 3-й день — голосовое.
     const nft = await getNftCampaignState(accountId, peerId, history.length);
+    const suppressNft = shouldSuppressNftForTurn(text, {
+      flipPhotoQuestion,
+      explicitMediaRequest,
+    });
+    if (suppressNft) {
+      nft.hint = null;
+      nft.sendVoice = false;
+      nft.sayWorkProblem = false;
+    }
     if (!allowVoice && nft.sendVoice) {
       console.log(
         `[${accountLabel(accountId)}] ${senderName} не на русском — NFT-голосовое пропускаю.`,
@@ -3370,7 +3416,7 @@ async function processBufferedMessages(
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
       noMediaExcuse,
-      campaignHint: flipPhotoQuestion ? null : nft.hint,
+      campaignHint: suppressNft || flipPhotoQuestion ? null : nft.hint,
       learningSnippet,
       manualSnippet,
       ragSnippet,
@@ -3424,10 +3470,8 @@ async function processBufferedMessages(
       outText = '';
     }
 
-    if (nft.sayWorkProblem && await claimWorkMention(accountId, peerId)) {
-      workMentionClaimed = true;
-      outText = withWorkProblemLine(outText);
-    }
+    // «по работе» — только после ответа, отдельным сообщением (maybeSendWorkAside).
+    const pendingWorkAside = !!nft.sayWorkProblem;
 
     const reactionOnly = !!reaction && !outText && !mediaType && !voice && !nft.sendVoice;
 
@@ -3483,6 +3527,9 @@ async function processBufferedMessages(
       if (msgId) lastAnsweredMsgId.set(inFlightKey, msgId);
       await learningDb.recordBotReply(accountId, peerId, text, outText, learningStage);
       console.log(`[${accountLabel(accountId)}] Ответ для ${senderName}: "${outText}"`);
+      if (pendingWorkAside) {
+        await maybeSendWorkAside(client, sender, accountId, peerId, senderName, true);
+      }
     }
 
     if (laugh && !voice && !nft.sendVoice && !reactionOnly && !laughedRecently(history)) {
@@ -4080,7 +4127,8 @@ function rollDailyLife(dateKey) {
   }
 
   // Дневной «пэк» — сама пишет, если он затих (инициатива).
-  const afternoonMin = randInt(14 * 60 + 30, 17 * 60 + 30);
+  const afternoonMin = randInt(13 * 60 + 30, 16 * 60 + 30);
+  const eveningMin = randInt(18 * 60 + 30, 21 * 60);
   return {
     dateKey,
     wakeMin,
@@ -4091,6 +4139,8 @@ function rollDailyLife(dateKey) {
     nightSent: false,
     afternoonMin,
     afternoonSent: false,
+    eveningMin,
+    eveningSent: false,
     lastMin: null,
     booted: true,
   };
@@ -4154,6 +4204,20 @@ function tickDailyLife(accountId) {
     });
   }
 
+  if (
+    !life.eveningSent &&
+    life.eveningMin != null &&
+    crossedMinute(lastMin, now.minutes, life.eveningMin)
+  ) {
+    life.eveningSent = true;
+    sendIdlePokes(accountId).catch((err) => {
+      console.error(
+        `[${accountLabel(accountId)}] Ошибка вечерней инициативы:`,
+        err.message,
+      );
+    });
+  }
+
   const sameDaySleep = life.sleepMin < 24 * 60 ? life.sleepMin : null;
   if (!life.nightSent && sameDaySleep != null && crossedMinute(lastMin, now.minutes, sameDaySleep)) {
     life.nightSent = true;
@@ -4189,6 +4253,9 @@ const IDLE_POKE_RU = [
   'эей',
   'ну что молчишь)',
   'ау',
+  'хех ты где)',
+  'скучно без тебя немного)',
+  'напиши как там у тебя',
 ];
 const IDLE_POKE_EN = [
   'hey you alive?',
@@ -4219,12 +4286,12 @@ async function sendIdlePokes(accountId) {
 
     let sent = 0;
     for (const dialog of dialogs) {
-      if (sent >= 6) break;
+      if (sent >= 10) break;
       if (!dialog.isUser || dialog.archived) continue;
       const message = dialog.message;
       if (!message || !message.out) continue; // последнее слово за нами
       const ageH = (Date.now() / 1000 - (message.date || 0)) / 3600;
-      if (ageH < 5 || ageH > 36) continue;
+      if (ageH < 3 || ageH > 48) continue;
 
       const sender = dialog.entity;
       if (!sender || sender.bot || sender.self || isDeletedUser(sender) || isNeverContact(sender)) continue;
