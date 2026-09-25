@@ -3042,6 +3042,28 @@ function maybeTypoPair(text) {
 }
 
 async function sendHumanText(client, sender, accountId, peerId, senderName, outText) {
+  const bubbles = String(outText || '')
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (bubbles.length > 1) {
+    for (let i = 0; i < bubbles.length; i++) {
+      if (i > 0) {
+        try {
+          await client.invoke(
+            new Api.messages.SetTyping({
+              peer: sender,
+              action: new Api.SendMessageTypingAction(),
+            }),
+          );
+        } catch (_) {}
+        await sleep(Math.min(4500, 900 + bubbles[i].length * 55 + Math.random() * 800));
+      }
+      await client.sendMessage(sender, { message: bubbles[i] });
+      await saveMessage(accountId, peerId, senderName, 'assistant', bubbles[i]);
+    }
+    return;
+  }
   const pair = maybeTypoPair(outText);
   if (!pair) {
     await client.sendMessage(sender, { message: outText });

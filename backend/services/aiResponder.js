@@ -321,7 +321,7 @@ function buildCharacterGeoReminder(systemPrompt) {
       `Правильно: сейчас ты в ${fromCity}, мама уже в ${toLive}. `;
   }
   return (
-    `ГЕОГРАФИЯ ПЕРСОНАЖА (строго): сейчас ты в ${fromCity}, переезжаешь в ${toCityRaw}. ${extra}` +
+    `ГЕОГРАФИЯ ПЕРСОНАЖА (строго): сейчас ты в ${fromCity}, переезжаешь в ${toCityRaw} НАСОВСЕМ (будешь там жить, не временно). ${extra}` +
     `Не путай эти два города местами.`
   );
 }
@@ -385,6 +385,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'ГЕОГРАФИЯ И ФАКТЫ О СЕБЕ: города, «где я сейчас», «куда переезжаю», где мама/семья — раз сказала в этом диалоге, держи строго. ' +
     'Никогда не меняй местами «сейчас живу/нахожусь» и «переезжаю/еду». ' +
     'Если переезжаешь к маме — мама живёт В городе переезда. ' +
+    'ПЕРЕЕЗД НАВСЕГДА: ты переезжаешь насовсем, будешь там жить. НЕ «ненадолго», НЕ «временно», НЕ «только помочь маме и назад». ' +
+    'Мама — одна из причин, но остаёшься жить там. На «надолго?» — «насовсем». На «в каком районе будешь жить» — сначала у мамы, потом снимешь своё / ещё выбираешь район. ' +
     'НЕЛЬЗЯ: «мама в Липецке, а я еду в Прагу/Донецк/… чтобы быть рядом с ней» — это противоречие. ' +
     'Правильно: сейчас ты в одном городе, мама уже там, куда едешь. ' +
     'Если собеседник уточняет («так ты в X переезжаешь?», «а щас в каком городе?», «мама как здесь?») — перечитай СВОИ прошлые ответы про города и ответь в том же смысле, без перестановки городов. ' +
@@ -436,12 +438,15 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'На медиа которое ОН уже прислал — реагируй на содержимое, НЕ пиши «покажи». ' +
     'Почти без эмодзи. Иногда только <<REACT:эмодзи>> без текста. ' +
     'На прямой вопрос — короткий ответ БЕЗ зеркального «а ты?». ' +
+    'Разговорные слова как у живого человека: иногда (примерно каждый 3-й ответ) вставляй одно из «типо», «эм», «ну», «короче», «конечно», «вроде», «кстати», «хз», «блин» — ' +
+    'естественно, по одному, не в каждом сообщении и не одно и то же подряд. ' +
     'Реакции: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
 
   // Главный анти-тупость гард: сначала ответ по сути, без чужих скриптов.
   const answerFirstReminder =
     'Сначала по делу на то, что он СЕЙЧАС написал — коротко. ' +
-    'Если в одном сообщении несколько реплик (например «ещё вопросик» + «как зовут тебя?») — отвечай на ГЛАВНЫЙ вопрос (имя/факты), не на «ещё вопросик» фразой «спрашивай)». ' +
+    'Читай ВСЁ его сообщение целиком, а не одно ключевое слово. Если там несколько вопросов — ответь на КАЖДЫЙ, ничего не игнорируй. ' +
+    'На «ещё вопросик» не отвечай «спрашивай)» — отвечай на сам вопрос. ' +
     'Вопрос «как тебя зовут / как зовут тебя» — сразу назови своё имя из промпта. ЗАПРЕЩЕНО: «спрашивай», «валяй», «конечно спрашивай». ' +
     'Вопрос про тебя (город/работа) — ответь про себя и СТОП. Не добавляй «а ты откуда?» / «а ты чем занимаешься?». ' +
     'Если он прислал фото/видео/голос — реагируй на СОДЕРЖИМОЕ, не проси «покажи». ' +
@@ -451,7 +456,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // Жёсткий запрет личных встреч: персонаж в переезде, только переписка.
   const noMeetReminder =
     'ЗАПРЕТ ВСТРЕЧ: никогда не соглашайся увидеться лично, погулять, на свидание, кофе офлайн или «подъехать». ' +
-    'Ты сейчас в переезде (сборы, коробки, дела с мамой) — на встречи нет времени и возможности. ' +
+    'Ты сейчас в переезде насовсем (сборы, коробки, дела с мамой) — на встречи нет времени и возможности. ' +
     'Если пишут «жду тебя» / «краса, жду» / зовут встретиться — НЕ пиши «скоро увидимся» и НЕ обещай приехать. ' +
     'Можно тепло поблагодарить и мягко сказать что с переездом пока только переписка. ' +
     'Не спрашивай «где погуляем?» и «когда планируешь?» — это уже согласие. ' +
@@ -461,6 +466,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
 
   const lengthReminder =
     'ДЛИНА: обычно ОДНА короткая фраза (3-12 слов). Максимум 2 коротких предложения. ' +
+    'Исключение: если он задал несколько вопросов — 2-3 короткие строки, по строке на вопрос. ' +
     'Без списков, абзацев и «потому что…». Дефис «-», не тире «—». ' +
     'ВОПРОС В КОНЦЕ: по умолчанию БЕЗ вопроса. Вопрос редко, примерно каждый 5-й ответ. ' +
     'ЗАПРЕЩЕНО почти каждое сообщение заканчивать «а ты?», «а ты откуда?», «а ты чем занимаешься?», «что интересного?». ' +
@@ -607,6 +613,13 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // Ближе к концу — лучше держит правило «сначала ответь».
   messages.push({ role: 'system', content: answerFirstReminder });
 
+  const userQuestions = extractUserQuestions(userMessage);
+  const multiQuestionHint = buildMultiQuestionHint(userMessage, userQuestions);
+  if (multiQuestionHint) {
+    messages.push({ role: 'system', content: multiQuestionHint });
+  }
+  const maxReplyLines = userQuestions.length >= 2 ? Math.min(3, userQuestions.length) : 1;
+
   for (const h of history || []) {
     if (!h || !h.content) continue;
     const role = h.role === 'assistant' ? 'assistant' : 'user';
@@ -625,7 +638,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     // правило про 1-2 предложения, ответ физически не может растянуться в
     // длинный текст. ~120 токенов хватает на 2 нормальных русских
     // предложения с запасом.
-    max_tokens: 70,
+    max_tokens: maxReplyLines > 1 ? 110 : 70,
     temperature: 0.7,
   };
 
@@ -663,9 +676,121 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const strippedCall = stripVideoCallAgreement(strippedMeet, contextualUserMessage, options);
   const strippedName = fixIgnoredNameQuestion(strippedCall, contextualUserMessage, finalPrompt);
   const strippedAbout = fixIgnoredAboutHerself(strippedName, contextualUserMessage, finalPrompt);
-  const strippedQ = stripHabitualTrailingQuestion(strippedAbout, history, contextualUserMessage);
+  const strippedMove = fixTemporaryMoveClaim(strippedAbout, contextualUserMessage, history);
+  const strippedQ = stripHabitualTrailingQuestion(strippedMove, history, contextualUserMessage);
   const varied = varyTrailingSmile(strippedQ, history);
-  return clipOverlongReply(varied);
+  const withFiller = maybeAddFillerWord(varied, replyLang, history);
+  return clipOverlongReply(withFiller, maxReplyLines);
+}
+
+const QUESTION_START_RE =
+  /^(?:(?:а|и|или|ну|так|кстати|слушай)\s+)?(?:как|где|куда|откуда|от\s*куда|почему|зачем|что|чем|чего|какой|какая|какое|какие|каком|какого|когда|кто|сколько|надолго|(?:в|на|из|с|у|по)\s+(?:каком|какой|каких|какую|какого|чём|чем)|ты\s+(?:из|не|где|как|сама|одна|уже|ещё|еще|давно|тоже)|а\s+ты|будешь|можно|есть\s+ли|how|where|what|why|when|who|are\s+you|do\s+you)(?=[\s?,.!)]|$)/i;
+
+/**
+ * Вопросы из входящего (серия сообщений склеена через \n).
+ * «Ты из какого города» + отдельное «?» считаем одним вопросом.
+ */
+function extractUserQuestions(userMessage) {
+  const lines = String(userMessage || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !/^\[/.test(l));
+  const merged = [];
+  for (const line of lines) {
+    if (/^[?？\s]+$/.test(line) && merged.length) {
+      merged[merged.length - 1] += '?';
+    } else {
+      merged.push(line);
+    }
+  }
+  const out = [];
+  for (const line of merged) {
+    const parts = line.split(/(?<=\?)\s*/).map((p) => p.trim()).filter(Boolean);
+    for (const part of parts) {
+      const bare = part.replace(/^[^а-яёa-z]+/i, '');
+      if (/\?\s*[)\p{Extended_Pictographic}]*$/u.test(part) || QUESTION_START_RE.test(bare)) {
+        if (bare.replace(/[?\s]/g, '').length >= 2) out.push(bare.replace(/\s+/g, ' '));
+      }
+    }
+  }
+  return out.slice(0, 4);
+}
+
+function buildMultiQuestionHint(userMessage, questions) {
+  const lines = String(userMessage || '').split('\n').filter((l) => l.trim());
+  if (!questions.length) return null;
+  if (questions.length === 1 && lines.length < 2) return null;
+  const list = questions.map((q) => `«${q}»`).join(' | ');
+  if (questions.length === 1) {
+    return (
+      `В его сообщениях есть вопрос ${list}. Ответь на него обязательно — ` +
+      'не ограничивайся приветствием или реакцией на другую строку.'
+    );
+  }
+  return (
+    `Он задал несколько вопросов: ${list}. Ответь на КАЖДЫЙ, ни один не пропускай. ` +
+    'Похожие («как ты там» + «как дела») можно закрыть одной фразой. ' +
+    'Если было приветствие — поздоровайся коротко в первой строке вместе с ответом. ' +
+    'Каждый ответ — отдельной короткой строкой (перенос строки), максимум 3 строки, без встречного вопроса в конце.'
+  );
+}
+
+const TEMP_MOVE_RE =
+  /(не\s*надолго|ненадолго|временно|на\s+время|на\s+пару\s+(месяц|недел)|потом\s+(обратно|вернусь)|только\s+(чтобы|помочь)\s+[^.!?\n]*мам)/i;
+const MOVE_CONTEXT_RE =
+  /(переезж|перее(хать|ду)|надолго|суда|сюда|жить|район|насовсем|вернёшься|вернешься|мам)/i;
+const PERMANENT_MOVE_RU = [
+  'не, насовсем переезжаю) буду тут жить',
+  'насовсем) пока у мамы поживу, потом сниму себе',
+  'нет, насовсем, к маме поближе)',
+];
+const PERMANENT_MOVE_EN = [
+  'nah for good, im moving there for real)',
+  'for good) staying with mom at first, then my own place',
+];
+
+/**
+ * Переезд персонажа — навсегда. «ненадолго, только помочь маме» — противоречие легенде.
+ */
+function fixTemporaryMoveClaim(reply, userMessage, history) {
+  if (!reply || !TEMP_MOVE_RE.test(String(reply))) return reply;
+  const lastBot = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-2)
+    .map((h) => String(h.content || ''))
+    .join(' ');
+  if (!MOVE_CONTEXT_RE.test(`${userMessage} ${reply} ${lastBot}`)) return reply;
+  const en = /[a-z]{3,}/i.test(String(reply)) && !/[а-яё]{3,}/i.test(String(reply));
+  const bank = en ? PERMANENT_MOVE_EN : PERMANENT_MOVE_RU;
+  const permanent = bank[Math.floor(Math.random() * bank.length)];
+  return String(reply)
+    .split('\n')
+    .map((line) => (TEMP_MOVE_RE.test(line) ? permanent : line))
+    .join('\n');
+}
+
+const FILLER_START_RU = ['ну ', 'эм, ', 'короче ', 'ну типо ', 'хм, '];
+const FILLER_WORD_RE =
+  /^(ну|эм|хм|короче|типо|кстати|конечно|вроде|блин|ааа|ой|ахах|хах|да|не|нет|ага)\b/i;
+
+/**
+ * Иногда разговорное слово в начале — модель сама вставляет «типо/конечно»,
+ * но редко; подстраховываем, не чаще раза в несколько ответов.
+ */
+function maybeAddFillerWord(reply, replyLang, history) {
+  if (!reply || replyLang !== 'ru') return reply;
+  const text = String(reply).trim();
+  if (/<</.test(text) || text.length < 8 || FILLER_WORD_RE.test(text)) return reply;
+  const recentBot = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-3)
+    .map((h) => String(h.content || ''));
+  if (recentBot.some((t) => /^(ну|эм|хм|короче|типо)\b/i.test(t.trim()))) return reply;
+  if (Math.random() > 0.15) return reply;
+  const filler = FILLER_START_RU[Math.floor(Math.random() * FILLER_START_RU.length)];
+  const first = text.charAt(0);
+  const rest = /[А-ЯЁ]/.test(first) && !/^[А-ЯЁ]{2}/.test(text) ? first.toLowerCase() + text.slice(1) : text;
+  return filler + rest;
 }
 
 /**
@@ -1055,7 +1180,7 @@ function humanizeBotAccusationReply(reply, history, userMessage) {
     return bank[Math.floor(Math.random() * bank.length)];
   }
   text = text
-    .replace(/\s*[.!]?\s*(?:а\s+)?(?:ты|вам|what|why|how)[^?]*\?\s*$/i, '')
+    .replace(/\s*[.!]?\s*(?:а\s+)?(?:ты|вам|what|why|how)[^?\n]*\?\s*$/i, '')
     .replace(/\s*\?\s*$/g, '')
     .trim();
   return text.length >= 3 ? text : bank[Math.floor(Math.random() * bank.length)];
@@ -1276,7 +1401,7 @@ function stripHabitualTrailingQuestion(reply, history, userMessage) {
   let text = String(reply).trim();
 
   const mirrorTail =
-    /\s*[.,!]?\s*(?:а\s+)?ты\s+(?:откуда|где|чем\s+занима|кем\s+работа|как\s+там|что\s+делаешь|из\s+какого)[^?]*\?\s*$/i;
+    /\s*[.,!]?\s*(?:а\s+)?ты\s+(?:откуда|где|чем\s+занима|кем\s+работа|как\s+там|что\s+делаешь|из\s+какого)[^?\n]*\?\s*$/i;
   const softMirror =
     /\s*[.,!]?\s*(?:а\s+ты\??|а\s+у\s+тебя\??|and\s+you\??|what\s+about\s+you\??)\s*$/i;
 
@@ -1291,7 +1416,7 @@ function stripHabitualTrailingQuestion(reply, history, userMessage) {
   if (lastAssistantHadQ) {
     const strippedHard = text
       .replace(
-        /\s*[.!]?\s*(?:а\s+)?(?:ты|вам|тебе|какие?|что|как|где|когда|почему|зачем|who|what|why|how|where)[^?]*\?\s*$/i,
+        /\s*[.!]?\s*(?:а\s+)?(?:ты|вам|тебе|какие?|что|как|где|когда|почему|зачем|who|what|why|how|where)[^?\n]*\?\s*$/i,
         '',
       )
       .replace(/\s*\?[) ]*$/g, '')
@@ -1305,7 +1430,7 @@ function stripHabitualTrailingQuestion(reply, history, userMessage) {
 
   const stripped = text
     .replace(
-      /\s*[.!]?\s*(?:а\s+)?(?:ты|вам|тебе|какие?|что|как|где|когда|почему|зачем|who|what|why|how|where)[^?]*\?\s*$/i,
+      /\s*[.!]?\s*(?:а\s+)?(?:ты|вам|тебе|какие?|что|как|где|когда|почему|зачем|who|what|why|how|where)[^?\n]*\?\s*$/i,
       '',
     )
     .replace(/\s*\?[) ]*$/g, '')
@@ -1346,7 +1471,7 @@ function varyTrailingSmile(reply, history) {
 }
 
 /** Жёсткий потолок длины на случай, если модель всё же размазала текст. */
-function clipOverlongReply(reply) {
+function clipOverlongReply(reply, maxLines = 1) {
   if (!reply) return reply;
   let text = String(reply).trim();
   // Сохраняем токены медиа/реакций
@@ -1355,17 +1480,15 @@ function clipOverlongReply(reply) {
     tokens.push(m);
     return `\u0000TOK${tokens.length - 1}\u0000`;
   });
-  // Больше ~140 символов живого текста — оставляем первое предложение/фразу
-  if (text.replace(/\u0000TOK\d+\u0000/g, '').length > 140) {
-    const cut = text.split(/(?<=[)\n])\s+/).filter(Boolean);
-    if (cut.length > 1) text = cut[0];
-    else text = text.slice(0, 140).replace(/\s+\S*$/, '').trim();
-  }
-  // Списки через перевод строки — склеиваем в одну фразу / берём первую строку
-  if (/\n/.test(text)) {
-    const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-    if (lines.length >= 2) text = lines[0];
-  }
+  const clipLine = (line) => {
+    if (line.replace(/\u0000TOK\d+\u0000/g, '').length <= 140) return line;
+    const cut = line.split(/(?<=[).!?])\s+/).filter(Boolean);
+    if (cut.length > 1) return cut[0];
+    return line.slice(0, 140).replace(/\s+\S*$/, '').trim();
+  };
+  // Несколько вопросов — по строке на ответ; иначе только первая строка (не список)
+  const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  text = lines.slice(0, Math.max(1, maxLines)).map(clipLine).join('\n');
   text = text.replace(/\u0000TOK(\d+)\u0000/g, (_, i) => tokens[Number(i)] || '');
   return text.trim();
 }

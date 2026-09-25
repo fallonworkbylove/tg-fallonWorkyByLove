@@ -11,9 +11,11 @@ function tg() {
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 
-// Окно по Москве (не UTC сервера!): 13:00–15:00 МСК — строго до NFT 16:00–21:00 МСК.
-const WINDOW_START_HOUR = 13;
-const WINDOW_END_HOUR = 15;
+// Окно по Москве (не UTC сервера!): 14:00–16:00 МСК — строго до NFT 16:00–21:00 МСК.
+const WINDOW_START_HOUR = Number(process.env.DAILY_PHOTO_START_HOUR || 14);
+const WINDOW_END_HOUR = Number(process.env.DAILY_PHOTO_END_HOUR || 16);
+// Не вклиниваться в живую переписку: скрин «из ниоткуда» посреди разговора палит.
+const ACTIVE_CHAT_QUIET_MIN = 20;
 const PHOTO_TIMEZONE = process.env.WORK_TIMEZONE || 'Europe/Moscow';
 const NFT_VOICE_TAG = '[голосовое: nft.ogg]';
 
@@ -288,6 +290,25 @@ async function shouldSkipDailyPhoto(accountId, peerId) {
   return null;
 }
 
+/**
+ * Минут до «тишины» в диалоге: >0 — сейчас идёт переписка или собеседник ждёт
+ * нашего ответа, фото лучше отложить.
+ */
+async function activeChatWaitMinutes(accountId, peerId) {
+  const [[last]] = await db.execute(
+    `SELECT role, TIMESTAMPDIFF(SECOND, created_at, NOW()) AS age_sec
+     FROM conversation_messages
+     WHERE account_id = ? AND peer_id = ?
+     ORDER BY id DESC LIMIT 1`,
+    [accountId, String(peerId)],
+  );
+  if (!last) return 0;
+  const ageMin = Number(last.age_sec) / 60;
+  if (last.role === 'user' && ageMin < 120) return 15;
+  if (ageMin < ACTIVE_CHAT_QUIET_MIN) return Math.ceil(ACTIVE_CHAT_QUIET_MIN - ageMin) + 5;
+  return 0;
+}
+
 async function markSkipped(id, reason, accountId, peerId) {
   await db.execute('UPDATE daily_photo_sends SET sent_at = NOW() WHERE id = ?', [id]);
   console.log(
@@ -363,6 +384,17 @@ async function sendDuePhotos() {
       const skip = await shouldSkipDailyPhoto(row.account_id, row.peer_id);
       if (skip) {
         await markSkipped(row.id, skip, row.account_id, row.peer_id);
+        continue;
+      }
+
+      const waitMin = await activeChatWaitMinutes(row.account_id, row.peer_id);
+      if (waitMin > 0) {
+        const next = new Date(Date.now() + (waitMin + Math.floor(Math.random() * 10)) * 60 * 1000);
+        if (next < windowEnd) {
+          await db.execute('UPDATE daily_photo_sends SET scheduled_at = ? WHERE id = ?', [next, row.id]);
+        } else {
+          await markSkipped(row.id, 'active_chat', row.account_id, row.peer_id);
+        }
         continue;
       }
 
