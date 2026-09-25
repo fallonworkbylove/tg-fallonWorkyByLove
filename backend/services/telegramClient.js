@@ -35,6 +35,7 @@ const {
   transcribeAudio,
   isRussianConversation,
   detectReplyLanguage,
+  extractUserQuestions,
 } = require('./aiResponder');
 const learningDb = require('./learningDb');
 const ragExamples = require('./ragExamples');
@@ -2916,11 +2917,11 @@ async function fireReengage(accountId, peerId) {
 
     if (outText) {
       await markPeerAsRead(client, sender, null);
-      await sendHumanText(client, sender, accountId, peerId, senderName, outText);
+      await sendHumanText(client, sender, accountId, peerId, senderName, outText, text);
       lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
-      await learningDb.recordBotReply(accountId, peerId, text, outText, learningStage);
+      await learningDb.recordBotReply(accountId, peerId, text, stripQuestionTags(outText), learningStage);
       console.log(
-        `[${accountLabel(accountId)}] Отложенный ответ для ${senderName}: "${outText}"`,
+        `[${accountLabel(accountId)}] Отложенный ответ для ${senderName}: "${stripQuestionTags(outText)}"`,
       );
     }
 
@@ -3041,12 +3042,85 @@ function maybeTypoPair(text) {
   return { wrong, fix, original: src };
 }
 
-async function sendHumanText(client, sender, accountId, peerId, senderName, outText) {
-  const bubbles = String(outText || '')
-    .split(/\n+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+const Q_TAG_RE = /<<\s*Q\s*:\s*([\d,]+)\s*>>\s*/gi;
+
+function stripQuestionTags(text) {
+  return String(text || '').replace(Q_TAG_RE, '').trim();
+}
+
+/** Строки ответа + номер вопроса из тега <<Q:n>> (пустые строки выкидываем вместе с тегом). */
+function parseReplyBubbles(outText) {
+  const bubbles = [];
+  for (const raw of String(outText || '').split(/\n+/)) {
+    const m = raw.match(/<<\s*Q\s*:\s*([\d,]+)\s*>>/i);
+    const text = raw.replace(Q_TAG_RE, '').trim();
+    if (!text) continue;
+    const nums = m ? m[1].split(',').map(Number).filter((n) => n > 0) : [];
+    bubbles.push({ text, q: nums[0] || null });
+  }
+  return bubbles;
+}
+
+const normForMatch = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я0-9]+/g, '');
+
+/**
+ * Для каждой строки ответа — id входящего сообщения с её вопросом (reply).
+ * Входящие берём из Telegram (серия после нашего последнего сообщения):
+ * буфер хранит только склеенный текст, без id.
+ */
+async function resolveReplyTargets(client, sender, bubbles, incomingText) {
+  const none = bubbles.map(() => null);
+  const questions = extractUserQuestions(incomingText);
+  if (questions.length < 2) return none;
+
+  let recent;
+  try {
+    recent = await client.getMessages(sender, { limit: 15 });
+  } catch (_) {
+    return none;
+  }
+  const incoming = [];
+  for (const m of recent || []) {
+    if (!m) continue;
+    if (m.out) break;
+    incoming.push(m);
+  }
+  // Один входящий — reply на него бессмысленен.
+  if (incoming.length < 2) return none;
+  incoming.reverse();
+
+  const findMsgId = (qi) => {
+    const q = normForMatch(questions[qi - 1]);
+    if (q.length < 3) return null;
+    for (const m of incoming) {
+      const t = normForMatch(m.message);
+      if (t.length < 2) continue;
+      if (t.includes(q) || (t.length >= 4 && q.includes(t))) return m.id;
+    }
+    return null;
+  };
+
+  const noTags = bubbles.every((b) => !b.q);
+  const used = new Set();
+  return bubbles.map((b, i) => {
+    const qi = b.q || (noTags && bubbles.length === questions.length ? i + 1 : null);
+    const id = qi ? findMsgId(qi) : null;
+    if (!id || used.has(id)) return null;
+    used.add(id);
+    return id;
+  });
+}
+
+async function sendHumanText(client, sender, accountId, peerId, senderName, outText, incomingText = '') {
+  const parsed = parseReplyBubbles(outText);
+  const bubbles = parsed.map((b) => b.text);
+  outText = bubbles.join('\n');
   if (bubbles.length > 1) {
+    const replyTargets = await resolveReplyTargets(client, sender, parsed, incomingText);
     for (let i = 0; i < bubbles.length; i++) {
       if (i > 0) {
         try {
@@ -3059,7 +3133,9 @@ async function sendHumanText(client, sender, accountId, peerId, senderName, outT
         } catch (_) {}
         await sleep(Math.min(4500, 900 + bubbles[i].length * 55 + Math.random() * 800));
       }
-      await client.sendMessage(sender, { message: bubbles[i] });
+      const opts = { message: bubbles[i] };
+      if (replyTargets[i]) opts.replyTo = replyTargets[i];
+      await client.sendMessage(sender, opts);
       await saveMessage(accountId, peerId, senderName, 'assistant', bubbles[i]);
     }
     return;
@@ -3567,11 +3643,11 @@ async function processBufferedMessages(
 
     if (outText) {
       await markPeerAsRead(client, sender, message);
-      await sendHumanText(client, sender, accountId, peerId, senderName, outText);
+      await sendHumanText(client, sender, accountId, peerId, senderName, outText, text);
       lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
       if (msgId) lastAnsweredMsgId.set(inFlightKey, msgId);
-      await learningDb.recordBotReply(accountId, peerId, text, outText, learningStage);
-      console.log(`[${accountLabel(accountId)}] Ответ для ${senderName}: "${outText}"`);
+      await learningDb.recordBotReply(accountId, peerId, text, stripQuestionTags(outText), learningStage);
+      console.log(`[${accountLabel(accountId)}] Ответ для ${senderName}: "${stripQuestionTags(outText)}"`);
       if (pendingWorkAside) {
         await maybeSendWorkAside(client, sender, accountId, peerId, senderName, true);
       }

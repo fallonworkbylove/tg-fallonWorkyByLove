@@ -668,7 +668,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   logUsage(usedModel, completion.usage, { fellBack }).catch(() => {});
 
   const rawText = completion.choices[0]?.message?.content?.trim() || '';
-  const cleaned = applyAntiDetectStyle(rawText);
+  const cleaned = applyAntiDetectStyle(convertQuestionTags(rawText));
   const strippedFacts = stripReaskedKnownFacts(cleaned, contextGuard);
   const strippedStay = stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
   const strippedBot = humanizeBotAccusationReply(strippedStay, history, contextualUserMessage);
@@ -731,8 +731,23 @@ function buildMultiQuestionHint(userMessage, questions) {
     `Он задал несколько вопросов: ${list}. Ответь на КАЖДЫЙ, ни один не пропускай. ` +
     'Похожие («как ты там» + «как дела») можно закрыть одной фразой. ' +
     'Если было приветствие — поздоровайся коротко в первой строке вместе с ответом. ' +
-    'Каждый ответ — отдельной короткой строкой (перенос строки), максимум 3 строки, без встречного вопроса в конце.'
+    'Каждый ответ — отдельной короткой строкой (перенос строки), максимум 3 строки, без встречного вопроса в конце. ' +
+    'Начинай каждую строку с номера вопроса в квадратных скобках по порядку списка выше: «[1] ...», «[2] ...»; ' +
+    'если одна строка отвечает на два вопроса — «[2,3] ...». Номера служебные, собеседник их не увидит.'
   );
+}
+
+/**
+ * «[1] текст» / «[2,3] текст» → «<<Q:1>> текст»: токен переживает постобработку,
+ * по нему telegramClient отвечает reply-ем на нужное сообщение.
+ */
+function convertQuestionTags(text) {
+  return String(text || '')
+    .split('\n')
+    .map((line) =>
+      line.replace(/^\s*\[\s*(\d+(?:\s*,\s*\d+)*)\s*\]\s*[-:.)]?\s*/, (_, nums) => `<<Q:${nums.replace(/\s+/g, '')}>> `),
+    )
+    .join('\n');
 }
 
 const TEMP_MOVE_RE =
@@ -1606,6 +1621,7 @@ async function describeImage(buffer, caption = '') {
 
 Object.assign(module.exports, {
   generateReply,
+  extractUserQuestions,
   transcribeAudio,
   describeImage,
   detectReplyLanguage,
