@@ -17,6 +17,7 @@ const MENU_KEYBOARD = {
     [{ text: '📱 Аккаунты в боте', callback_data: 'adm:accounts' }],
     [{ text: '📊 Статистика', callback_data: 'adm:stats' }],
     [{ text: '💳 Баланс и статус OpenAI', callback_data: 'adm:openai' }],
+    [{ text: '🚫 Чёрный список', callback_data: 'adm:bl' }],
   ],
 };
 
@@ -297,6 +298,268 @@ async function buildOpenAiText() {
 }
 
 // ---------------------------------------------------------------------------
+// ЧЁРНЫЙ СПИСОК
+// Блокировка: users.is_blocked = 1 (мини-апп отвечает 403, /start — «Доступ
+// закрыт»), отписка от уведомлений, строка workers уходит в бэкап (анкеты
+// перестают пускать), его номера отключаются. Разблокировка всё возвращает.
+// ---------------------------------------------------------------------------
+
+const BLOCK_INPUT_TTL_MS = 5 * 60 * 1000;
+let blockInputUntil = 0;
+
+async function ensureBlacklistSchema() {
+  await db.execute(
+    `CREATE TABLE IF NOT EXISTS blacklist_worker_backup (
+       telegram_user_id BIGINT NOT NULL PRIMARY KEY,
+       row_json TEXT NOT NULL,
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+     )`,
+  );
+}
+
+function userTitle(u) {
+  if (u.username) return `@${u.username}`;
+  if (u.first_name) return u.first_name;
+  return `id ${u.telegram_user_id}`;
+}
+
+async function findUserByInput(input) {
+  const raw = String(input || '')
+    .trim()
+    .replace(/^https?:\/\/t\.me\//i, '')
+    .replace(/^@/, '');
+  if (!raw) return null;
+
+  if (/^\d{5,15}$/.test(raw)) {
+    const [[u]] = await db.execute(
+      'SELECT id, telegram_user_id, username, first_name, is_blocked FROM users WHERE telegram_user_id = ? LIMIT 1',
+      [raw],
+    );
+    return u || { id: null, telegram_user_id: raw, username: null, first_name: null, is_blocked: 0 };
+  }
+  if (!/^[A-Za-z0-9_]{3,32}$/.test(raw)) return null;
+
+  const [[u]] = await db.execute(
+    'SELECT id, telegram_user_id, username, first_name, is_blocked FROM users WHERE LOWER(username) = LOWER(?) LIMIT 1',
+    [raw],
+  );
+  if (u) return u;
+  try {
+    const [[w]] = await db.execute('SELECT id FROM workers WHERE LOWER(login) = LOWER(?) LIMIT 1', [raw]);
+    if (w) return { id: null, telegram_user_id: String(w.id), username: raw, first_name: null, is_blocked: 0 };
+  } catch (_) {
+    // таблицы workers может не быть
+  }
+  return null;
+}
+
+async function userAccounts(userId) {
+  if (!userId) return [];
+  const [rows] = await db.execute('SELECT id, phone, session_string FROM accounts WHERE user_id = ?', [userId]);
+  return rows;
+}
+
+async function buildBlacklistView(notice = '') {
+  const [rows] = await db.execute(
+    `SELECT u.telegram_user_id, u.username, u.first_name,
+            (SELECT COUNT(*) FROM accounts a WHERE a.user_id = u.id) AS accounts
+     FROM users u WHERE u.is_blocked = 1 ORDER BY u.username`,
+  );
+  const lines = rows.map(
+    (u) => `• ${esc(userTitle(u))} — <code>${esc(u.telegram_user_id)}</code>` +
+      (Number(u.accounts) ? `, номеров: ${u.accounts} (отключены)` : ''),
+  );
+  const text =
+    (notice ? `${notice}\n\n` : '') +
+    '<b>🚫 Чёрный список</b>\n\n' +
+    (lines.length ? lines.join('\n') : 'Пусто — никто не заблокирован.') +
+    '\n\n<i>Заблокированный не может открыть мини-апп, подключать номера, пользоваться анкетами ' +
+    'и получать уведомления. Номера, которые у него были, другие воркеры подключить могут.</i>' +
+    (lines.length ? '\n\nЧтобы разблокировать — нажми на человека ниже.' : '');
+
+  const keyboard = rows.slice(0, 30).map((u) => [
+    { text: `✅ Разблокировать ${userTitle(u)}`, callback_data: `adm:unb:${u.telegram_user_id}` },
+  ]);
+  keyboard.push([{ text: '➕ Добавить в чёрный список', callback_data: 'adm:bl_add' }]);
+  keyboard.push([{ text: '« Меню', callback_data: 'adm:menu' }]);
+  return { text, reply_markup: { inline_keyboard: keyboard } };
+}
+
+async function blockUser(tgId) {
+  await ensureBlacklistSchema();
+  const [[user]] = await db.execute('SELECT id FROM users WHERE telegram_user_id = ? LIMIT 1', [tgId]);
+  if (user) {
+    await db.execute('UPDATE users SET is_blocked = 1 WHERE id = ?', [user.id]);
+  } else {
+    await db.execute('INSERT INTO users (telegram_user_id, is_blocked) VALUES (?, 1)', [tgId]);
+  }
+  await db.execute('DELETE FROM notification_subscribers WHERE chat_id = ?', [String(tgId)]).catch(() => {});
+
+  let workerRemoved = false;
+  try {
+    const [workerRows] = await db.execute('SELECT * FROM workers WHERE id = ?', [tgId]);
+    if (workerRows.length) {
+      await db.execute(
+        `INSERT INTO blacklist_worker_backup (telegram_user_id, row_json) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE row_json = VALUES(row_json), created_at = CURRENT_TIMESTAMP`,
+        [tgId, JSON.stringify(workerRows[0])],
+      );
+      await db.execute('DELETE FROM workers WHERE id = ?', [tgId]);
+      workerRemoved = true;
+    }
+  } catch (err) {
+    console.error('[adminMenu] workers при блокировке:', err.message);
+  }
+
+  let stopped = 0;
+  const tc = require('./telegramClient');
+  for (const acc of await userAccounts(user?.id)) {
+    if (tc.isActive(acc.id)) stopped += 1;
+    await tc.deactivateAccount(acc.id).catch(() => {});
+  }
+  return { workerRemoved, stopped };
+}
+
+async function unblockUser(tgId) {
+  await ensureBlacklistSchema();
+  const [[user]] = await db.execute('SELECT id FROM users WHERE telegram_user_id = ? LIMIT 1', [tgId]);
+  if (user) await db.execute('UPDATE users SET is_blocked = 0 WHERE id = ?', [user.id]);
+
+  let workerRestored = false;
+  try {
+    const [[backup]] = await db.execute(
+      'SELECT row_json FROM blacklist_worker_backup WHERE telegram_user_id = ?',
+      [tgId],
+    );
+    const [[exists]] = await db.execute('SELECT id FROM workers WHERE id = ?', [tgId]);
+    if (backup && !exists) {
+      const row = JSON.parse(backup.row_json);
+      const cols = Object.keys(row).filter((c) => /^\w+$/.test(c));
+      await db.execute(
+        `INSERT INTO workers (${cols.map((c) => `\`${c}\``).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+        cols.map((c) => row[c]),
+      );
+      workerRestored = true;
+    }
+    if (backup) await db.execute('DELETE FROM blacklist_worker_backup WHERE telegram_user_id = ?', [tgId]);
+  } catch (err) {
+    console.error('[adminMenu] workers при разблокировке:', err.message);
+  }
+
+  let started = 0;
+  const tc = require('./telegramClient');
+  for (const acc of await userAccounts(user?.id)) {
+    if (!acc.session_string) continue;
+    if ((await tc.activateAccount(acc.id, acc.session_string).catch(() => false)) === true) started += 1;
+  }
+  return { workerRestored, started };
+}
+
+/**
+ * Текст от админа, пока ждём @username / ID для блокировки.
+ * Возвращает true, если сообщение обработано здесь.
+ */
+async function handleAdminText(api, chatId, text) {
+  if (!isAdminChat(chatId) || Date.now() > blockInputUntil) return false;
+  if (text.startsWith('/')) {
+    blockInputUntil = 0;
+    return false;
+  }
+  blockInputUntil = 0;
+
+  const user = await findUserByInput(text);
+  if (!user) {
+    await tg(api, 'sendMessage', {
+      chat_id: chatId,
+      parse_mode: 'HTML',
+      text: `Не нашёл <b>${esc(text)}</b> среди пользователей бота. Пришли @username, под которым он заходил в мини-апп, или его Telegram ID (цифрами).`,
+      reply_markup: { inline_keyboard: [[
+        { text: '🔁 Ввести ещё раз', callback_data: 'adm:bl_add' },
+        { text: '« Чёрный список', callback_data: 'adm:bl' },
+      ]] },
+    });
+    return true;
+  }
+  if (isAdminChat(user.telegram_user_id)) {
+    await tg(api, 'sendMessage', { chat_id: chatId, text: 'Себя заблокировать нельзя 🙂' });
+    return true;
+  }
+  if (Number(user.is_blocked) === 1) {
+    const view = await buildBlacklistView(`ℹ️ ${esc(userTitle(user))} уже в чёрном списке.`);
+    await tg(api, 'sendMessage', { chat_id: chatId, parse_mode: 'HTML', ...view });
+    return true;
+  }
+
+  const accounts = await userAccounts(user.id);
+  const phones = accounts.map((a) => `<code>${esc(a.phone)}</code>`).join(', ');
+  await tg(api, 'sendMessage', {
+    chat_id: chatId,
+    parse_mode: 'HTML',
+    text:
+      `Заблокировать <b>${esc(userTitle(user))}</b> (<code>${esc(user.telegram_user_id)}</code>)?\n\n` +
+      (user.id ? '' : 'В мини-аппе он ещё не был — заблокирую заранее по ID.\n') +
+      (accounts.length ? `Его номера (${accounts.length}): ${phones} — ИИ на них остановится.` : 'Номеров у него нет.'),
+    reply_markup: { inline_keyboard: [[
+      { text: '🚫 Заблокировать', callback_data: `adm:blk:${user.telegram_user_id}` },
+      { text: 'Отмена', callback_data: 'adm:bl' },
+    ]] },
+  });
+  return true;
+}
+
+async function handleBlacklistCallback(api, data, target) {
+  if (data === 'adm:bl') {
+    blockInputUntil = 0;
+    await tg(api, 'editMessageText', { ...target, ...(await buildBlacklistView()) });
+    return;
+  }
+  if (data === 'adm:bl_add') {
+    blockInputUntil = Date.now() + BLOCK_INPUT_TTL_MS;
+    await tg(api, 'editMessageText', {
+      ...target,
+      text: 'Пришли следующим сообщением <b>@username</b> или <b>Telegram ID</b> того, кого заблокировать.',
+      reply_markup: { inline_keyboard: [[{ text: 'Отмена', callback_data: 'adm:bl' }]] },
+    });
+    return;
+  }
+
+  const [, action, tgId] = data.match(/^adm:(blk|unb):(\d+)$/) || [];
+  if (!action) return;
+  if (action === 'blk' && isAdminChat(tgId)) return;
+
+  const [[u]] = await db.execute(
+    'SELECT telegram_user_id, username, first_name FROM users WHERE telegram_user_id = ? LIMIT 1',
+    [tgId],
+  );
+  const title = esc(userTitle(u || { telegram_user_id: tgId }));
+  await tg(api, 'editMessageText', {
+    ...target,
+    text: action === 'blk' ? `⏳ Блокирую ${title}…` : `⏳ Разблокирую ${title}…`,
+  });
+
+  let notice;
+  try {
+    if (action === 'blk') {
+      const r = await blockUser(tgId);
+      notice =
+        `🚫 ${title} заблокирован.` +
+        (r.stopped ? ` Остановлено номеров: ${r.stopped}.` : '') +
+        (r.workerRemoved ? ' Доступ к анкетам закрыт.' : '');
+    } else {
+      const r = await unblockUser(tgId);
+      notice =
+        `✅ ${title} разблокирован.` +
+        (r.started ? ` Снова запущено номеров: ${r.started}.` : '') +
+        (r.workerRestored ? ' Доступ к анкетам возвращён.' : '');
+    }
+  } catch (err) {
+    console.error(`[adminMenu] ${data}:`, err.message);
+    notice = `❌ Не получилось: <code>${esc(err.message)}</code>`;
+  }
+  await tg(api, 'editMessageText', { ...target, ...(await buildBlacklistView(notice)) });
+}
+
+// ---------------------------------------------------------------------------
 // ОБРАБОТКА КОМАНД И КНОПОК
 // ---------------------------------------------------------------------------
 
@@ -320,7 +583,12 @@ async function handleCallback(api, query) {
   const target = { chat_id: chatId, message_id: query.message.message_id, parse_mode: 'HTML', disable_web_page_preview: true };
 
   if (query.data === 'adm:menu') {
+    blockInputUntil = 0;
     await tg(api, 'editMessageText', { ...target, text: MENU_TEXT, reply_markup: MENU_KEYBOARD });
+    return;
+  }
+  if (query.data.startsWith('adm:bl') || query.data.startsWith('adm:unb:')) {
+    await handleBlacklistCallback(api, query.data, target);
     return;
   }
   const section = SECTIONS[query.data];
@@ -343,4 +611,4 @@ async function registerCommands(api) {
   });
 }
 
-module.exports = { isAdminChat, sendMenu, handleCallback, registerCommands };
+module.exports = { isAdminChat, sendMenu, handleCallback, handleAdminText, registerCommands };

@@ -437,6 +437,8 @@ async function handleUpdate(update) {
       .catch(() => {});
   }
 
+  if (isAdmin && text && (await adminMenu.handleAdminText(TELEGRAM_API, chatId, text))) return;
+
   if (isAdmin && (text === '/menu' || text === '/admin')) {
     await adminMenu.sendMenu(TELEGRAM_API, chatId);
     return;
