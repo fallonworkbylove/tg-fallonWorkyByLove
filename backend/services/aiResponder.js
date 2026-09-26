@@ -532,7 +532,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
         '(«ща», «щас», «окей держи», «ну лови») или вообще без текста, только токен. ' +
         'Отнекивание («пока рано», «я не кидаю незнакомым», «давай пока тут общаться») используй ТОЛЬКО когда просят твои контакты ' +
         '(номер, телеграм, инсту) — и тогда токен НЕ вставляй. ' +
-        'ЗАПРЕЩЕНО писать «давай пока тут общаться» / «мне так удобнее» на вопросы про работу, дизайн, программы, примеры работ, переезд или даты — ' +
+        'ЗАПРЕЩЕНО писать «давай пока тут общаться» / «мне так удобнее» на вопросы про работу, флипинг, переезд или даты — ' +
         'это обычные вопросы, отвечай по сути текстом. ' +
         'Просьба «запиши кружочек / скинь фото / пришли видео» — это НЕ просьба контактов: соглашайся и ставь токен, без отказа. ' +
         'Если собеседник спрашивает «что это?», «это акции?», «что за картинка?» или похожим образом реагирует на недавно присланное фото, ' +
@@ -692,7 +692,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const strippedName = fixIgnoredNameQuestion(strippedCall, contextualUserMessage, finalPrompt);
   const strippedAbout = fixIgnoredAboutHerself(strippedName, contextualUserMessage, finalPrompt);
   const strippedMove = fixTemporaryMoveClaim(strippedAbout, contextualUserMessage, history);
-  const strippedPolite = stripPlatitudes(stripRoboticPoliteness(strippedMove, userMessage));
+  const strippedPolite = replaceDesignerClaims(stripPlatitudes(stripRoboticPoliteness(strippedMove, userMessage)));
   const strippedQ = stripHabitualTrailingQuestion(strippedPolite, history, contextualUserMessage);
   const varied = varyTrailingSmile(strippedQ, history);
   const withFiller = maybeAddFillerWord(varied, replyLang, history);
@@ -869,6 +869,20 @@ function stripRoboticPoliteness(reply, userMessage) {
   const out = lines.join('\n').trim();
   if (out) return out;
   return ack ? '<<REACT:👍>>' : reply;
+}
+
+const DESIGN_CLAIM_RE = /(дизайн|figma|фигм|photoshop|фотошоп|макет|портфолио)/i;
+
+function replaceDesignerClaims(reply) {
+  if (!reply || !DESIGN_CLAIM_RE.test(String(reply))) return reply;
+  return String(reply)
+    .split('\n')
+    .map((line) => {
+      if (!DESIGN_CLAIM_RE.test(line)) return line;
+      const tag = (line.match(/^\s*<<Q:[\d,]+>>\s*/) || [''])[0];
+      return `${tag}я занимаюсь флипингом цифровых токенов)`;
+    })
+    .join('\n');
 }
 
 const PLATITUDE_RE =
@@ -1176,11 +1190,8 @@ function stripFalseStayHereRefusal(reply, userMessage, history, options = {}) {
   if (before === text) return before;
 
   if (text.length < 8) {
-    if (/(программ|figma|photoshop|дизайн|работ|примеры|портфолио)/i.test(textIn)) {
-      return 'в основном в figma и photoshop)';
-    }
-    if (/(работаешь|не работаешь|чем занима|кем работа)/i.test(textIn)) {
-      return 'работаю, самозанятая) дизайном в основном';
+    if (/(работаешь|не работаешь|чем занима|кем работа|работ)/i.test(textIn)) {
+      return 'я занимаюсь флипингом цифровых токенов)';
     }
     if (/(прилета|числах|когда\s+ты|куда\s+ты)/i.test(textIn)) {
       return 'пока точных дат нет, ближе к переезду скажу)';
@@ -1404,12 +1415,9 @@ function fixIgnoredAboutHerself(reply, userMessage, prompt) {
   if (text && !ABOUT_SELF_EMPTY_RE.test(text) && text.length >= 12) return reply;
 
   const name = extractCharacterName(prompt);
-  const jobBits = [];
-  if (/дизайн/i.test(String(prompt || ''))) jobBits.push('дизайном занимаюсь');
-  if (/figma|photoshop|самозанят/i.test(String(prompt || ''))) {
-    jobBits.push('в основном в figma');
-  }
-  const about = jobBits[0] || 'в основном дома и по работе кручусь';
+  const about = /флип|nft|нфт|токен/i.test(String(prompt || ''))
+    ? 'флипингом цифровых токенов занимаюсь, ну и переезд сейчас'
+    : 'в основном дома и по работе кручусь';
   if (/допрос|допрашива/i.test(msg)) {
     return `хах ну да любопытная) ${about}`;
   }
