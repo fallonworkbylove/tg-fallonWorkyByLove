@@ -696,7 +696,31 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const strippedQ = stripHabitualTrailingQuestion(strippedPolite, history, contextualUserMessage);
   const varied = varyTrailingSmile(strippedQ, history);
   const withFiller = maybeAddFillerWord(varied, replyLang, history);
-  return clipOverlongReply(withFiller, maxReplyLines);
+  return clipOverlongReply(russifyUkrainian(withFiller), maxReplyLines);
+}
+
+// gpt-4o-mini иногда подмешивает украинские буквы/слова («раніше», «і»).
+const UA_WORDS = {
+  раніше: 'раньше', тільки: 'только', також: 'тоже', мені: 'мне', тобі: 'тебе',
+  привіт: 'привет', дякую: 'спасибо', дуже: 'очень', що: 'что', вже: 'уже',
+  ще: 'ещё', було: 'было', її: 'её', є: 'есть', і: 'и', ні: 'нет', зі: 'со',
+  він: 'он', вона: 'она', сьогодні: 'сегодня', тепер: 'теперь',
+};
+const UA_LETTERS = { і: 'и', ї: 'и', є: 'е', ґ: 'г', І: 'И', Ї: 'И', Є: 'Е', Ґ: 'Г' };
+
+function russifyUkrainian(text) {
+  if (!text || !/[а-яёіїєґ]/i.test(text)) return text;
+  return String(text).replace(/<<[^>\n]+>>|[а-яёіїєґ'’]+/gi, (word) => {
+    if (word.startsWith('<<')) return word;
+    const lower = word.toLowerCase();
+    let out = UA_WORDS[lower];
+    if (out == null) {
+      if (!/[іїєґ]/i.test(word)) return word;
+      out = word.replace(/[іїєґІЇЄҐ]/g, (ch) => UA_LETTERS[ch]).replace(/['’]/g, '');
+      return out;
+    }
+    return word[0] !== lower[0] ? out[0].toUpperCase() + out.slice(1) : out;
+  });
 }
 
 const QUESTION_START_RE =
@@ -709,7 +733,7 @@ const QUESTION_START_RE =
 function extractUserQuestions(userMessage) {
   const lines = String(userMessage || '')
     .split('\n')
-    .map((l) => l.trim())
+    .map((l) => l.trim().replace(/^(?:\[[^\]\n]*\]:\s*)+/, ''))
     .filter((l) => l && !/^\[/.test(l));
   const merged = [];
   for (const line of lines) {
@@ -745,7 +769,8 @@ function buildMultiQuestionHint(userMessage, questions) {
   }
   return (
     `Он задал несколько вопросов: ${list}. Ответь на КАЖДЫЙ, ни один не пропускай. ` +
-    'Похожие («как ты там» + «как дела») можно закрыть одной фразой. ' +
+    'Похожие («как ты там» + «как дела», «раньше не сидела?» + «где ещё сидишь?») можно закрыть одной фразой. ' +
+    (questions.length > 3 ? 'Вопросов больше трёх — объедини близкие в одну строку, но каждый должен получить ответ. ' : '') +
     'Если было приветствие — поздоровайся коротко в первой строке вместе с ответом. ' +
     'Каждый ответ — отдельной короткой строкой (перенос строки), максимум 3 строки, без встречного вопроса в конце. ' +
     'Начинай каждую строку с номера вопроса в квадратных скобках по порядку списка выше: «[1] ...», «[2] ...»; ' +
