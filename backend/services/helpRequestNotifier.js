@@ -502,11 +502,107 @@ function startNotificationBot() {
   loop();
 }
 
+// ---------------------------------------------------------------------------
+// ТРЕВОГА: OpenAI НЕ ОТВЕЧАЕТ ИЗ-ЗА ДЕНЕГ / КЛЮЧА
+// ---------------------------------------------------------------------------
+
+const OPENAI_ALERT_REPEAT_MS = 30 * 60 * 1000;
+const openAiAlert = { active: false, kind: null, sentAt: 0, lost: 0 };
+
+/** 'billing' — кончились кредиты, 'auth' — ключ не принимают, иначе null. */
+function classifyOpenAiError(err) {
+  const status = err?.status || err?.response?.status;
+  const code = String(err?.code || err?.error?.code || '');
+  const msg = String(err?.message || '');
+  if (code === 'insufficient_quota' || /no credits remaining|exceeded your current quota|billing/i.test(msg)) {
+    return 'billing';
+  }
+  if (status === 401 || code === 'invalid_api_key' || /incorrect api key|invalid api key/i.test(msg)) {
+    return 'auth';
+  }
+  return null;
+}
+
+async function broadcastToSubscribers(text) {
+  if (!TELEGRAM_API) {
+    console.error('[helpRequestNotifier] BOT_TOKEN не задан — тревога OpenAI не отправлена.');
+    return;
+  }
+  await ensureSchema();
+  const [rows] = await db.execute('SELECT DISTINCT chat_id FROM notification_subscribers');
+  if (!rows.length) {
+    console.error('[helpRequestNotifier] Нет подписчиков бота-уведомителя — тревога OpenAI не отправлена.');
+    return;
+  }
+  for (const { chat_id } of rows) {
+    try {
+      const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+      });
+      if (!res.ok) console.error(`[helpRequestNotifier] Тревога OpenAI не ушла ${chat_id}:`, await res.text());
+    } catch (err) {
+      console.error(`[helpRequestNotifier] Тревога OpenAI не ушла ${chat_id}:`, err.message);
+    }
+  }
+}
+
+/**
+ * Ответ собеседнику не сгенерирован из-за денег/ключа OpenAI. Шлёт тревогу
+ * сразу и повторяет не чаще раза в 30 минут, пока проблема не уйдёт.
+ * @returns {boolean} true, если ошибка из этой категории.
+ */
+function reportOpenAiFailure(err) {
+  const kind = classifyOpenAiError(err);
+  if (!kind) return false;
+  openAiAlert.lost += 1;
+  const now = Date.now();
+  if (openAiAlert.active && openAiAlert.kind === kind && now - openAiAlert.sentAt < OPENAI_ALERT_REPEAT_MS) {
+    return true;
+  }
+  Object.assign(openAiAlert, { active: true, kind, sentAt: now });
+  const title =
+    kind === 'billing'
+      ? '⚠️ OpenAI: закончились деньги на балансе'
+      : '⚠️ OpenAI: ключ API не принимается';
+  const action =
+    kind === 'billing'
+      ? 'Пополни баланс: https://platform.openai.com/settings/organization/billing'
+      : 'Проверь OPENAI_API_KEY в .env на сервере.';
+  const text =
+    `<b>${title}</b>\n\n` +
+    'ИИ сейчас не может отвечать — сообщения собеседников остаются без ответа.\n' +
+    `Без ответа за время сбоя: <b>${openAiAlert.lost}</b>\n` +
+    'Пока не починится — буду напоминать раз в 30 минут.\n\n' +
+    `${action}\n\n` +
+    `<code>${escapeHtml(String(err?.message || '').slice(0, 200))}</code>`;
+  console.error(`[helpRequestNotifier] ${title} — отправляю тревогу.`);
+  broadcastToSubscribers(text).catch((e) =>
+    console.error('[helpRequestNotifier] Не удалось отправить тревогу OpenAI:', e.message),
+  );
+  return true;
+}
+
+/** Первый успешный ответ после тревоги — сообщаем, что всё снова работает. */
+function reportOpenAiRecovered() {
+  if (!openAiAlert.active) return;
+  const lost = openAiAlert.lost;
+  Object.assign(openAiAlert, { active: false, kind: null, sentAt: 0, lost: 0 });
+  broadcastToSubscribers(
+    '<b>✅ OpenAI снова работает</b>\n\nИИ опять отвечает собеседникам.' +
+      (lost ? `\nЗа время сбоя без ответа осталось: <b>${lost}</b>` : ''),
+  ).catch((e) => console.error('[helpRequestNotifier] Не удалось отправить «OpenAI снова работает»:', e.message));
+}
+
 module.exports = {
   ensureSchema,
   recordVoiceSent,
   checkConsent,
   startNotificationBot,
+  reportOpenAiFailure,
+  reportOpenAiRecovered,
+  classifyOpenAiError,
   disableAutoreplyForPeer,
   isAutoreplyDisabledForPeer,
   enableAutoreplyForPeer,

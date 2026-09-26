@@ -673,21 +673,29 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   let completion;
   let usedModel = CHAT_MODEL;
   let fellBack = false;
+  // Лениво: helpRequestNotifier сам импортирует aiResponder.
+  const notifier = require('./helpRequestNotifier');
   try {
-    completion = await openai.chat.completions.create({ ...requestOptions, model: CHAT_MODEL });
+    try {
+      completion = await openai.chat.completions.create({ ...requestOptions, model: CHAT_MODEL });
+    } catch (err) {
+      // Фолбэк: если основная модель (например, отключённая/удалённая
+      // fine-tuned версия) недоступна, не роняем ответ бота, а пробуем
+      // запасную модель. Срабатывает только когда CHAT_MODEL и FALLBACK_MODEL
+      // реально разные — иначе смысла в повторе нет.
+      if (CHAT_MODEL === FALLBACK_MODEL || notifier.classifyOpenAiError(err)) throw err;
+      console.error(
+        `[openai] Модель "${CHAT_MODEL}" вернула ошибку (${err.message}), пробую запасную "${FALLBACK_MODEL}".`,
+      );
+      usedModel = FALLBACK_MODEL;
+      fellBack = true;
+      completion = await openai.chat.completions.create({ ...requestOptions, model: FALLBACK_MODEL });
+    }
   } catch (err) {
-    // Фолбэк: если основная модель (например, отключённая/удалённая
-    // fine-tuned версия) недоступна, не роняем ответ бота, а пробуем
-    // запасную модель. Срабатывает только когда CHAT_MODEL и FALLBACK_MODEL
-    // реально разные — иначе смысла в повторе нет.
-    if (CHAT_MODEL === FALLBACK_MODEL) throw err;
-    console.error(
-      `[openai] Модель "${CHAT_MODEL}" вернула ошибку (${err.message}), пробую запасную "${FALLBACK_MODEL}".`,
-    );
-    usedModel = FALLBACK_MODEL;
-    fellBack = true;
-    completion = await openai.chat.completions.create({ ...requestOptions, model: FALLBACK_MODEL });
+    notifier.reportOpenAiFailure(err);
+    throw err;
   }
+  notifier.reportOpenAiRecovered();
 
   // Учёт расходов: пишем реальные токены из ответа API в БД (см.
   // services/finetuneUsage.js), чтобы можно было смотреть стоимость по
