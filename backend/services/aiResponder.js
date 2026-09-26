@@ -350,6 +350,8 @@ function enrichGeoFollowUp(history, userMessage) {
 }
 
 async function generateReply(systemPrompt, history, userMessage, options = {}) {
+  const restraint = pickRestraintReaction(userMessage, history, options);
+  if (restraint) return restraint;
   const finalPrompt = systemPrompt?.trim() || DEFAULT_PROMPT;
   let contextualUserMessage = enrichShortFollowUp(history, userMessage);
   contextualUserMessage = enrichGeoFollowUp(history, contextualUserMessage);
@@ -445,8 +447,15 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'БЕЗ общих истин и морали: НЕ «дружба всегда хорошая тема», «для общего развития это полезно», «иногда надо себя подталкивать», «главное - верить в себя». ' +
     'Реагируй лично — что ТЫ думаешь или чувствуешь, со своей деталью или подколом («ну давай дружить, только чур не душнить)»). ' +
     'Будь живой: иногда сама делись мелочью из своего дня (кофе остыл, опять коробки с переездом, погода, устала) — не повторяй одну и ту же мелочь — не только отвечай на вопросы. ' +
-    'Разговорные слова как у живого человека: иногда (примерно каждый 3-й ответ) вставляй одно из «типо», «эм», «ну», «короче», «конечно», «вроде», «кстати», «хз», «блин» — ' +
-    'естественно, по одному, не в каждом сообщении и не одно и то же подряд. ' +
+    'Разговорные слова как у живого человека: изредка (раз в 5-6 ответов) одно из «типо», «ну», «короче», «вроде», «кстати», «хз», «блин» — ' +
+    'только перед содержательной фразой. НИКОГДА перед «спасибо», «рада», «приятно», «взаимно», «окей» («короче спасибо», «эм, рада» — так не пишут). ' +
+    'Характер: у тебя есть своё мнение и лёгкая вредность. Иногда не соглашайся («не, мне кажется наоборот»), подкалывай, отвечай с иронией. ' +
+    'Не восторгайся каждым его сообщением («круто», «классно», «прикольно», «интересно» подряд — нет), не поддакивай и не поучай. ' +
+    'НЕ заканчивай мудростью или моралью: «главное не терять надежду», «время покажет», «жизнь удивляет», «возраст — это цифра», «иногда нужно…», «береги себя». ' +
+    'На комплимент не всегда «спасибо) приятно слышать» — можно «ой всё)», «засмущал)», «ну знаю)», «хах, продолжай)» или только реакция. ' +
+    'Не благодари в ответ на благодарность («да не за что, всегда рада поддержать» — нет, максимум «хах)» или реакция). ' +
+    'Ты девушка: о себе ВСЕГДА в женском роде («поняла», «рада», «не ожидала», «устала»). ' +
+    'ДВ / дв / давинчик / дайвинчик — это Дайвинчик (Leomatch), бот знакомств в Telegram, где вы познакомились. Ты это прекрасно знаешь, не переспрашивай что это. ' +
     'Реакции: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
 
   // Главный анти-тупость гард: сначала ответ по сути, без чужих скриптов.
@@ -634,6 +643,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   if (ownMediaHint) {
     messages.push({ role: 'system', content: ownMediaHint });
   }
+  const dayDetailsHint = replyLang === 'ru' ? buildDayDetailsHint(options.accountId, userMessage, history) : null;
+  if (dayDetailsHint) {
+    messages.push({ role: 'system', content: dayDetailsHint });
+  }
 
   for (const h of history || []) {
     if (!h || !h.content) continue;
@@ -695,8 +708,170 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const strippedPolite = replaceDesignerClaims(stripPlatitudes(stripRoboticPoliteness(strippedMove, userMessage)));
   const strippedQ = stripHabitualTrailingQuestion(strippedPolite, history, contextualUserMessage);
   const varied = varyTrailingSmile(strippedQ, history);
-  const withFiller = maybeAddFillerWord(varied, replyLang, history);
-  return clipOverlongReply(russifyUkrainian(withFiller), maxReplyLines);
+  const withFiller = fixMisplacedFiller(maybeAddFillerWord(varied, replyLang, history));
+  const gendered = fixFemaleSelfForms(russifyUkrainian(withFiller));
+  return stripDanglingTail(clipOverlongReply(gendered, maxReplyLines));
+}
+
+const THANKS_OR_COMPLIMENT_LINE_RE =
+  /^(?:ну\s+|ой\s+|да\s+|а\s+)?(?:спасибо|спс|пасиб[оа]?|благодарю|мило|очень\s+мило|приятно|взаимно|класс|красивая|красотка|красавица|милая|милашка|ты\s+(?:очень\s+)?(?:красивая|милая|классная|прикольная|симпатичная|хорошая)|(?:ты\s+)?(?:очень\s+)?(?:красивая|милая)|обнимаю|целую)[\s).!,]*$/i;
+
+/**
+ * На голое «спасибо / мило / ты красивая / 😘» живая девушка часто
+ * просто ставит реакцию, а не отвечает «спасибо) приятно слышать)».
+ */
+function pickRestraintReaction(userMessage, history, options = {}) {
+  if (options.campaignHint || options.objectionHint) return null;
+  const bare = bareUserText(userMessage);
+  if (!bare || /\?/.test(bare)) return null;
+  const lines = bare.split('\n').map((l) => l.replace(/\p{Extended_Pictographic}|[\uFE0F\u200D]/gu, '').trim());
+  const emojiOnly = lines.every((l) => !l) && /\p{Extended_Pictographic}/u.test(bare);
+  const thanks = lines.filter(Boolean).length > 0 && lines.filter(Boolean).every((l) => THANKS_OR_COMPLIMENT_LINE_RE.test(l));
+  if (!emojiOnly && !thanks) return null;
+  const lastBot = [...(Array.isArray(history) ? history : [])].reverse().find((h) => h && h.role === 'assistant');
+  if (lastBot && /^\s*\[реакция/i.test(String(lastBot.content || ''))) return null;
+  if (Math.random() > 0.4) return null;
+  const pool = /спасибо|спс|пасиб|благодар/i.test(bare) ? ['😁', '❤', '🥰'] : ['🥰', '❤', '😘', '😁'];
+  return `<<REACT:${pool[Math.floor(Math.random() * pool.length)]}>>`;
+}
+
+const DAY_DETAILS_RU = [
+  'с утра таскала коробки, спина отваливается',
+  'кофе опять остыл, пока собирала вещи',
+  'нашла в шкафу старые фотки и залипла на час',
+  'скотч для коробок закончился в самый нужный момент',
+  'соседи сверху с утра что-то сверлят',
+  'заказала роллы, курьер ехал целый час',
+  'досмотрела сериал почти до 3 ночи, теперь сонная',
+  'сломала ноготь об коробку, обидно',
+  'сегодня удачно перепродала токен, настроение норм',
+  'купленный токен пока в минусе, жду когда отрастёт',
+  'мама звонила, спрашивала когда уже приеду',
+  'выкинула кучу старых вещей, прям легче стало',
+  'пыталась готовить, получилось так себе',
+  'в магазине забыла, зачем вообще пришла',
+  'разбила кружку, пока упаковывала посуду',
+  'голова с утра побаливает, пью чай',
+  'продаю шкаф на авито, пишут одни странные',
+  'подружка приходила помогать собираться, в итоге больше болтали',
+  'полдня искала зарядку, а она была в коробке',
+  'хочу сладкого, но лень идти в магаз',
+];
+const DAY_ASK_RE = /(как\s+(твой\s+)?день|как\s+дела|как\s+ты|что\s+делаешь|чем\s+занята|чем\s+занимаешься\s+сейчас|что\s+нового|как\s+прошёл|как\s+прошел|чё\s+делаешь|че\s+делаешь|что\s+у\s+тебя)/i;
+
+function seededPick(seedStr, arr, n) {
+  let h = 2166136261;
+  for (const ch of seedStr) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const pool = arr.slice();
+  const out = [];
+  while (out.length < n && pool.length) {
+    h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
+    out.push(pool.splice(h % pool.length, 1)[0]);
+  }
+  return out;
+}
+
+/** 3 мелочи дня на аккаунт (одни и те же весь день по МСК), без уже сказанных. */
+function buildDayDetailsHint(accountId, userMessage, history) {
+  if (accountId == null) return null;
+  const asked = DAY_ASK_RE.test(String(userMessage || ''));
+  if (!asked && Math.random() > 0.2) return null;
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+  const said = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .map((h) => String(h.content || '').toLowerCase())
+    .join(' ');
+  const fresh = seededPick(`${accountId}:${day}`, DAY_DETAILS_RU, 3).filter(
+    (d) => !said.includes(d.split(/[ ,]+/).slice(0, 3).join(' ')),
+  );
+  if (!fresh.length) return null;
+  return (
+    `Мелочи твоего сегодняшнего дня: ${fresh.map((d) => `«${d}»`).join(', ')}. ` +
+    (asked
+      ? 'Он спрашивает про тебя — ответь одной из них своими словами, коротко. '
+      : 'Можешь (не обязана) вставить одну, только если к месту. ') +
+    'Не вываливай все сразу и не повторяй то, что уже рассказывала.'
+  );
+}
+
+const MISPLACED_FILLER_RE =
+  /^(?:ну\s+типо|короче|эм|хм|типо|ну)[,\s]+(?=(?:спасибо|рада|приятно|взаимно|окей|ок|да\s+не\s+за\s+что|не\s+за\s+что|очень\s+мило|мило|о,\s)|(?:хм|эм|о)[,\s])/i;
+
+function fixMisplacedFiller(reply) {
+  if (!reply) return reply;
+  return String(reply)
+    .split('\n')
+    .map((line) => {
+      const tag = (line.match(/^\s*<<Q:[\d,]+>>\s*/) || [''])[0];
+      let body = line.slice(tag.length);
+      let guard = 0;
+      while (MISPLACED_FILLER_RE.test(body) && guard++ < 3) body = body.replace(MISPLACED_FILLER_RE, '');
+      if (body !== line.slice(tag.length)) body = body.charAt(0).toLowerCase() + body.slice(1);
+      return tag + body;
+    })
+    .join('\n');
+}
+
+const FEM_FORMS = {
+  понял: 'поняла', рад: 'рада', ожидал: 'ожидала', устал: 'устала', забыл: 'забыла', думал: 'думала',
+  хотел: 'хотела', видел: 'видела', знал: 'знала', слышал: 'слышала', уверен: 'уверена', согласен: 'согласна',
+  заметил: 'заметила', смог: 'смогла', сказал: 'сказала', написал: 'написала', спросил: 'спросила',
+  решил: 'решила', пришёл: 'пришла', пришел: 'пришла', ушёл: 'ушла', ушел: 'ушла', нашёл: 'нашла',
+  нашел: 'нашла', запутался: 'запуталась', соскучился: 'соскучилась', привык: 'привыкла', занят: 'занята',
+  готов: 'готова', должен: 'должна', сам: 'сама', был: 'была', мог: 'могла',
+};
+// Эти слова часто не про неё («был у меня кот», «ужин готов») — только после явного «я».
+const FEM_RISKY = new Set(['занят', 'готов', 'должен', 'сам', 'был', 'мог']);
+const FEM_VERB_ALT = Object.keys(FEM_FORMS).join('|');
+const FEM_SAFE_ALT = Object.keys(FEM_FORMS).filter((k) => !FEM_RISKY.has(k)).join('|');
+const FEM_LEAD =
+  '(?:(?:ну|да|ой|хах|ахах|блин|короче|эм|хм|не|уже|тоже|так|просто|даже|ещё|еще|вот|я|бы|очень|честно|вообще|наверное|типо|и|а|сразу|сегодня|вчера|давно|точно|правда|прям|реально)[\\s,]+)*';
+const FEM_AT_START_RE = new RegExp(`^(\\s*${FEM_LEAD})(${FEM_SAFE_ALT})(?![а-яё])`, 'i');
+const FEM_AFTER_YA_RE = new RegExp(
+  `((?:^|[^а-яё])я(?:\\s+(?!ты|он|вы|она|они|кто|тебя|тебе)[а-яё]+){0,3}\\s+)(${FEM_VERB_ALT})(?![а-яё])`,
+  'i',
+);
+const OTHER_SUBJECT_RE = /(?:^|[^а-яё])(ты|он|вы|кто|парень|мужик|брат|папа|отец|муж|друг|город|ужин|стол)(?![а-яё])/i;
+
+/** Персонаж — девушка: «не ожидал бы» → «не ожидала бы», «я так устал» → «я так устала». */
+function fixFemaleSelfForms(reply) {
+  if (!reply || !/[а-яё]/i.test(reply)) return reply;
+  const swap = (verb) => {
+    const fem = FEM_FORMS[verb.toLowerCase()];
+    return verb[0] === verb[0].toUpperCase() ? fem[0].toUpperCase() + fem.slice(1) : fem;
+  };
+  return String(reply).replace(/<<[^>\n]+>>|[^,.;!?\n)]+[,.;!?\n)]*/g, (clause) => {
+    if (clause.startsWith('<<') || /\?/.test(clause)) return clause;
+    let withYa = clause;
+    for (let i = 0; i < 4; i += 1) {
+      const next = withYa.replace(FEM_AFTER_YA_RE, (_, lead, verb) => lead + swap(verb));
+      if (next === withYa) break;
+      withYa = next;
+    }
+    if (withYa !== clause) return withYa;
+    if (OTHER_SUBJECT_RE.test(clause)) return clause;
+    return clause.replace(FEM_AT_START_RE, (_, lead, verb) => lead + swap(verb));
+  });
+}
+
+const DANGLING_TAIL_RE =
+  /([.!?)…]|^)\s*(?:а|и|ну|чё|че|кстати|слушай|так|короче|эм|хм|а\s+ты|а\s+у\s+тебя|а\s+сам)[\s,.-]*$/i;
+
+/** Обрывок после срезанного вопроса: «…так и будет) Чё» → «…так и будет)». */
+function stripDanglingTail(reply) {
+  if (!reply) return reply;
+  const lines = String(reply).split('\n');
+  const last = lines[lines.length - 1];
+  const tag = (last.match(/^\s*<<Q:[\d,]+>>\s*/) || [''])[0];
+  const body = last.slice(tag.length);
+  const cut = body.replace(DANGLING_TAIL_RE, '$1').trim();
+  if (cut === body.trim()) return reply;
+  if (!cut) {
+    if (lines.length > 1) return lines.slice(0, -1).join('\n');
+    return reply;
+  }
+  lines[lines.length - 1] = tag + cut;
+  return lines.join('\n');
 }
 
 // gpt-4o-mini иногда подмешивает украинские буквы/слова («раніше», «і»).
@@ -869,7 +1044,7 @@ function buildOwnMediaHint(history) {
 }
 
 const SYCOPHANT_PHRASE_RE =
-  /[,.;\s]*(спасибо\s+за\s+(компанию|общение|приятное\s+общение|беседу)|(тво[её]|с\s+тобой)\s+общение\s+(всегда\s+)?(радует|приятно)|с\s+тобой\s+(всегда\s+)?(приятно|интересно)\s+(общаться|болтать|поговорить)|рада,?\s+что\s+тебе\s+(нравится|понравилось))[).!]*/gi;
+  /[,.;\s]*(спасибо\s+за\s+(компанию|общение|приятное\s+общение|беседу|добрые\s+слова|комплимент[ыа]?|поддержку|понимание)|(тво[её]|с\s+тобой)\s+общение\s+(всегда\s+)?(радует|приятно)|с\s+тобой\s+(всегда\s+)?(приятно|интересно)\s+(общаться|болтать|поговорить)|рада,?\s+что\s+тебе\s+(нравится|понравилось)|(мне\s+)?(очень\s+)?приятно\s+(это\s+)?слышать|(всегда\s+)?рада\s+(поддержать|помочь)|(просто\s+)?стараюсь\s+быть\s+хорошей\s+компанией|(мне\s+)?приятно\s+общаться|очень\s+мило(?=[\s,).!]|$))[).!]*/gi;
 const DUTY_FILLER_ONLY_RE = /^(?:(?:всё|все)\s+(?:нормально|хорошо|ок|норм)|я\s+в\s+порядке)[\s).!]*$/i;
 
 /**
@@ -911,7 +1086,7 @@ function replaceDesignerClaims(reply) {
 }
 
 const PLATITUDE_RE =
-  /(всегда\s+(хорош|полезн|важн|приятн|интересн|здоров)\w*|для\s+общего\s+развития|это\s+(очень\s+)?(важно|полезно)(?=[\s,)]|$)|надо\s+себя\s+подталкивать|главное\s*-?\s*(это\s+)?(верить|не\s+сдава|быть\s+собой)|(дружба|общение|спорт|здоровье)\s*-?\s*(это\s+)?(всегда\s+)?(хорош|важн|классн|отличн|лучш)\w*(\s+(старт|начало|тема|вещь))?)/i;
+  /(всегда\s+(хорош|полезн|важн|приятн|интересн|здоров|радует|помогает)|для\s+общего\s+развития|это\s+(очень\s+)?(важно|полезно)(?=[\s,)]|$)|надо\s+себя\s+подталкивать|главное\s*[-,]?\s*(это\s+)?(верить|не\s+сдава|быть\s+собой|не\s+терять|что\s+(всё|все|внутри)|внутри)|не\s+терять\s+надежд|время\s+покажет|жизнь\s+(порой\s+|иногда\s+)?(действительно\s+)?(удивляет|непредсказуем)|в\s+жизни\s+(всякое|всё|все)\s+бывает|бывает\s+всякое\s+в\s+жизни|(всё|все)\s+(происходит\s+)?(неожиданно\s+и\s+)?к\s+лучшему|(возраст|это)\s*-?\s*(это\s+)?(всего\s+лишь|просто)\s+цифр|иногда\s+(нужно|полезно|надо)\s+[а-яё]|береги\s+себя|это\s+твой\s+выбор|особенно\s+когда\s+люди\s+интересные|что\s+внутри\s+тепло|^главное[\s,)]*$|(дружба|общение|спорт|здоровье)\s*-?\s*(это\s+)?(всегда\s+)?(хорош|важн|классн|отличн|лучш)[а-яё]*(\s+(старт|начало|тема|вещь))?)/i;
 
 /**
  * Вырезает клаузы-банальности («дружба всегда хорошая тема»), если рядом есть
@@ -924,7 +1099,14 @@ function stripPlatitudes(reply) {
     .map((line) => {
       const tag = (line.match(/^\s*<<Q:[\d,]+>>\s*/) || [''])[0];
       const clauses = line.slice(tag.length).split(/(?<=[,.;)!?])\s+/);
-      const kept = clauses.filter((c) => !PLATITUDE_RE.test(c));
+      let prevDropped = false;
+      const kept = clauses.filter((c) => {
+        const drop =
+          PLATITUDE_RE.test(c) ||
+          (prevDropped && /^(как\s+обычно|если|особенно|когда|главное)(?![а-яё])/i.test(c));
+        prevDropped = drop;
+        return !drop;
+      });
       if (!kept.length || kept.length === clauses.length) return line;
       let text = kept.join(' ').replace(/[,;\s]+$/, '').trim();
       if (text.replace(/[)\s]/g, '').length < 2) return line;
@@ -950,8 +1132,9 @@ function maybeAddFillerWord(reply, replyLang, history) {
     .filter((h) => h && h.role === 'assistant')
     .slice(-3)
     .map((h) => String(h.content || ''));
-  if (recentBot.some((t) => /^(ну|эм|хм|короче|типо)\b/i.test(t.trim()))) return reply;
-  if (Math.random() > 0.15) return reply;
+  if (recentBot.some((t) => /^(ну|эм|хм|короче|типо)(?![а-яё])/i.test(t.trim()))) return reply;
+  if (/^(спасибо|рада|приятно|взаимно|окей|ок|да\s+не\s+за\s+что|не\s+за\s+что|мило|очень\s+мило)(?![а-яё])/i.test(text)) return reply;
+  if (Math.random() > 0.08) return reply;
   const filler = FILLER_START_RU[Math.floor(Math.random() * FILLER_START_RU.length)];
   const first = text.charAt(0);
   const rest = /[А-ЯЁ]/.test(first) && !/^[А-ЯЁ]{2}/.test(text) ? first.toLowerCase() + text.slice(1) : text;
@@ -1453,7 +1636,14 @@ function fixIgnoredAboutHerself(reply, userMessage, prompt) {
 const MEET_AGREE_RE =
   /(?:^|[.!\s)])\s*(?:скоро\s+)?увидимся[^.!?\n]*[.!)]*/gi;
 const MEET_AGREE_EXTRA_RE =
-  /(?:жду\s+тебя\s+тоже|тоже\s+жду|приеду\s+(?:к\s+тебе|скоро)|давай\s+встретимся|встретимся\s+скоро|обязательно\s+увидимся)[^.!?\n]*[.!)]*/gi;
+  /(?:жду\s+тебя\s+тоже|тоже\s+жду|жду\s+приглашени[яе]|приеду\s+(?:к\s+тебе|скоро)|давай\s+встретимся|встретимся\s+скоро|обязательно\s+увидимся|(?:будет\s+)?(?:интересно|классно|здорово|приятно)\s+(?:встретиться|увидеться|погулять)|(?:с\s+радостью|можем|могли\s+бы)\s+(?:встретимся|встретиться|увидеться|погулять|сходить)|(?:когда|как)\s+(?:приеду|перееду)\s*,?\s*(?:встретимся|увидимся|погуляем|сходим))[^.!?\n]*[.!)]*/gi;
+const MEET_LEFTOVER_AGREE_RE =
+  /^(?:(?:эм|ну|хм|ой|короче|типо)[,\s]+)*(?:ага|угу|да|ок|окей|давай|конечно|хорошо|го|ладно|договорились|с\s+радостью)[\s,.)!]*$/i;
+const MEET_REFUSALS = [
+  'давай пока тут, с переездом вообще не до встреч)',
+  'ой пока не до встреч, я вся в коробках',
+  'не, пока только переписка, переезд этот все силы съел',
+];
 
 /**
  * Срезает согласие на звонок/«по видео». Если модель ответила «ага)» —
@@ -1528,6 +1718,9 @@ function stripMeetAgreement(reply, userMessage, options = {}) {
 
   if (before === text) return before;
 
+  if (MEET_LEFTOVER_AGREE_RE.test(text.replace(/<<[^>]+>>/g, '').trim())) {
+    return MEET_REFUSALS[Math.floor(Math.random() * MEET_REFUSALS.length)];
+  }
   if (text.length >= 8) return text;
 
   const hint = String(options.objectionHint || '');
@@ -1698,6 +1891,15 @@ function applyAntiDetectStyle(text) {
   // Турецкие ı/İ иногда проскакивают в «английском» — чиним в латиницу.
   result = result.replace(/\u0131/g, 'i').replace(/\u0130/g, 'I');
   try {
+    // «with you 😊 It's nice» / «Приветик 😊 Рада» — эмодзи был разделителем предложений.
+    result = result.replace(
+      /[ \t]*(?:\p{Extended_Pictographic}[\uFE0F\u200D]*)+[ \t]+([A-ZА-ЯЁ])([A-Za-z']*)/gu,
+      (_, ch, rest) => {
+        if (/[А-ЯЁ]/.test(ch)) return `) ${ch}${rest}`;
+        const keepCap = ch === 'I' && (rest === '' || rest.startsWith("'"));
+        return `, ${keepCap ? ch : ch.toLowerCase()}${rest}`;
+      },
+    );
     result = result.replace(/\p{Extended_Pictographic}/gu, '');
   } catch (_) {
     // ignore

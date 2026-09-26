@@ -2951,6 +2951,7 @@ async function fireReengage(accountId, peerId) {
       memoryHint: sessionForgetHint ? null : useMemoryHint,
       objectionHint,
       complimentHint,
+      accountId,
     });
     if (!rawReply) return;
     if (dueMemory && useMemoryHint && !sessionForgetHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
@@ -3707,6 +3708,7 @@ async function processBufferedMessages(
       memoryHint: sessionForgetHint ? null : useMemoryHint,
       objectionHint,
       complimentHint,
+      accountId,
     });
     if (!rawReply) return;
     if (dueMemory && useMemoryHint && !sessionForgetHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
