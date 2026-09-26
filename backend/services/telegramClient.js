@@ -2090,45 +2090,46 @@ async function sendRequestedMediaOrDeflect(
 }
 
 // ---------------------------------------------------------------------------
-// «СКОЛЬКО СИДИШЬ» + АВТОАР��ИВ ПРИ СРОКЕ БОЛЬШЕ 2 НЕДЕЛЬ
+// «СКОЛЬКО ДНЕЙ НА ДВ» + АВТОАРХИВ, ЕСЛИ ОН ТАМ 2 НЕДЕЛИ И БОЛЬШЕ
 // ---------------------------------------------------------------------------
 
-// Синхронный замок «вопрос уже отправляется» для пары аккаунт+собеседник.
-// Защита от гонки: пока идёт пауза перед вопросом, второе входящее
-// сообщение не должно отправить тот же вопрос повторно.
+// Пока идёт пауза перед вопросом, второе входящее не должно отправить его повторно.
 const howLongInFlight = new Set();
 
-// Названия платформы — в вопросе используется О��НО случайное, а не все сразу.
-const HOWLONG_PLATFORMS = ['дс', 'сз', 'дайвинчике'];
+// Все варианты содержат «на дв?» — по этой подстроке ищем вопрос в истории.
+const HOWLONG_QUESTIONS = [
+  'слушай, а ты скок дней уже сидишь на дв?',
+  'кстати, а сколько дней ты уже на дв?',
+  'а скок ты уже дней на дв?',
+  'слушай, а ты давно сидишь на дв?',
+];
+const HOWLONG_MARKER = 'на дв?';
+const HOWLONG_LEGACY_MARKER = 'давно тут сидишь';
 
-// Собирает текст вопроса «сколько сидишь» с одним случайным названием.
 function buildHowLongQuestion() {
-  const place =
-    HOWLONG_PLATFORMS[Math.floor(Math.random() * HOWLONG_PLATFORMS.length)];
-  return `слушай, а ты давно тут си��ишь, на ${place}? сколько уже примерно?`;
+  return HOWLONG_QUESTIONS[Math.floor(Math.random() * HOWLONG_QUESTIONS.length)];
 }
 
 // После скольких сообщений собеседника задавать вопрос.
 const HOWLONG_AFTER_MESSAGES = 3;
+const HOWLONG_ARCHIVE_DAYS = 14;
 
-/**
- * Проверяет по истории, задавали ли мы уже ��опрос «ск��л��ко сидишь»
- * (любой из вариантов ��� ищем по ��ст��й��ивой части фразы).
- */
+function isHowLongQuestion(content) {
+  const c = String(content || '');
+  return c.includes(HOWLONG_MARKER) || c.includes(HOWLONG_LEGACY_MARKER);
+}
+
 async function wasHowLongAsked(accountId, peerId) {
   const [rows] = await db.execute(
     `SELECT id FROM conversation_messages
      WHERE account_id = ? AND peer_id = ? AND role = 'assistant'
-       AND content LIKE '%давно тут сидишь%'
+       AND (content LIKE ? OR content LIKE ?)
      LIMIT 1`,
-    [accountId, peerId],
+    [accountId, peerId, `%${HOWLONG_MARKER}%`, `%${HOWLONG_LEGACY_MARKER}%`],
   );
   return rows.length > 0;
 }
 
-/**
- * Считает, сколько сообщений написал собеседник (role = 'user').
- */
 async function countUserMessages(accountId, peerId) {
   const [rows] = await db.execute(
     `SELECT COUNT(*) AS cnt FROM conversation_messages
@@ -2139,92 +2140,78 @@ async function countUserMessages(accountId, peerId) {
 }
 
 /**
- * Проверяет, есть ли в истории сообщение с точно таким содержимым
- * (например, уже заданный вопрос «сколько сидишь»).
+ * Текущее входящее — первый ответ на вопрос «сколько дней на дв»:
+ * после вопроса в истории нет ни одного сообщения собеседника.
  */
-async function historyHasContent(accountId, peerId, content) {
-  const [rows] = await db.execute(
-    `SELECT id FROM conversation_messages
-     WHERE account_id = ? AND peer_id = ? AND content = ?
-     LIMIT 1`,
-    [accountId, peerId, content],
-  );
-  return rows.length > 0;
-}
-
-/**
- * Разбирает ответ собеседника про срок и определяет, БОЛЬШЕ ли это 2 недель
- * (строго > 14 дней). Возвращает true, есл�� срок явно больше двух недель.
- *
- * Понимает годы, месяцы, полгода, недели и дни, числа цифрами и словами.
- */
-function parseDurationOverTwoWeeks(text) {
-  const t = (text || '').toLowerCase();
-
-  // Числа словами -> цифры.
-  const wordNums = {
-    полтора: 1.5,
-    полторы: 1.5,
-    один: 1,
-    одна: 1,
-    два: 2,
-    две: 2,
-    пару: 2,
-    парочку: 2,
-    три: 3,
-    четыре: 4,
-    пять: 5,
-    шесть: 6,
-    семь: 7,
-    восемь: 8,
-    девять: 9,
-    десять: 10,
-    несколько: 3,
-    много: 12,
-  };
-
-  const numMatch = t.match(/(\d+([.,]\d+)?)/);
-  let num = numMatch ? parseFloat(numMatch[1].replace(',', '.')) : null;
-  if (num === null) {
-    for (const [w, n] of Object.entries(wordNums)) {
-      if (t.includes(w)) {
-        num = n;
-        break;
-      }
-    }
+function isAnswerToHowLong(history) {
+  for (let i = (history || []).length - 1; i >= 0; i -= 1) {
+    const h = history[i];
+    if (h.role === 'user') return false;
+    if (h.role === 'assistant' && isHowLongQuestion(h.content)) return true;
   }
-
-  const explicitMore = /(больше|более|свыше|дольше|давно)/.test(t);
-
-  // Годы и полгода — заведомо больше 2 недель.
-  if (/(год|года|годи|лет)/.test(t)) return true;
-  if (/(полгода|пол года)/.test(t)) return true;
-
-  // Месяцы — тоже больше 2 недель.
-  if (/(месяц|месяца|месяцев|мес\b)/.test(t)) return true;
-
-  // ��едели: > 2 недель, либо «больше 2 недель».
-  if (/недел/.test(t)) {
-    if (num !== null) {
-      if (num > 2) return true;
-      if (num === 2 && explicitMore) return true;
-      return false;
-    }
-    return false;
-  }
-
-  // Дни: больше 14 дней.
-  if (/(день|дня|дней|дн\b|сутк)/.test(t)) {
-    if (num !== null && num > 14) return true;
-    return false;
-  }
-
   return false;
 }
 
+const STAY_NUM_WORDS = {
+  полтора: 1.5, полторы: 1.5, одну: 1, один: 1, одна: 1, две: 2, два: 2, пару: 2, парочку: 2,
+  три: 3, четыре: 4, пять: 5, шесть: 6, семь: 7, восемь: 8, девять: 9, десять: 10,
+  одиннадцать: 11, двенадцать: 12, тринадцать: 13, четырнадцать: 14, пятнадцать: 15,
+  двадцать: 20, тридцать: 30, сорок: 40, несколько: 3,
+};
+const STAY_NUM = `(\\d+(?:[.,]\\d+)?|${Object.keys(STAY_NUM_WORDS).join('|')})`;
+const STAY_UNITS = [
+  { re: '(?<![а-я])год[а-я]*|(?<![а-я])лет(?![а-я])', days: 365 },
+  { re: 'полгода|пол\\s+года', days: 180, noNum: true },
+  { re: 'месяц[а-я]*|мес(?=[^а-я]|$)', days: 30 },
+  { re: 'недел[а-я]*|нед(?=[^а-я]|$)', days: 7 },
+  { re: 'дн[а-я]*|день|сут[а-я]*', days: 1 },
+];
+
+function stayNum(raw) {
+  if (raw == null) return null;
+  const w = String(raw).toLowerCase();
+  if (STAY_NUM_WORDS[w] != null) return STAY_NUM_WORDS[w];
+  const n = parseFloat(w.replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+}
+
 /**
- * Перемещает диалог с собеседником в АРХИВ (folder_id = 1).
+ * Сколько дней он на платформе, по его ответу. null — не понятно.
+ * «месяц» → 30, «две недели» → 14, «дня 3» → 3, «20» (на вопрос про дни) → 20.
  */
+function parseStayDays(text) {
+  const t = String(text || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/^\[[^\]]*\]:\s*/g, '')
+    .replace(/мне\s+\d+\s*(лет|год[а-я]*)?/g, ' ')
+    .trim();
+  if (!t) return null;
+  if (/с\s+(лета|весны|зимы|осени|прошлого|того)/.test(t)) return 90;
+  if (/(недавно|не\s+давно|только\s+(что|зашел|зашла|начал|скачал|сегодня)|первый\s+день|с\s+сегодня|со\s+вчера|сегодня|вчера)/.test(t)) {
+    return 1;
+  }
+  let best = null;
+  for (const unit of STAY_UNITS) {
+    const before = new RegExp(`${STAY_NUM}?\\s*(?:с\\s+)?(?:${unit.re})`, 'g');
+    let m;
+    while ((m = before.exec(t))) {
+      let n = unit.noNum ? 1 : stayNum(m[1]);
+      if (n == null) {
+        const after = t.slice(m.index + m[0].length).match(new RegExp(`^\\s*${STAY_NUM}`));
+        n = after ? stayNum(after[1]) : 1;
+      }
+      const days = n * unit.days;
+      if (best == null || days > best) best = days;
+    }
+  }
+  if (best != null) return best;
+  if (/(давно|долго|дофига|много\s+времени|вечность)/.test(t)) return 60;
+  const bare = t.match(/^(?:ну\s+|где[- ]то\s+|около\s+|примерно\s+)?(\d+)[\s)!.]*$/);
+  if (bare) return Number(bare[1]);
+  return null;
+}
+
 async function archivePeer(client, inputPeer) {
   const peer = await client.getInputEntity(inputPeer);
   await client.invoke(
@@ -2237,15 +2224,20 @@ async function archivePeer(client, inputPeer) {
   return true;
 }
 
-/**
- * Проверяет, ��ора ли «невзначай» задать вопрос «сколько сидишь»:
- *   - его ещё не задавали это��у собеседнику;
- *   - собеседник написал уже достаточно сообщений (HOWLONG_AFTER_MESSAGES).
- * Возвращает true, если вопрос нужно задать в этот ход (вместо AI-ответа).
- */
-async function shouldAskHowLong(accountId, peerId) {
-  if (await wasHowLongAsked(accountId, peerId)) return false;
+// Незамьюченный архивный чат Telegram сам возвращает в список при новом сообщении.
+async function mutePeerForever(client, inputPeer) {
+  const peer = await client.getInputEntity(inputPeer);
+  await client.invoke(
+    new Api.account.UpdateNotifySettings({
+      peer: new Api.InputNotifyPeer({ peer }),
+      settings: new Api.InputPeerNotifySettings({ muteUntil: 2147483647 }),
+    }),
+  );
+}
 
+async function shouldAskHowLong(accountId, peerId) {
+  if (howLongInFlight.has(bufferKey(accountId, peerId))) return false;
+  if (await wasHowLongAsked(accountId, peerId)) return false;
   const count = await countUserMessages(accountId, peerId);
   return count >= HOWLONG_AFTER_MESSAGES;
 }
@@ -3476,6 +3468,26 @@ async function processBufferedMessages(
       );
     }
 
+    if (isAnswerToHowLong(history)) {
+      const stayDays = parseStayDays(text);
+      console.log(
+        `[${accountLabel(accountId)}] ${senderName} ответил, сколько на дв: "${String(text).slice(0, 80)}" → ${stayDays ?? '?'} дн.`,
+      );
+      if (stayDays != null && stayDays >= HOWLONG_ARCHIVE_DAYS) {
+        await markPeerAsRead(client, sender, message);
+        try {
+          await mutePeerForever(client, sender);
+        } catch (e) {
+          console.error(`[${accountLabel(accountId)}] Не удалось замьютить ${senderName}:`, e.errorMessage || e.message);
+        }
+        await retireUnreachablePeer(client, accountId, peerId, sender, 'long_on_platform');
+        console.log(
+          `[${accountLabel(accountId)}] ${senderName} на дв ${stayDays} дн. (≥${HOWLONG_ARCHIVE_DAYS}) — в архив, больше не отвечаю.`,
+        );
+        return;
+      }
+    }
+
     // Явная просьба прислать медиа определяется заранее — она нужна и для
     // приоритета над голосовыми, и для медиа-логики ниже.
     const explicitMediaRequest = isExplicitMediaRequest(contextualText, history);
@@ -3915,6 +3927,35 @@ async function processBufferedMessages(
         } finally {
           voiceSendInFlight.delete(sendKey);
         }
+      }
+    }
+
+    // 9. «сколько дней на дв» — отдельным сообщением после обычного ответа.
+    if (
+      outText &&
+      allowVoice &&
+      !voice &&
+      !nft.sendVoice &&
+      !mediaSentThisTurn &&
+      !/\?[)\s]*$/.test(stripQuestionTags(outText)) &&
+      (await shouldAskHowLong(accountId, peerId))
+    ) {
+      howLongInFlight.add(inFlightKey);
+      try {
+        const question = buildHowLongQuestion();
+        await sleep(2500 + Math.random() * 3500);
+        try {
+          await client.invoke(
+            new Api.messages.SetTyping({ peer: sender, action: new Api.SendMessageTypingAction() }),
+          );
+        } catch (_) {}
+        await sleep(1500 + Math.random() * 1500);
+        await client.sendMessage(sender, { message: question });
+        await saveMessage(accountId, peerId, senderName, 'assistant', question);
+        lastReplyAt.set(inFlightKey, Date.now());
+        console.log(`[${accountLabel(accountId)}] Спросила ${senderName}: "${question}"`);
+      } finally {
+        howLongInFlight.delete(inFlightKey);
       }
     }
   } catch (err) {
