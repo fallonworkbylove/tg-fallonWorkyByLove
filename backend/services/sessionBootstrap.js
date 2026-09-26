@@ -8,9 +8,11 @@ const { activateAccount } = require('./telegramClient');
 async function bootstrapSessions() {
   try {
     const [rows] = await db.execute(
-      `SELECT id, phone, session_string
-      FROM accounts
-      WHERE session_string IS NOT NULL AND session_string != ''`,
+      `SELECT a.id, a.phone, a.session_string
+      FROM accounts a
+      LEFT JOIN users u ON u.id = a.user_id
+      WHERE a.session_string IS NOT NULL AND a.session_string != ''
+        AND COALESCE(u.is_blocked, 0) = 0`,
     );
 
     if (rows.length === 0) {

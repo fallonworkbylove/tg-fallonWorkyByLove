@@ -108,6 +108,9 @@ module.exports = async function telegramAuth(req, res, next) {
 
     // Находим или создаём пользователя в базе
     const dbUser = await findOrCreateUser(tgUser);
+    if (Number(dbUser.is_blocked) === 1) {
+      return res.status(403).json({ error: 'Доступ закрыт' });
+    }
 
     req.telegramUser = tgUser; // сырые данные из Telegram
     req.dbUser = dbUser;       // запись из таблицы users (id, balance, account_limit...)

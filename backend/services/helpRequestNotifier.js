@@ -421,6 +421,18 @@ async function handleUpdate(update) {
   const text = (msg.text || '').trim();
 
   if (text === '/start') {
+    const [[blocked]] = await db.execute(
+      'SELECT id FROM users WHERE telegram_user_id = ? AND is_blocked = 1 LIMIT 1',
+      [chatId],
+    );
+    if (blocked) {
+      await fetch(`${TELEGRAM_API}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: 'Доступ закрыт.' }),
+      });
+      return;
+    }
     await ensureSchema();
     await db.execute(
       `INSERT INTO notification_subscribers (chat_id, username)
