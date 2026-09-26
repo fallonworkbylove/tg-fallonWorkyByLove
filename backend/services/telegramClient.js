@@ -2101,7 +2101,6 @@ const HOWLONG_QUESTIONS = [
   'слушай, а ты скок дней уже сидишь на дв?',
   'кстати, а сколько дней ты уже на дв?',
   'а скок ты уже дней на дв?',
-  'слушай, а ты давно сидишь на дв?',
 ];
 const HOWLONG_MARKER = 'на дв?';
 const HOWLONG_LEGACY_MARKER = 'давно тут сидишь';
@@ -2110,8 +2109,12 @@ function buildHowLongQuestion() {
   return HOWLONG_QUESTIONS[Math.floor(Math.random() * HOWLONG_QUESTIONS.length)];
 }
 
-// После скольких сообщений собеседника задавать вопрос.
-const HOWLONG_AFTER_MESSAGES = 3;
+// Вопрос — 3-м сообщением бота; если в тот ход нельзя (ответ уже с вопросом,
+// голосовое, медиа) — ещё два хода, дальше не спрашиваем.
+const HOWLONG_BOT_MSGS_FROM = 2;
+const HOWLONG_BOT_MSGS_TO = 4;
+// Только новые диалоги: первое сообщение не старше этого.
+const HOWLONG_NEW_DIALOG_HOURS = 48;
 const HOWLONG_ARCHIVE_DAYS = 14;
 
 function isHowLongQuestion(content) {
@@ -2130,13 +2133,17 @@ async function wasHowLongAsked(accountId, peerId) {
   return rows.length > 0;
 }
 
-async function countUserMessages(accountId, peerId) {
+async function getHowLongDialogStats(accountId, peerId) {
   const [rows] = await db.execute(
-    `SELECT COUNT(*) AS cnt FROM conversation_messages
-     WHERE account_id = ? AND peer_id = ? AND role = 'user'`,
+    `SELECT
+       SUM(role = 'assistant' AND content NOT LIKE '[реакция:%') AS bot_msgs,
+       TIMESTAMPDIFF(HOUR, MIN(created_at), NOW()) AS age_hours
+     FROM conversation_messages
+     WHERE account_id = ? AND peer_id = ?`,
     [accountId, peerId],
   );
-  return rows[0] ? Number(rows[0].cnt) : 0;
+  const row = rows[0] || {};
+  return { botMsgs: Number(row.bot_msgs) || 0, ageHours: row.age_hours == null ? null : Number(row.age_hours) };
 }
 
 /**
@@ -2238,8 +2245,9 @@ async function mutePeerForever(client, inputPeer) {
 async function shouldAskHowLong(accountId, peerId) {
   if (howLongInFlight.has(bufferKey(accountId, peerId))) return false;
   if (await wasHowLongAsked(accountId, peerId)) return false;
-  const count = await countUserMessages(accountId, peerId);
-  return count >= HOWLONG_AFTER_MESSAGES;
+  const { botMsgs, ageHours } = await getHowLongDialogStats(accountId, peerId);
+  if (ageHours == null || ageHours > HOWLONG_NEW_DIALOG_HOURS) return false;
+  return botMsgs >= HOWLONG_BOT_MSGS_FROM && botMsgs <= HOWLONG_BOT_MSGS_TO;
 }
 
 /**
