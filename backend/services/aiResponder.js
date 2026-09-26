@@ -795,7 +795,7 @@ function buildDayDetailsHint(accountId, userMessage, history) {
 }
 
 const MISPLACED_FILLER_RE =
-  /^(?:ну\s+типо|короче|эм|хм|типо|ну)[,\s]+(?=(?:спасибо|рада|приятно|взаимно|окей|ок|да\s+не\s+за\s+что|не\s+за\s+что|очень\s+мило|мило|о,\s)|(?:хм|эм|о)[,\s])/i;
+  /^(?:ну\s+типо|короче|эм|хм|типо|ну)[,\s]+(?=(?:спасибо|рада|приятно|взаимно|окей|ок|да\s+не\s+за\s+что|не\s+за\s+что|очень\s+мило|мило|привет|приветик|хай|здравствуй|доброе|добрый|о,\s)|(?:хм|эм|о)[,\s])/i;
 
 function fixMisplacedFiller(reply) {
   if (!reply) return reply;
@@ -1133,7 +1133,7 @@ function maybeAddFillerWord(reply, replyLang, history) {
     .slice(-3)
     .map((h) => String(h.content || ''));
   if (recentBot.some((t) => /^(ну|эм|хм|короче|типо)(?![а-яё])/i.test(t.trim()))) return reply;
-  if (/^(спасибо|рада|приятно|взаимно|окей|ок|да\s+не\s+за\s+что|не\s+за\s+что|мило|очень\s+мило)(?![а-яё])/i.test(text)) return reply;
+  if (/^(спасибо|рада|приятно|взаимно|окей|ок|да\s+не\s+за\s+что|не\s+за\s+что|мило|очень\s+мило|привет|приветик|хай|здравствуй|доброе|добрый)(?![а-яё])/i.test(text)) return reply;
   if (Math.random() > 0.08) return reply;
   const filler = FILLER_START_RU[Math.floor(Math.random() * FILLER_START_RU.length)];
   const first = text.charAt(0);
