@@ -1707,15 +1707,48 @@ const MEDIA_REQUEST_VERB_RE =
 const MEDIA_REQUEST_OBJ_RE =
   /(фото|фотк|фоточк|фоточ|селфи|видео|видосик|видос|кружок|кружочек|кружочк|себя|как ты выглядишь|как выглядишь|своё лицо|свое лицо|личико)/i;
 const MEDIA_REQUEST_SHORT_RE =
-  /(^|\n)\s*(а\s+)?(фото|фотку|фоточку|селфи|видео|видос|кружок|кружочек)\s*\??\s*($|\n)/i;
+  /(^|\n)\s*(а\s+|ну\s+|и\s+)?(фото|фотку|фотки|фоточку|фоточки|фотографию|селфи|видео|видос|видосик|кружок|кружочек)\s*\??\s*($|\n)/i;
+// «Что по фоточкам?», «где фотки», «фотки будут?» — просьба без глагола.
+const MEDIA_REQUEST_ASK_RE =
+  /((что|как|ну)\s+(там\s+)?(по|с)\s+(фот|видео|видос|круж|селфи)|(где|жду)\s+(же\s+|твои\s+|тво[её]\s+)?(фот|видео|видос|круж|селфи)|(фотк|фоточк|фотограф|видос|кружоч?к)\S*\s+(будут|будет|то\s+будут|то\s+будет|когда))/i;
+// Обещание прислать медиа «потом» — без реальной отправки выглядит как бот-стилка.
+const MEDIA_PROMISE_RE =
+  /((щас|сейчас|ща|щя)[,\s]+(подожди[,\s]+)?(найду|поищу|скину|кину|отправлю|выберу|сфоткаюсь|сфоткаю|запишу)|поищу\s+(нормальн|хорош|фот|получше)|подожди[^.?\n]{0,25}(найду|поищу|выберу|скину)|(скину|кину|отправлю)\s+(позже|потом|попозже|чуть\s+позже))/i;
 
-function isExplicitMediaRequest(text) {
+function lastAssistantPromisedMedia(history) {
+  for (let i = (history || []).length - 1; i >= 0; i -= 1) {
+    if (history[i].role === 'assistant') return MEDIA_PROMISE_RE.test(String(history[i].content || ''));
+  }
+  return false;
+}
+
+function isExplicitMediaRequest(text, history = null) {
   if (!text) return false;
   const t = String(text);
   if (MEDIA_REQUEST_VERB_RE.test(t) && MEDIA_REQUEST_OBJ_RE.test(t)) return true;
   if (MEDIA_REQUEST_SHORT_RE.test(t)) return true;
+  if (MEDIA_REQUEST_ASK_RE.test(t)) return true;
   if (/(есть|скинь|покажи|пришли|кинь).{0,48}(фото|фотк|видео|круж|себя|селфи)/i.test(t)) return true;
+  // Бот пообещал «щас найду», он ответил «давай» / «любые можно» — ждёт фото.
+  if (history && lastAssistantPromisedMedia(history) && t.trim().split(/\s+/).length <= 8) return true;
   return false;
+}
+
+function recentUserAskedMedia(text, history) {
+  const recentUser = (history || [])
+    .filter((h) => h && h.role === 'user')
+    .slice(-3)
+    .map((h) => String(h.content || ''));
+  return [text, ...recentUser].some((s) => MEDIA_REQUEST_OBJ_RE.test(String(s || '')));
+}
+
+/**
+ * «щас найду, подожди» без реального медиа в этом же ходе — заменяем на уход с темы.
+ */
+function fixUnfulfilledMediaPromise(outText, mediaType, text, history) {
+  if (!outText || mediaType || !MEDIA_PROMISE_RE.test(outText)) return outText;
+  if (!recentUserAskedMedia(text, history)) return outText;
+  return pickMediaFailDeflect();
 }
 
 function detectRequestedMediaType(text) {
@@ -2848,7 +2881,7 @@ async function fireReengage(accountId, peerId) {
       typeof settings.media_chat_link === 'string'
         ? settings.media_chat_link.trim()
         : '';
-    const explicitMediaRequest = isExplicitMediaRequest(text);
+    const explicitMediaRequest = isExplicitMediaRequest(text, history);
     // Отложенный ответ тоже должен отдавать медиа, если человек просил —
     // раньше тут было mediaEnabled=false и фото «пропадало», а другим уходило.
     const mediaEnabled = !!mediaLink && explicitMediaRequest;
@@ -2856,7 +2889,7 @@ async function fireReengage(accountId, peerId) {
     const nft = await getNftCampaignState(accountId, peerId, history.length);
     const suppressNft = shouldSuppressNftForTurn(text, {
       flipPhotoQuestion: false,
-      explicitMediaRequest: isExplicitMediaRequest(text),
+      explicitMediaRequest,
     });
     if (suppressNft) {
       nft.hint = null;
@@ -2955,6 +2988,7 @@ async function fireReengage(accountId, peerId) {
       );
       outText = '';
     }
+    outText = fixUnfulfilledMediaPromise(outText, mediaEnabled ? mediaType : null, text, history);
 
     // «по работе» — только после ответа, отдельным сообщением (maybeSendWorkAside).
     const pendingWorkAside = !!nft.sayWorkProblem;
@@ -3444,7 +3478,7 @@ async function processBufferedMessages(
 
     // Явная просьба прислать медиа определяется заранее — она нужна и для
     // приоритета над голосовыми, и для медиа-логики ниже.
-    const explicitMediaRequest = isExplicitMediaRequest(contextualText);
+    const explicitMediaRequest = isExplicitMediaRequest(contextualText, history);
     const mediaLinkEarly =
       typeof settings.media_chat_link === 'string'
         ? settings.media_chat_link.trim()
@@ -3702,6 +3736,13 @@ async function processBufferedMessages(
         `[${accountLabel(accountId)}] Убрал отказной текст перед медиа для ${senderName}: "${outText}"`,
       );
       outText = '';
+    }
+    const promiseFixed = fixUnfulfilledMediaPromise(outText, mediaEnabled ? mediaType : null, contextualText, history);
+    if (promiseFixed !== outText) {
+      console.log(
+        `[${accountLabel(accountId)}] Обещание медиа без отправки для ${senderName}: "${outText}" → "${promiseFixed}"`,
+      );
+      outText = promiseFixed;
     }
 
     // «по работе» — только после ответа, отдельным сообщением (maybeSendWorkAside).

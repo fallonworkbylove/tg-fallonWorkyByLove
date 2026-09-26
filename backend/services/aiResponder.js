@@ -442,6 +442,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Не будь вежливой как сервис: «спасибо» только на настоящий комплимент или подарок, не на «хорошо», «молодец», «понял». ' +
     'Без лести: НЕ «твоё общение всегда радует», «спасибо за компанию», «с тобой приятно общаться». ' +
     'Если он хвастается или сам себя хвалит («разрядил обстановку своим присутствием») — подколи по-доброму («ну прям герой)», «скромность украшает)»), а не поддакивай. ' +
+    'БЕЗ общих истин и морали: НЕ «дружба всегда хорошая тема», «для общего развития это полезно», «иногда надо себя подталкивать», «главное - верить в себя». ' +
+    'Реагируй лично — что ТЫ думаешь или чувствуешь, со своей деталью или подколом («ну давай дружить, только чур не душнить)»). ' +
     'Будь живой: иногда сама делись мелочью из своего дня (кофе остыл, опять коробки с переездом, погода, устала) — не повторяй одну и ту же мелочь — не только отвечай на вопросы. ' +
     'Разговорные слова как у живого человека: иногда (примерно каждый 3-й ответ) вставляй одно из «типо», «эм», «ну», «короче», «конечно», «вроде», «кстати», «хз», «блин» — ' +
     'естественно, по одному, не в каждом сообщении и не одно и то же подряд. ' +
@@ -690,7 +692,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const strippedName = fixIgnoredNameQuestion(strippedCall, contextualUserMessage, finalPrompt);
   const strippedAbout = fixIgnoredAboutHerself(strippedName, contextualUserMessage, finalPrompt);
   const strippedMove = fixTemporaryMoveClaim(strippedAbout, contextualUserMessage, history);
-  const strippedPolite = stripRoboticPoliteness(strippedMove, userMessage);
+  const strippedPolite = stripPlatitudes(stripRoboticPoliteness(strippedMove, userMessage));
   const strippedQ = stripHabitualTrailingQuestion(strippedPolite, history, contextualUserMessage);
   const varied = varyTrailingSmile(strippedQ, history);
   const withFiller = maybeAddFillerWord(varied, replyLang, history);
@@ -867,6 +869,30 @@ function stripRoboticPoliteness(reply, userMessage) {
   const out = lines.join('\n').trim();
   if (out) return out;
   return ack ? '<<REACT:👍>>' : reply;
+}
+
+const PLATITUDE_RE =
+  /(всегда\s+(хорош|полезн|важн|приятн|интересн|здоров)\w*|для\s+общего\s+развития|это\s+(очень\s+)?(важно|полезно)(?=[\s,)]|$)|надо\s+себя\s+подталкивать|главное\s*-?\s*(это\s+)?(верить|не\s+сдава|быть\s+собой)|(дружба|общение|спорт|здоровье)\s+(это\s+)?(всегда\s+)?(хорошо|важно|классно))/i;
+
+/**
+ * Вырезает клаузы-банальности («дружба всегда хорошая тема»), если рядом есть
+ * живой текст; целиком банальный ответ не трогаем — пусть лучше так, чем пусто.
+ */
+function stripPlatitudes(reply) {
+  if (!reply || !PLATITUDE_RE.test(String(reply))) return reply;
+  return String(reply)
+    .split('\n')
+    .map((line) => {
+      const tag = (line.match(/^\s*<<Q:[\d,]+>>\s*/) || [''])[0];
+      const clauses = line.slice(tag.length).split(/(?<=[,.;)!?])\s+/);
+      const kept = clauses.filter((c) => !PLATITUDE_RE.test(c));
+      if (!kept.length || kept.length === clauses.length) return line;
+      let text = kept.join(' ').replace(/[,;\s]+$/, '').trim();
+      if (text.replace(/[)\s]/g, '').length < 2) return line;
+      if (text.length < 12 && !/\)$/.test(text)) text += ')';
+      return tag + text;
+    })
+    .join('\n');
 }
 
 const FILLER_START_RU = ['ну ', 'эм, ', 'короче ', 'ну типо ', 'хм, '];
@@ -1481,6 +1507,36 @@ function stripMeetAgreement(reply, userMessage, options = {}) {
   return text.length >= 3 ? text : 'ага)';
 }
 
+const TAIL_Q_WORD =
+  '(?:ты|вам|тебе|тебя|какие|какой|какая|какое|что|чем|как|где|куда|когда|почему|зачем|кто|who|what|why|how|where|you)';
+const TAIL_Q_COMMA_RE = new RegExp(
+  `^(.*[^\\s,]),\\s*(?:[^,?\\s.!)…]+\\s+){0,2}${TAIL_Q_WORD}(?=[\\s?,)]|$)[^,?.!)…\\n]*\\?[)\\s]*$`,
+  'i',
+);
+const TAIL_Q_ANY_RE = new RegExp(`(?:^|[\\s,(])${TAIL_Q_WORD}(?=[\\s?,)]|$)`, 'i');
+
+/**
+ * Срезает только последнее вопросительное предложение/клаузу последней строки.
+ * «Рада, что ты написал, как дела?» → «Рада, что ты написал» (а не «Рада,»).
+ * Если вся строка — вопрос, возвращает то, что было до неё ('' для одной строки).
+ */
+function dropTrailingQuestion(text) {
+  const all = String(text || '').trim();
+  const nl = all.lastIndexOf('\n');
+  const head = nl >= 0 ? all.slice(0, nl + 1) : '';
+  const line = nl >= 0 ? all.slice(nl + 1).trim() : all;
+  if (!/\?[)\s]*$/.test(line)) return all;
+  const tag = (line.match(/^<<Q:[\d,]+>>\s*/) || [''])[0];
+  const body = line.slice(tag.length);
+  const done = (s) => `${head}${tag}${s}`.replace(/[ \t]{2,}/g, ' ').trim();
+  if (!TAIL_Q_ANY_RE.test(body)) return done(body.replace(/\s*\?[)\s]*$/, ''));
+  const comma = body.match(TAIL_Q_COMMA_RE);
+  if (comma && comma[1].trim().length >= 3) return done(comma[1].trim());
+  const sentence = body.match(/^(.*[.!?)…])\s+[^.!?…\n]*\?[)\s]*$/);
+  if (sentence && sentence[1].replace(/[)\s]/g, '').length >= 2) return done(sentence[1].trim());
+  return head.trim();
+}
+
 /**
  * Если последние ответы ассистента уже заканчивались вопросом — срезаем
  * хвостовой вопрос. Зеркальные «а ты откуда / чем занимаешься» режем всегда.
@@ -1514,28 +1570,14 @@ function stripHabitualTrailingQuestion(reply, history, userMessage) {
   // Только что задала вопрос — на его ответ НЕ добивать ещё одним (допрос).
   const lastAssistantHadQ = recent.length > 0 && /\?/.test(recent[recent.length - 1]);
   if (lastAssistantHadQ) {
-    const strippedHard = text
-      .replace(
-        /\s*[.!]?\s*(?:а\s+)?(?:ты|вам|тебе|какие?|что|как|где|когда|почему|зачем|who|what|why|how|where)[^?\n]*\?\s*$/i,
-        '',
-      )
-      .replace(/\s*\?[) ]*$/g, '')
-      .replace(/[ \t]{2,}/g, ' ')
-      .trim();
+    const strippedHard = dropTrailingQuestion(text);
     if (strippedHard.length >= 3) return strippedHard;
     return userQ ? 'поняла)' : 'ага)';
   }
 
   if (!recentHadQ && Math.random() < 0.18) return reply;
 
-  const stripped = text
-    .replace(
-      /\s*[.!]?\s*(?:а\s+)?(?:ты|вам|тебе|какие?|что|как|где|когда|почему|зачем|who|what|why|how|where)[^?\n]*\?\s*$/i,
-      '',
-    )
-    .replace(/\s*\?[) ]*$/g, '')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
+  const stripped = dropTrailingQuestion(text);
 
   if (stripped.length >= 3) return stripped;
   if (!userQ) return 'ага)';
@@ -1608,7 +1650,11 @@ function applyAntiDetectStyle(text) {
     tokens.push(m);
     return `\u0000TOK${tokens.length - 1}\u0000`;
   });
-  result = result.replace(/!+/g, '');
+  // «Приветик! Рада» → «Приветик, рада», а не склейка «Приветик Рада».
+  result = result
+    .replace(/\?!+/g, '?')
+    .replace(/!+([ \t]+)([A-Za-zА-Яа-яЁё])/g, (_, sp, ch) => `,${sp}${ch.toLowerCase()}`)
+    .replace(/!+/g, '');
   // Длинное тире (—) и среднее (–) — типичный след ИИ; в переписке обычно дефис или запятая.
   result = result
     .replace(/\u2014/g, '-') // —
