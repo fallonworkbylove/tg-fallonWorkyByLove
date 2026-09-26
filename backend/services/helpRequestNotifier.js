@@ -507,6 +507,8 @@ function startNotificationBot() {
 // ---------------------------------------------------------------------------
 
 const OPENAI_ALERT_REPEAT_MS = 30 * 60 * 1000;
+// Только админу (@fallonsociapat). По chat_id: username в Telegram меняется.
+const ADMIN_ALERT_CHAT_ID = process.env.ADMIN_ALERT_CHAT_ID || '8588744561';
 const openAiAlert = { active: false, kind: null, sentAt: 0, lost: 0 };
 
 /** 'billing' — кончились кредиты, 'auth' — ключ не принимают, иначе null. */
@@ -523,28 +525,21 @@ function classifyOpenAiError(err) {
   return null;
 }
 
-async function broadcastToSubscribers(text) {
+async function sendAdminAlert(text) {
   if (!TELEGRAM_API) {
     console.error('[helpRequestNotifier] BOT_TOKEN не задан — тревога OpenAI не отправлена.');
     return;
   }
-  await ensureSchema();
-  const [rows] = await db.execute('SELECT DISTINCT chat_id FROM notification_subscribers');
-  if (!rows.length) {
-    console.error('[helpRequestNotifier] Нет подписчиков бота-уведомителя — тревога OpenAI не отправлена.');
-    return;
-  }
-  for (const { chat_id } of rows) {
-    try {
-      const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id, text, parse_mode: 'HTML', disable_web_page_preview: true }),
-      });
-      if (!res.ok) console.error(`[helpRequestNotifier] Тревога OpenAI не ушла ${chat_id}:`, await res.text());
-    } catch (err) {
-      console.error(`[helpRequestNotifier] Тревога OpenAI не ушла ${chat_id}:`, err.message);
-    }
+  const chatId = ADMIN_ALERT_CHAT_ID;
+  try {
+    const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+    });
+    if (!res.ok) console.error(`[helpRequestNotifier] Тревога OpenAI не ушла админу ${chatId}:`, await res.text());
+  } catch (err) {
+    console.error(`[helpRequestNotifier] Тревога OpenAI не ушла админу ${chatId}:`, err.message);
   }
 }
 
@@ -578,7 +573,7 @@ function reportOpenAiFailure(err) {
     `${action}\n\n` +
     `<code>${escapeHtml(String(err?.message || '').slice(0, 200))}</code>`;
   console.error(`[helpRequestNotifier] ${title} — отправляю тревогу.`);
-  broadcastToSubscribers(text).catch((e) =>
+  sendAdminAlert(text).catch((e) =>
     console.error('[helpRequestNotifier] Не удалось отправить тревогу OpenAI:', e.message),
   );
   return true;
@@ -589,7 +584,7 @@ function reportOpenAiRecovered() {
   if (!openAiAlert.active) return;
   const lost = openAiAlert.lost;
   Object.assign(openAiAlert, { active: false, kind: null, sentAt: 0, lost: 0 });
-  broadcastToSubscribers(
+  sendAdminAlert(
     '<b>✅ OpenAI снова работает</b>\n\nИИ опять отвечает собеседникам.' +
       (lost ? `\nЗа время сбоя без ответа осталось: <b>${lost}</b>` : ''),
   ).catch((e) => console.error('[helpRequestNotifier] Не удалось отправить «OpenAI снова работает»:', e.message));
