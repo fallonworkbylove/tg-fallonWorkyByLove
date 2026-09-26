@@ -676,22 +676,23 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // Лениво: helpRequestNotifier сам импортирует aiResponder.
   const notifier = require('./helpRequestNotifier');
   try {
-    try {
-      completion = await openai.chat.completions.create({ ...requestOptions, model: CHAT_MODEL });
-    } catch (err) {
-      // Фолбэк: если основная модель (например, отключённая/удалённая
-      // fine-tuned версия) недоступна, не роняем ответ бота, а пробуем
-      // запасную модель. Срабатывает только когда CHAT_MODEL и FALLBACK_MODEL
-      // реально разные — иначе смысла в повторе нет.
-      if (CHAT_MODEL === FALLBACK_MODEL || notifier.classifyOpenAiError(err)) throw err;
-      console.error(
-        `[openai] Модель "${CHAT_MODEL}" вернула ошибку (${err.message}), пробую запасную "${FALLBACK_MODEL}".`,
-      );
-      usedModel = FALLBACK_MODEL;
-      fellBack = true;
-      completion = await openai.chat.completions.create({ ...requestOptions, model: FALLBACK_MODEL });
-    }
+  try {
+    completion = await openai.chat.completions.create({ ...requestOptions, model: CHAT_MODEL });
   } catch (err) {
+    // Фолбэк: если основная модель (например, отключённая/удалённая
+    // fine-tuned версия) недоступна, не роняем ответ бота, а пробуем
+    // запасную модель. Срабатывает только когда CHAT_MODEL и FALLBACK_MODEL
+    // реально разные — иначе смысла в повторе нет.
+      if (CHAT_MODEL === FALLBACK_MODEL || notifier.classifyOpenAiError(err)) throw err;
+    console.error(
+      `[openai] Модель "${CHAT_MODEL}" вернула ошибку (${err.message}), пробую запасную "${FALLBACK_MODEL}".`,
+    );
+    usedModel = FALLBACK_MODEL;
+    fellBack = true;
+    completion = await openai.chat.completions.create({ ...requestOptions, model: FALLBACK_MODEL });
+  }
+  } catch (err) {
+    notifier.noteOpenAiError(err);
     notifier.reportOpenAiFailure(err);
     throw err;
   }
@@ -1247,17 +1248,17 @@ function buildContextGuard(history, userMessage) {
     if (prev && prev.role === 'assistant') {
       const prevText = String(prev.content || '');
       if (BOT_ASKED_PLACE_RE.test(prevText)) {
-        const answer = burstLines[0] || text.split('\n')[0];
-        const place = String(answer || '')
-          .replace(/[).!…?]+$/g, '')
-          .trim();
-        if (
-          place.length >= 2 &&
-          place.length <= 40 &&
-          !/[?]/.test(place) &&
-          !/(не знаю|хз|фиг|хрен)\b/i.test(place)
-        ) {
-          places.push(place);
+      const answer = burstLines[0] || text.split('\n')[0];
+      const place = String(answer || '')
+        .replace(/[).!…?]+$/g, '')
+        .trim();
+      if (
+        place.length >= 2 &&
+        place.length <= 40 &&
+        !/[?]/.test(place) &&
+        !/(не знаю|хз|фиг|хрен)\b/i.test(place)
+      ) {
+        places.push(place);
         }
       }
       if (BOT_ASKED_JOB_RE.test(prevText)) {

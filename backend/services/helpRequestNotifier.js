@@ -414,11 +414,33 @@ let pollingOffset = 0;
 let pollingActive = false;
 
 async function handleUpdate(update) {
+  const adminMenu = require('./adminMenu');
+  if (update.callback_query) {
+    await adminMenu.handleCallback(TELEGRAM_API, update.callback_query);
+    return;
+  }
+
   const msg = update.message;
   if (!msg || !msg.chat) return;
 
   const chatId = String(msg.chat.id);
   const text = (msg.text || '').trim();
+  const isAdmin = adminMenu.isAdminChat(chatId);
+
+  if (msg.from?.username) {
+    await db
+      .execute('UPDATE users SET username = ? WHERE telegram_user_id = ? AND NOT (username <=> ?)', [
+        msg.from.username,
+        String(msg.from.id),
+        msg.from.username,
+      ])
+      .catch(() => {});
+  }
+
+  if (isAdmin && (text === '/menu' || text === '/admin')) {
+    await adminMenu.sendMenu(TELEGRAM_API, chatId);
+    return;
+  }
 
   if (text === '/start') {
     const [[blocked]] = await db.execute(
@@ -456,6 +478,7 @@ async function handleUpdate(update) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    if (isAdmin) await adminMenu.sendMenu(TELEGRAM_API, chatId);
   } else if (text === '/stop') {
     await db.execute('DELETE FROM notification_subscribers WHERE chat_id = ?', [chatId]);
     await fetch(`${TELEGRAM_API}/sendMessage`, {
@@ -468,7 +491,8 @@ async function handleUpdate(update) {
 
 async function pollOnce() {
   const res = await fetch(
-    `${TELEGRAM_API}/getUpdates?timeout=25&offset=${pollingOffset}`,
+    `${TELEGRAM_API}/getUpdates?timeout=25&offset=${pollingOffset}` +
+      `&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'callback_query']))}`,
   );
   if (!res.ok) throw new Error(`getUpdates HTTP ${res.status}`);
   const data = await res.json();
@@ -499,6 +523,10 @@ function startNotificationBot() {
     console.error('[helpRequestNotifier] Не удалось создать таблицы:', err.message),
   );
 
+  require('./adminMenu')
+    .registerCommands(TELEGRAM_API)
+    .catch((err) => console.error('[helpRequestNotifier] setMyCommands:', err.message));
+
   console.log('[helpRequestNotifier] Бот-уведомитель запущен (long polling).');
 
   const loop = async () => {
@@ -522,6 +550,20 @@ const OPENAI_ALERT_REPEAT_MS = 30 * 60 * 1000;
 // Только админу (@fallonsociapat). По chat_id: username в Telegram меняется.
 const ADMIN_ALERT_CHAT_ID = process.env.ADMIN_ALERT_CHAT_ID || '8588744561';
 const openAiAlert = { active: false, kind: null, sentAt: 0, lost: 0 };
+
+// Счётчики ошибок ответов с момента запуска процесса — для админ-меню.
+const openAiErrors = { since: Date.now(), billing: 0, auth: 0, rate_limit: 0, other: 0, last: null };
+
+function noteOpenAiError(err) {
+  const status = err?.status || err?.response?.status;
+  const kind = classifyOpenAiError(err) || (status === 429 ? 'rate_limit' : 'other');
+  openAiErrors[kind] += 1;
+  openAiErrors.last = { kind, at: Date.now(), message: String(err?.message || '').slice(0, 200) };
+}
+
+function getOpenAiHealth() {
+  return { errors: { ...openAiErrors }, alert: { ...openAiAlert } };
+}
 
 /** 'billing' — кончились кредиты, 'auth' — ключ не принимают, иначе null. */
 function classifyOpenAiError(err) {
@@ -610,6 +652,8 @@ module.exports = {
   reportOpenAiFailure,
   reportOpenAiRecovered,
   classifyOpenAiError,
+  noteOpenAiError,
+  getOpenAiHealth,
   disableAutoreplyForPeer,
   isAutoreplyDisabledForPeer,
   enableAutoreplyForPeer,

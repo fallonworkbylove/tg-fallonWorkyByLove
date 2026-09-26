@@ -5105,6 +5105,7 @@ module.exports = {
   deactivateAccount,
   getActiveClient,
   isActive,
+  accountLabel,
   scanUnansweredDialogs,
   getAccountSettings,
   isWithinWorkingHours,

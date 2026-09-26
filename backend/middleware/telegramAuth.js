@@ -64,7 +64,17 @@ async function findOrCreateUser(tgUser) {
   );
 
   if (rows.length > 0) {
-    return rows[0];
+    const user = rows[0];
+    if ((username && user.username !== username) || (firstName && user.first_name !== firstName)) {
+      await pool.query('UPDATE users SET username = ?, first_name = ? WHERE id = ?', [
+        username || user.username,
+        firstName || user.first_name,
+        user.id,
+      ]);
+      user.username = username || user.username;
+      user.first_name = firstName || user.first_name;
+    }
+    return user;
   }
 
   // Не нашли — создаём нового (balance, account_limit, created_at заполнятся по умолчанию)
