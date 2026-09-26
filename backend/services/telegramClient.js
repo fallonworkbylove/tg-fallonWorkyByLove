@@ -36,6 +36,7 @@ const {
   isRussianConversation,
   detectReplyLanguage,
   extractUserQuestions,
+  describeOwnMedia,
 } = require('./aiResponder');
 const learningDb = require('./learningDb');
 const ragExamples = require('./ragExamples');
@@ -319,6 +320,9 @@ const messageBuffers = new Map();
   // Пока диалог in-flight, новые тексты не дропаем — копятся и обрабатываются
   // одним ответом после завершения текущего (иначе скан потом шлёт «дубль»).
   const pendingAfterInFlight = new Map();
+
+  // Тексты, пришедшие раньше MIN_REPLY_GAP_MS после нашего ответа: ждут конца паузы.
+  const gapRetries = new Map();
 
 // Сколько ждать следующего сообщения перед тем, как ответить (мс).
 // Человек часто пишет мысль несколькими сообщениями с паузами — даём ему
@@ -728,6 +732,11 @@ async function deactivateAccount(accountId) {
   }
   for (const key of pendingAfterInFlight.keys()) {
     if (key.startsWith(prefix)) pendingAfterInFlight.delete(key);
+  }
+  for (const [key, entry] of gapRetries) {
+    if (!key.startsWith(prefix)) continue;
+    clearTimeout(entry.timer);
+    gapRetries.delete(key);
   }
   for (const key of voiceSendInFlight) {
     if (key.startsWith(prefix)) voiceSendInFlight.delete(key);
@@ -1878,6 +1887,66 @@ async function getSentMediaSet(accountId, peerId) {
   return set;
 }
 
+// Описания своих медиа из медиа-чата: ключ `${link}#${msgId}`, считаются один раз.
+const OWN_MEDIA_DESC_PATH = path.join(__dirname, '..', 'media', 'own_media_desc.json');
+const OWN_MEDIA_LABEL = { photo: 'фото', video: 'видео', circle: 'кружок' };
+const OWN_MEDIA_LABEL_GEN = { photo: 'фото', video: 'видео', circle: 'кружка' };
+let ownMediaDescCache = null;
+
+function loadOwnMediaDesc() {
+  if (ownMediaDescCache) return ownMediaDescCache;
+  try {
+    ownMediaDescCache = JSON.parse(fs.readFileSync(OWN_MEDIA_DESC_PATH, 'utf8')) || {};
+  } catch (_) {
+    ownMediaDescCache = {};
+  }
+  return ownMediaDescCache;
+}
+
+async function getOwnMediaDescription(client, item, mediaType, link) {
+  const key = `${link}#${item.id}`;
+  const cache = loadOwnMediaDesc();
+  if (cache[key]) return cache[key];
+  if (!item.msg) return '';
+  let frames = [];
+  // Whisper на беззвучных кружках галлюцинирует («спасибо за просмотр») — звук не берём.
+  const buf = await client.downloadMedia(item.msg, {});
+  if (mediaType === 'photo') {
+    if (buf && buf.length) frames = [buf];
+  } else if (buf && buf.length && buf.length <= MAX_INCOMING_VIDEO_BYTES) {
+    frames = await extractVideoFrameBuffers(buf, 2);
+  }
+  if (!frames.length && mediaType !== 'photo') {
+    try {
+      const thumb = await client.downloadMedia(item.msg, { thumb: 0 });
+      if (thumb && thumb.length) frames = [thumb];
+    } catch (_) {}
+  }
+  const desc = await describeOwnMedia(frames, OWN_MEDIA_LABEL_GEN[mediaType] || 'видео');
+  if (desc) {
+    cache[key] = desc;
+    try {
+      fs.writeFileSync(OWN_MEDIA_DESC_PATH, JSON.stringify(cache, null, 1));
+    } catch (e) {
+      console.error('Не удалось сохранить описания своих медиа:', e.message);
+    }
+  }
+  return desc;
+}
+
+async function ownMediaHistoryTag(client, item, mediaType, link) {
+  let desc = '';
+  try {
+    desc = await Promise.race([
+      getOwnMediaDescription(client, item, mediaType, link),
+      new Promise((resolve) => setTimeout(() => resolve(''), 30000)),
+    ]);
+  } catch (e) {
+    console.error('Не удалось описать своё медиа:', e.message);
+  }
+  return desc ? `${mediaTag(item.id)} {${OWN_MEDIA_LABEL[mediaType] || 'медиа'}: ${desc}}` : mediaTag(item.id);
+}
+
 /**
  * В��бирает и отправляет случайное неотправленное медиа нужного типа из
  * медиа-чата аккаунта. Возвращает true, если медиа реа����ь��о ушло.
@@ -1918,9 +1987,10 @@ async function trySendMedia(
       }
     }
 
-    await saveMessage(accountId, peerId, senderName, 'assistant', mediaTag(item.id));
+    const historyTag = await ownMediaHistoryTag(client, item, mediaType, link);
+    await saveMessage(accountId, peerId, senderName, 'assistant', historyTag);
     console.log(
-      `[${accountLabel(accountId)}] Отправлено медиа (${mediaType}) #${item.id} для ${senderName}.`,
+      `[${accountLabel(accountId)}] Отправлено медиа (${mediaType}) #${item.id} для ${senderName}: ${historyTag}`,
     );
     return true;
   } catch (err) {
@@ -3165,6 +3235,38 @@ async function sendHumanText(client, sender, accountId, peerId, senderName, outT
   );
 }
 
+function scheduleGapRetry(accountId, sender, message, peerId, senderName, text, waitMs) {
+  const key = bufferKey(accountId, peerId);
+  const existing = gapRetries.get(key);
+  if (existing) {
+    if (text && !existing.texts.includes(text)) existing.texts.push(text);
+    existing.sender = sender || existing.sender;
+    existing.message = message || existing.message;
+    existing.senderName = senderName || existing.senderName;
+    return;
+  }
+  const entry = { texts: text ? [text] : [], sender, message, senderName, timer: null };
+  entry.timer = setTimeout(() => {
+    gapRetries.delete(key);
+    const combined = entry.texts.join('\n').trim();
+    if (!combined) return;
+    const buffered = messageBuffers.get(key);
+    if (buffered) {
+      buffered.texts.unshift(...entry.texts);
+      return;
+    }
+    const deferred = deferredDialogs.get(key);
+    if (deferred) {
+      deferred.text = [combined, deferred.text].filter(Boolean).join('\n');
+      return;
+    }
+    processBufferedMessages(accountId, entry.sender, entry.message, peerId, entry.senderName, combined).catch((e) =>
+      console.error(`[${accountLabel(accountId)}] Ошибка отложенного ответа после паузы:`, e.message),
+    );
+  }, waitMs);
+  gapRetries.set(key, entry);
+}
+
 async function processBufferedMessages(
   accountId,
   sender,
@@ -3201,7 +3303,8 @@ async function processBufferedMessages(
     return;
   }
 
-  if (msgId && lastAnsweredMsgId.get(inFlightKey) === msgId) {
+  const answeredBefore = lastAnsweredMsgId.get(inFlightKey);
+  if (msgId && answeredBefore != null && answeredBefore >= msgId) {
     console.log(
       `[${accountLabel(accountId)}] ${senderName}: сообщение #${msgId} уже отвечено — дубль пропускаю.`,
     );
@@ -3212,13 +3315,23 @@ async function processBufferedMessages(
 
   const lastReply = lastReplyAt.get(inFlightKey) || 0;
   if (Date.now() - lastReply < MIN_REPLY_GAP_MS) {
-    console.log(
-      `[${accountLabel(accountId)}] Слишком скоро после предыдущего ответа — пропускаю повторный ответ для ${senderName}.`,
-    );
     processingInFlight.delete(inFlightKey);
-    // Если пришли новые тексты во время gap — всё равно не читаем и не отвечаем сейчас;
-    // скан подхватит непрочитанное позже, когда gap истечёт.
+    // Скан это сообщение уже не подхватит: последним в диалоге стоит наш ответ
+    // (message.out), хотя вопрос пришёл раньше него. Поэтому переносим, а не дропаем.
+    const waitMs = MIN_REPLY_GAP_MS - (Date.now() - lastReply) + 3000 + Math.floor(Math.random() * 6000);
+    scheduleGapRetry(accountId, sender, message, peerId, senderName, text, waitMs);
+    console.log(
+      `[${accountLabel(accountId)}] Слишком скоро после предыдущего ответа — отвечу ${senderName} через ${Math.round(waitMs / 1000)}с.`,
+    );
     return;
+  }
+
+  const waitingGap = gapRetries.get(inFlightKey);
+  if (waitingGap) {
+    clearTimeout(waitingGap.timer);
+    gapRetries.delete(inFlightKey);
+    const extra = waitingGap.texts.filter((t) => t && !String(text).includes(t));
+    if (extra.length) text = [...extra, text].join('\n');
   }
 
   let workMentionClaimed = false;

@@ -242,6 +242,7 @@ function enrichShortFollowUp(history, userMessage) {
 
   const clean = lastAssistant
     .replace(/^\[голосовое:[^\]]+\]\s*/i, '')
+    .replace(/^\[медиа:[^\]]+\]\s*\{([^}]*)\}/i, 'ты прислала $1')
     .replace(/^\[медиа:[^\]]+\]\s*/i, '')
     .replace(/<<(?:PHOTO|VIDEO|CIRCLE|LAUGH)>>/g, '')
     .trim();
@@ -264,7 +265,7 @@ function collectAssistantGeoFacts(history, limit = 4) {
     if (item?.role !== 'assistant') continue;
     let text = String(item.content || '')
       .replace(/^\[голосовое:[^\]]+\]\s*/i, '')
-      .replace(/^\[медиа:[^\]]+\]\s*/i, '')
+      .replace(/^\[медиа:[^\]]+\]\s*(\{[^}]*\})?\s*/i, '')
       .replace(/<<(?:PHOTO|VIDEO|CIRCLE|LAUGH)>>/g, '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -438,6 +439,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'На медиа которое ОН уже прислал — реагируй на содержимое, НЕ пиши «покажи». ' +
     'Почти без эмодзи. Иногда только <<REACT:эмодзи>> без текста. ' +
     'На прямой вопрос — короткий ответ БЕЗ зеркального «а ты?». ' +
+    'Не будь вежливой как сервис: «спасибо» только на настоящий комплимент или подарок, не на «хорошо», «молодец», «понял». ' +
+    'Без лести: НЕ «твоё общение всегда радует», «спасибо за компанию», «с тобой приятно общаться». ' +
+    'Если он хвастается или сам себя хвалит («разрядил обстановку своим присутствием») — подколи по-доброму («ну прям герой)», «скромность украшает)»), а не поддакивай. ' +
+    'Будь живой: иногда сама делись мелочью из своего дня (кофе остыл, опять коробки с переездом, погода, устала) — не повторяй одну и ту же мелочь — не только отвечай на вопросы. ' +
     'Разговорные слова как у живого человека: иногда (примерно каждый 3-й ответ) вставляй одно из «типо», «эм», «ну», «короче», «конечно», «вроде», «кстати», «хз», «блин» — ' +
     'естественно, по одному, не в каждом сообщении и не одно и то же подряд. ' +
     'Реакции: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
@@ -619,6 +624,14 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     messages.push({ role: 'system', content: multiQuestionHint });
   }
   const maxReplyLines = userQuestions.length >= 2 ? Math.min(3, userQuestions.length) : 1;
+  const shortAckHint = buildShortAckHint(userMessage);
+  if (shortAckHint) {
+    messages.push({ role: 'system', content: shortAckHint });
+  }
+  const ownMediaHint = buildOwnMediaHint(history);
+  if (ownMediaHint) {
+    messages.push({ role: 'system', content: ownMediaHint });
+  }
 
   for (const h of history || []) {
     if (!h || !h.content) continue;
@@ -677,7 +690,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const strippedName = fixIgnoredNameQuestion(strippedCall, contextualUserMessage, finalPrompt);
   const strippedAbout = fixIgnoredAboutHerself(strippedName, contextualUserMessage, finalPrompt);
   const strippedMove = fixTemporaryMoveClaim(strippedAbout, contextualUserMessage, history);
-  const strippedQ = stripHabitualTrailingQuestion(strippedMove, history, contextualUserMessage);
+  const strippedPolite = stripRoboticPoliteness(strippedMove, userMessage);
+  const strippedQ = stripHabitualTrailingQuestion(strippedPolite, history, contextualUserMessage);
   const varied = varyTrailingSmile(strippedQ, history);
   const withFiller = maybeAddFillerWord(varied, replyLang, history);
   return clipOverlongReply(withFiller, maxReplyLines);
@@ -782,6 +796,77 @@ function fixTemporaryMoveClaim(reply, userMessage, history) {
     .split('\n')
     .map((line) => (TEMP_MOVE_RE.test(line) ? permanent : line))
     .join('\n');
+}
+
+const SHORT_ACK_RE =
+  /^(хорошо|хоршо|ок|окей|оке|окэй|ok|ладно|лан|понятно|понятненько|ясно|ясненько|пон|понял|поняла|норм|нормально|молодец|молодчина|умница|красава|красавица|класс|круто|супер|отлично|ага|угу|ну\s+да|да|ну\s+ок|ну\s+ладно|бывает|ну\s+бывает|прикольно|ааа|а+\s*понятно)[\s).!👍😊🙂☺️❤️]*$/i;
+
+function bareUserText(userMessage) {
+  return String(userMessage || '')
+    .replace(/^\[[^\]]*\]:\s*/g, '')
+    .replace(/\n?\[(?:Ответ на сообщение|ответ на)[^\]]*\]/gi, '')
+    .trim();
+}
+
+function isShortAck(userMessage) {
+  const lines = bareUserText(userMessage).split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.length > 0 && lines.every((l) => SHORT_ACK_RE.test(l));
+}
+
+function buildShortAckHint(userMessage) {
+  if (!isShortAck(userMessage)) return null;
+  const said = bareUserText(userMessage).replace(/\s+/g, ' ').slice(0, 40);
+  return (
+    `Он ответил коротким «${said}» — это не вопрос и не комплимент, за это не благодарят. ` +
+    'ЗАПРЕЩЕНО: «спасибо», «всё нормально», «всё хорошо», «рада что тебе нравится», «стараюсь держаться в тонусе». ' +
+    'Как живая девушка: коротко продолжи тему своей деталью (что у тебя сейчас происходит, что делаешь, что бесит/радует), ' +
+    'или подколи его, или переведи на своё («кстати, а я сегодня…»). ' +
+    'Если сказать нечего — только реакция <<REACT:👍>> или <<REACT:😁>> без текста.'
+  );
+}
+
+function buildOwnMediaHint(history) {
+  const recent = (Array.isArray(history) ? history : []).slice(-4);
+  for (let i = recent.length - 1; i >= 0; i -= 1) {
+    const h = recent[i];
+    if (h?.role !== 'assistant') continue;
+    const m = String(h.content || '').match(/^\[медиа:#\d+\]\s*\{([^:}]+):\s*([^}]+)\}/);
+    if (!m) continue;
+    return (
+      `Недавно ты сама отправила ему ${m[1].trim()}, на нём: «${m[2].trim()}». Это снимала ты. ` +
+      'Если он спрашивает «куда идёшь / где ты / что делаешь / что это» — отвечай по этому описанию коротко, от себя ' +
+      '(«да в магаз вышла)», «дома валяюсь»). НЕ пиши «просто кружок, как ты просил» и «я здесь, отвлеклась».'
+    );
+  }
+  return null;
+}
+
+const SYCOPHANT_PHRASE_RE =
+  /[,.;\s]*(спасибо\s+за\s+(компанию|общение|приятное\s+общение|беседу)|(тво[её]|с\s+тобой)\s+общение\s+(всегда\s+)?(радует|приятно)|с\s+тобой\s+(всегда\s+)?(приятно|интересно)\s+(общаться|болтать|поговорить)|рада,?\s+что\s+тебе\s+(нравится|понравилось))[).!]*/gi;
+const DUTY_FILLER_ONLY_RE = /^(?:(?:всё|все)\s+(?:нормально|хорошо|ок|норм)|я\s+в\s+порядке)[\s).!]*$/i;
+
+/**
+ * Дежурная вежливость колл-центра: «спасибо» на «хорошо/молодец»,
+ * «спасибо за компанию», «твоё общение всегда радует».
+ */
+function stripRoboticPoliteness(reply, userMessage) {
+  if (!reply) return reply;
+  const ack = isShortAck(userMessage);
+  const lines = String(reply)
+    .split('\n')
+    .map((line) => {
+      const tag = (line.match(/^\s*<<Q:[\d,]+>>\s*/) || [''])[0];
+      let body = line.slice(tag.length).replace(SYCOPHANT_PHRASE_RE, '').trim();
+      if (ack) body = body.replace(/^спасибо[\s,!.)]*/i, '').trim();
+      if (ack && DUTY_FILLER_ONLY_RE.test(body)) body = '';
+      if (!body && tag) return '';
+      body = body.replace(/^[,.;\s]+/, '');
+      return body ? tag + body : '';
+    })
+    .filter((l) => l.replace(/<<[^>]+>>/g, '').trim() || /<<(?:REACT|PHOTO|VIDEO|CIRCLE|LAUGH)/i.test(l));
+  const out = lines.join('\n').trim();
+  if (out) return out;
+  return ack ? '<<REACT:👍>>' : reply;
 }
 
 const FILLER_START_RU = ['ну ', 'эм, ', 'короче ', 'ну типо ', 'хм, '];
@@ -1619,8 +1704,52 @@ async function describeImage(buffer, caption = '') {
   }
 }
 
+/**
+ * Короткое описание СВОЕГО фото/видео/кружка (который отправила ты) —
+ * чтобы на «куда идёшь?» / «где это?» отвечать по содержимому.
+ */
+async function describeOwnMedia(frames, kindLabel, transcript = '') {
+  const images = (frames || []).filter((f) => f && f.length).slice(0, 2);
+  if (!images.length) return '';
+  try {
+    const completion = await mediaClient.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 70,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                `Это кадры из твоего ${kindLabel}, который ты (девушка) отправила парню в переписке. ` +
+                'Одной короткой фразой до 15 слов, от первого лица, опиши где ты и что делаешь: ' +
+                '«иду вечером по улице, в куртке», «сижу дома на кровати в худи», «еду в машине». ' +
+                'Без оценок и без слов «на кадре/на видео».' +
+                (transcript ? ` На видео звучит: «${transcript.slice(0, 200)}».` : ''),
+            },
+            ...images.map((buf) => ({
+              type: 'image_url',
+              image_url: { url: `data:image/jpeg;base64,${buf.toString('base64')}` },
+            })),
+          ],
+        },
+      ],
+    });
+    return (completion.choices[0]?.message?.content || '')
+      .replace(/[{}\[\]\n]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160);
+  } catch (err) {
+    console.error('Ошибка описания своего медиа:', err.message);
+    return '';
+  }
+}
+
 Object.assign(module.exports, {
   generateReply,
+  describeOwnMedia,
   extractUserQuestions,
   transcribeAudio,
   describeImage,
