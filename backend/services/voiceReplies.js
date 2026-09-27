@@ -5,6 +5,7 @@ const { Api } = require('telegram');
 // Папка с голосовыми заготовками (.ogg) и файлом конфигурации триггеров.
 const VOICES_DIR = path.join(__dirname, '..', 'voices');
 const CONFIG_PATH = path.join(VOICES_DIR, 'triggers.json');
+const warnedMissingVoices = new Set();
 
 /**
  * Читает конфигурацию триггеров из voices/triggers.json.
@@ -106,9 +107,12 @@ function findVoiceForText(text) {
       return { filePath, fileName: rule.file, voiceOnly: rule.voiceOnly === true };
     }
 
-    console.error(
-      `Голосовая заготовка "${rule.file}" указана в triggers.json, но файл не найден в папке voices/.`,
-    );
+    if (!warnedMissingVoices.has(rule.file)) {
+      warnedMissingVoices.add(rule.file);
+      console.error(
+        `Голосовая заготовка "${rule.file}" указана в triggers.json, но файл не найден в папке voices/.`,
+      );
+    }
   }
 
   return null;

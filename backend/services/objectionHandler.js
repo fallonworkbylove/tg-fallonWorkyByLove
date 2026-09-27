@@ -438,7 +438,9 @@ async function resolveArchiveEntity(client, peerId, peerUsername) {
 
 async function archiveSilentDialogs() {
   try {
-    const { getActiveClient, archivePeer } = require('./telegramClient');
+    const { getActiveClient, archivePeer, loadArchiveFlags, isFloodError } = require('./telegramClient');
+    const flagsByAccount = new Map();
+    const floodedAccounts = new Set();
     // Собеседник не писал двое суток — сразу в архив, без текстовых пингов.
     const [rows] = await db.execute(`
       SELECT
@@ -453,11 +455,25 @@ async function archiveSilentDialogs() {
     `);
 
     for (const row of rows) {
+      const accountKey = String(row.account_id);
+      if (floodedAccounts.has(accountKey)) continue;
       try {
         const client = getActiveClient(row.account_id);
         if (!client) continue;
 
-        const entity = await resolveArchiveEntity(client, row.peer_id, row.peer_username);
+        if (!flagsByAccount.has(accountKey)) {
+          flagsByAccount.set(accountKey, await loadArchiveFlags(client).catch(() => null));
+        }
+        const flags = flagsByAccount.get(accountKey);
+        // Без снимка диалогов не архивируем вслепую: поиск по одному чату дёргает GetDialogs.
+        if (!flags) continue;
+        const peerKey = String(row.peer_id);
+        const state = flags.get(peerKey);
+        if (state === true) continue;
+        if (state === undefined && flags.complete) continue;
+
+        const entity = flags.entities?.get(peerKey)
+          || (await resolveArchiveEntity(client, row.peer_id, row.peer_username));
         if (await archivePeer(client, entity)) {
           console.log(
             `[Аккаунт ${row.account_id}] Диалог ${row.peer_username || row.peer_id} ` +
@@ -469,6 +485,7 @@ async function archiveSilentDialogs() {
           `[Аккаунт ${row.account_id}] Не удалось архивировать ${row.peer_username || row.peer_id}:`,
           err.message,
         );
+        if (isFloodError(err)) floodedAccounts.add(accountKey);
       }
     }
   } catch (err) {

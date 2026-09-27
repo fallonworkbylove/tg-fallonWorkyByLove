@@ -634,7 +634,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   if (multiQuestionHint) {
     messages.push({ role: 'system', content: multiQuestionHint });
   }
-  const maxReplyLines = userQuestions.length >= 2 ? Math.min(3, userQuestions.length) : 1;
+  const incomingLines = bareUserText(userMessage).split('\n').filter((l) => l.trim()).length;
+  // Длинная анкета о себе + «а ты?» — реакция и ответ про себя, двумя строками.
+  const maxReplyLines =
+    userQuestions.length >= 2 ? Math.min(3, userQuestions.length) : userQuestions.length === 1 && incomingLines >= 3 ? 2 : 1;
   const shortAckHint = buildShortAckHint(userMessage);
   if (shortAckHint) {
     messages.push({ role: 'system', content: shortAckHint });
@@ -642,6 +645,16 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const ownMediaHint = buildOwnMediaHint(history);
   if (ownMediaHint) {
     messages.push({ role: 'system', content: ownMediaHint });
+  }
+  const pokeFollowUpHint = buildPokeFollowUpHint(history, userMessage);
+  if (pokeFollowUpHint) {
+    messages.push({ role: 'system', content: pokeFollowUpHint });
+  }
+  if (greetedRecently(history)) {
+    messages.push({
+      role: 'system',
+      content: 'Вы уже поздоровались недавно — НЕ начинай ответ с «привет», «приветик», «доброе утро» и т.п., сразу по делу.',
+    });
   }
   const dayDetailsHint = replyLang === 'ru' ? buildDayDetailsHint(options.accountId, userMessage, history) : null;
   if (dayDetailsHint) {
@@ -704,22 +717,144 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // бота при сбое логирования.
   logUsage(usedModel, completion.usage, { fellBack }).catch(() => {});
 
-  const rawText = completion.choices[0]?.message?.content?.trim() || '';
-  const cleaned = applyAntiDetectStyle(convertQuestionTags(rawText));
-  const strippedFacts = stripReaskedKnownFacts(cleaned, contextGuard);
-  const strippedStay = stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
-  const strippedBot = humanizeBotAccusationReply(strippedStay, history, contextualUserMessage);
-  const strippedMeet = stripMeetAgreement(strippedBot, contextualUserMessage, options);
-  const strippedCall = stripVideoCallAgreement(strippedMeet, contextualUserMessage, options);
-  const strippedName = fixIgnoredNameQuestion(strippedCall, contextualUserMessage, finalPrompt);
-  const strippedAbout = fixIgnoredAboutHerself(strippedName, contextualUserMessage, finalPrompt);
-  const strippedMove = fixTemporaryMoveClaim(strippedAbout, contextualUserMessage, history);
-  const strippedPolite = replaceDesignerClaims(stripPlatitudes(stripRoboticPoliteness(strippedMove, userMessage)));
-  const strippedQ = stripHabitualTrailingQuestion(strippedPolite, history, contextualUserMessage);
-  const varied = varyTrailingSmile(strippedQ, history);
-  const withFiller = fixMisplacedFiller(maybeAddFillerWord(varied, replyLang, history));
-  const gendered = fixFemaleSelfForms(russifyUkrainian(withFiller));
-  return stripDanglingTail(clipOverlongReply(gendered, maxReplyLines));
+  const finalize = (rawText) => {
+    const cleaned = applyAntiDetectStyle(convertQuestionTags(rawText));
+    const strippedFacts = stripReaskedKnownFacts(cleaned, contextGuard);
+    const strippedStay = stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
+    const strippedBot = humanizeBotAccusationReply(strippedStay, history, contextualUserMessage);
+    const strippedMeet = stripMeetAgreement(strippedBot, contextualUserMessage, options);
+    const strippedCall = stripVideoCallAgreement(strippedMeet, contextualUserMessage, options);
+    const strippedName = fixIgnoredNameQuestion(strippedCall, contextualUserMessage, finalPrompt);
+    const strippedAbout = fixIgnoredAboutHerself(strippedName, contextualUserMessage, finalPrompt);
+    const strippedMove = fixTemporaryMoveClaim(strippedAbout, contextualUserMessage, history);
+    const strippedPolite = replaceDesignerClaims(stripPlatitudes(stripRoboticPoliteness(strippedMove, userMessage)));
+    const strippedQ = stripHabitualTrailingQuestion(strippedPolite, history, contextualUserMessage);
+    const varied = varyTrailingSmile(strippedQ, history);
+    const withFiller = fixMisplacedFiller(maybeAddFillerWord(varied, replyLang, history));
+    const gendered = fixFemaleSelfForms(russifyUkrainian(withFiller));
+    const clipped = stripDanglingTail(clipOverlongReply(gendered, maxReplyLines));
+    const noRepeatGreeting = stripRepeatGreeting(clipped, history);
+    // Ответ был одним приветствием, а мы уже здоровались — реакция вместо второго «привет)».
+    if (clipped.trim() && !noRepeatGreeting.trim()) return `<<REACT:${['❤', '🥰', '😁'][Math.floor(Math.random() * 3)]}>>`;
+    return noRepeatGreeting;
+  };
+
+  let result = finalize(completion.choices[0]?.message?.content?.trim() || '');
+  if (isVerbatimRepeat(result, history)) {
+    try {
+      const retryMessages = [
+        ...messages.slice(0, -1),
+        { role: 'system', content: `Ты уже писала ему дословно «${result}». Не повторяйся — ответь иначе, своими словами.` },
+        messages[messages.length - 1],
+      ];
+      const retry = await openai.chat.completions.create({
+        ...requestOptions,
+        messages: retryMessages,
+        temperature: 0.95,
+        model: usedModel,
+      });
+      logUsage(usedModel, retry.usage, { fellBack }).catch(() => {});
+      const alt = finalize(retry.choices[0]?.message?.content?.trim() || '');
+      if (alt && !isVerbatimRepeat(alt, history)) result = alt;
+    } catch (_) {
+      // повтор лучше, чем тишина
+    }
+  }
+  return result;
+}
+
+// «Привет) …», «доброе утро) …», «Привет, Рома) …» в начале ответа. «Доброй ночи» — прощание, не трогаем.
+const LEADING_GREETING_RE =
+  /^(?:(?:ну|хех|ой|о)\s+)?(?:приве+т(?:ик[иа]?|ствую)?|прив|хай|хэй|здравствуй(?:те)?|здарова|добр(?:ое|ый|ого)(?:\s+(?:утр[оа]|утречко|день|дня|вечер|вечера))?|утро\s+доброе|с\s+добрым\s+утром)(?![а-яё])(?:\s+(?:снова|ещё\s+раз|еще\s+раз|опять))?/iu;
+// Регистрозависимо: «Привет, Рома)» — имя, «Приветик, просто…» — уже текст.
+const GREETING_NAME_RE = /^\s*,\s*[А-ЯЁA-Z][а-яёa-z]+(?![а-яёa-z])/u;
+const GREETING_TAIL_RE = /^[\s,!.)*]*(?:[\p{Extended_Pictographic}\uFE0F]+\s*)*/u;
+
+/** Длина приветствия в начале строки (0 — его нет). */
+function leadingGreetingLength(text) {
+  const m = String(text || '').match(LEADING_GREETING_RE);
+  if (!m || !m[0].trim()) return 0;
+  let len = m[0].length;
+  const rest = text.slice(len);
+  const name = rest.match(GREETING_NAME_RE);
+  if (name) len += name[0].length;
+  return len + text.slice(len).match(GREETING_TAIL_RE)[0].length;
+}
+const REPEAT_GREETING_ANY_BOT_MS = 2 * 3600 * 1000;
+const REPEAT_GREETING_BOT_GREETED_MS = 12 * 3600 * 1000;
+
+function historyAgeMs(h) {
+  const t = h?.created_at ? new Date(h.created_at).getTime() : NaN;
+  return Number.isFinite(t) ? Date.now() - t : Infinity;
+}
+
+function greetedRecently(history) {
+  for (const h of Array.isArray(history) ? history : []) {
+    if (h?.role !== 'assistant') continue;
+    const age = historyAgeMs(h);
+    if (age < REPEAT_GREETING_ANY_BOT_MS) return true;
+    if (age >= REPEAT_GREETING_BOT_GREETED_MS) continue;
+    if (leadingGreetingLength(String(h.content || '').trim())) return true;
+  }
+  return false;
+}
+
+/**
+ * Уже здоровалась (или только что переписывались) — второе «привет)» за пару минут
+ * выдаёт бота. Срезаем приветствие; если кроме него ничего не было — пустая строка.
+ */
+function stripRepeatGreeting(reply, history) {
+  const text = String(reply || '');
+  if (!text.trim() || !greetedRecently(history)) return text;
+  const lines = text.split('\n');
+  const idx = lines.findIndex((l) => l.trim());
+  const line = lines[idx];
+  const tag = (line.match(/^\s*(?:<<Q:[\d,]+>>\s*)?/) || [''])[0];
+  const body = line.slice(tag.length);
+  const len = leadingGreetingLength(body);
+  if (!len) return text;
+  const rest = body.slice(len).trim();
+  if (rest) {
+    lines[idx] = `${tag}${rest}`;
+  } else {
+    lines.splice(idx, 1);
+  }
+  return lines.join('\n').trim();
+}
+
+const POKE_FOLLOWUP_RE =
+  /^(?:а|аа|что|чё|че|чего|что\s+такое|что\s+случилось|что\s+хотела|да|ну|м+|слушаю|тут|я\s+тут|ку|\?+)[\s?!.)]*$/i;
+
+/** Бот сам написал «ты где)», он отозвался «Что?» — нужно сказать что-то по делу, а не «жду ответ». */
+function buildPokeFollowUpHint(history, userMessage) {
+  const bare = bareUserText(userMessage).trim();
+  if (!POKE_FOLLOWUP_RE.test(bare)) return null;
+  const list = Array.isArray(history) ? history : [];
+  const last = list[list.length - 1];
+  if (!last || last.role !== 'assistant') return null;
+  const said = String(last.content || '').trim();
+  if (!said || /^\[/.test(said) || said.split(/\s+/).length > 7) return null;
+  return (
+    `Ты сама написала ему «${said}», а он отозвался «${bare}» — ждёт, что ты скажешь. ` +
+    'НЕ отвечай «просто жду ответ», «да, слушаю», «ничего», «просто так», «хотела написать». ' +
+    'Скажи что-то конкретное: мелочь из своего дня или живой вопрос про него (чем занят, как день).'
+  );
+}
+
+function normalizeForRepeat(text) {
+  return String(text || '')
+    .replace(/<<[^>]+>>/g, '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я0-9]+/gi, ' ')
+    .trim();
+}
+
+function isVerbatimRepeat(reply, history) {
+  const norm = normalizeForRepeat(reply);
+  if (!norm) return false;
+  const recentBot = (Array.isArray(history) ? history : []).filter((h) => h?.role === 'assistant').slice(-8);
+  return recentBot.some((h) => normalizeForRepeat(h.content) === norm);
 }
 
 const THANKS_OR_COMPLIMENT_LINE_RE =
@@ -908,7 +1043,7 @@ function russifyUkrainian(text) {
 }
 
 const QUESTION_START_RE =
-  /^(?:(?:а|и|или|ну|так|кстати|слушай)\s+)?(?:как|где|куда|откуда|от\s*куда|почему|зачем|что|чем|чего|какой|какая|какое|какие|каком|какого|когда|кто|сколько|надолго|(?:в|на|из|с|у|по)\s+(?:каком|какой|каких|какую|какого|чём|чем)|ты\s+(?:из|не|где|как|сама|одна|уже|ещё|еще|давно|тоже)|а\s+ты|будешь|можно|есть\s+ли|how|where|what|why|when|who|are\s+you|do\s+you)(?=[\s?,.!)]|$)/i;
+  /^(?:(?:а|и|или|ну|так|кстати|слушай)\s+)?(?:как|где|куда|откуда|от\s*куда|почему|зачем|что|чем|чего|какой|какая|какое|какие|каком|какого|когда|кто|сколько|надолго|(?:в|на|из|с|у|по)\s+(?:каком|какой|каких|какую|какого|чём|чем)|ты\s+(?:из|не|где|как|сама|одна|уже|ещё|еще|давно|тоже)|а\s+ты|будешь|можно|есть\s+ли|расскажи|расскажешь|поделись|опиши|how|where|what|why|when|who|are\s+you|do\s+you|tell\s+me)(?=[\s?,.!)]|$)/i;
 
 /**
  * Вопросы из входящего (серия сообщений склеена через \n).
@@ -1043,10 +1178,18 @@ function buildOwnMediaHint(history) {
     if (h?.role !== 'assistant') continue;
     const m = String(h.content || '').match(/^\[медиа:#\d+\]\s*\{([^:}]+):\s*([^}]+)\}/);
     if (!m) continue;
+    const desc = m[2].trim();
+    const shotAtDay = /снято днём/.test(desc);
+    const mskHour = (new Date().getUTCHours() + 3) % 24;
+    const lateNow = mskHour >= 20 || mskHour < 7;
     return (
-      `Недавно ты сама отправила ему ${m[1].trim()}, на нём: «${m[2].trim()}». Это снимала ты. ` +
+      `Недавно ты сама отправила ему ${m[1].trim()}, на нём: «${desc}». Это снимала ты. ` +
       'Если он спрашивает «куда идёшь / где ты / что делаешь / что это» — отвечай по этому описанию коротко, от себя ' +
-      '(«да в магаз вышла)», «дома валяюсь»). НЕ пиши «просто кружок, как ты просил» и «я здесь, отвлеклась».'
+      '(«да в магаз вышла)», «дома валяюсь»). НЕ пиши «просто кружок, как ты просил» и «я здесь, отвлеклась». ' +
+      (shotAtDay && lateNow
+        ? 'Сейчас поздно и на улице темно, а это снято днём: если он замечает, что там светло, честно скажи, что записывала днём. ' +
+          'НЕ выдумывай, что сейчас светло или что «хорошая погода».'
+        : 'Если он удивляется, что там светло или темно, — значит записывала раньше, так и скажи; не выдумывай погоду.')
     );
   }
   return null;
@@ -1863,9 +2006,12 @@ function clipOverlongReply(reply, maxLines = 1) {
     if (cut.length > 1) return cut[0];
     return line.slice(0, 140).replace(/\s+\S*$/, '').trim();
   };
-  // Несколько вопросов — по строке на ответ; иначе только первая строка (не список)
+  // Несколько вопросов — по строке на ответ; иначе только первая строка (не список).
+  // Первая строка — голая реакция («О, круто)») — вторую не режем, в ней обычно суть.
   const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  text = lines.slice(0, Math.max(1, maxLines)).map(clipLine).join('\n');
+  const firstBare = (lines[0] || '').replace(/\u0000TOK\d+\u0000/g, '').trim();
+  const shortLead = lines.length > maxLines && firstBare.length <= 25 && firstBare.split(/\s+/).length <= 4;
+  text = lines.slice(0, Math.max(1, maxLines) + (shortLead ? 1 : 0)).map(clipLine).join('\n');
   text = text.replace(/\u0000TOK(\d+)\u0000/g, (_, i) => tokens[Number(i)] || '');
   return text.trim();
 }
@@ -2037,9 +2183,49 @@ async function describeOwnMedia(frames, kindLabel, transcript = '') {
   }
 }
 
+/**
+ * Свет на своём медиа: 'day' — улица/окно при дневном свете, 'dark' — вечер/ночь,
+ * 'indoor' — помещение без дневного света. '' если не удалось.
+ */
+async function classifyOwnMediaLight(frames) {
+  const images = (frames || []).filter((f) => f && f.length).slice(0, 1);
+  if (!images.length) return '';
+  try {
+    const completion = await mediaClient.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 5,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                'Кадр из видео/фото. Ответь ОДНИМ словом: ' +
+                'ДЕНЬ — видно дневной свет (улица днём, светлое небо, солнце, светлое окно); ' +
+                'ТЕМНО — вечер или ночь, темно, фонари, тёмное окно; ' +
+                'ПОМЕЩЕНИЕ — в помещении при лампе, дневного света не видно.',
+            },
+            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${images[0].toString('base64')}` } },
+          ],
+        },
+      ],
+    });
+    const answer = String(completion.choices[0]?.message?.content || '').toUpperCase();
+    if (answer.includes('ДЕН')) return 'day';
+    if (answer.includes('ТЕМН')) return 'dark';
+    if (answer.includes('ПОМЕЩ')) return 'indoor';
+    return '';
+  } catch (err) {
+    console.error('Ошибка определения света на медиа:', err.message);
+    return '';
+  }
+}
+
 Object.assign(module.exports, {
   generateReply,
   describeOwnMedia,
+  classifyOwnMediaLight,
   extractUserQuestions,
   transcribeAudio,
   describeImage,

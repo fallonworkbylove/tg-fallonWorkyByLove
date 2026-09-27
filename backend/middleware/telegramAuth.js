@@ -78,14 +78,16 @@ async function findOrCreateUser(tgUser) {
   }
 
   // Не нашли — создаём нового (balance, account_limit, created_at заполнятся по умолчанию)
-  const [result] = await pool.query(
-    'INSERT INTO users (telegram_user_id, username, first_name) VALUES (?, ?, ?)',
+  // Мини-апп при открытии шлёт несколько запросов разом — второй не должен падать на дубле.
+  await pool.query(
+    `INSERT INTO users (telegram_user_id, username, first_name) VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE telegram_user_id = telegram_user_id`,
     [telegramId, username, firstName],
   );
 
   const [newRows] = await pool.query(
-    'SELECT * FROM users WHERE id = ? LIMIT 1',
-    [result.insertId],
+    'SELECT * FROM users WHERE telegram_user_id = ? LIMIT 1',
+    [telegramId],
   );
 
   return newRows[0];

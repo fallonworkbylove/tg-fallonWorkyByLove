@@ -37,6 +37,7 @@ const {
   detectReplyLanguage,
   extractUserQuestions,
   describeOwnMedia,
+  classifyOwnMediaLight,
 } = require('./aiResponder');
 const learningDb = require('./learningDb');
 const ragExamples = require('./ragExamples');
@@ -1221,10 +1222,9 @@ const WORK_PROBLEM_PHRASES_EN = [
 // Живая инициатива перед «по работе», чтобы не кидать проблему в пустоту.
 const WORK_LEAD_IN_POKE_RU = [
   'ты как там)',
-  'ку',
-  'эей',
-  'ну что ты',
-  'хех привет)',
+  'как день проходит?',
+  'чем занимаешься?',
+  'ну что ты там)',
 ];
 const WORK_LEAD_IN_POKE_EN = [
   'hey',
@@ -1335,15 +1335,57 @@ function rememberArchiveFlags(dialogs, flags) {
   for (const dialog of dialogs) {
     if (!dialog.isUser || !dialog.entity || dialog.entity.bot || dialog.entity.self) continue;
     flags.set(String(dialog.entity.id), !!dialog.archived);
+    flags.entities.set(String(dialog.entity.id), dialog.entity);
   }
 }
 
+// Полный обход диалогов — десятки GetDialogs; минутные джобы делят один снимок,
+// иначе Telegram отвечает FLOOD_WAIT и тормозит обычные ответы.
+const ARCHIVE_FLAGS_TTL_MS = 3 * 60 * 1000;
+const archiveFlagsCache = new WeakMap();
+
 async function loadArchiveFlags(client) {
-  const flags = new Map();
-  const { dialogs, complete } = await listUserDialogs(client);
-  rememberArchiveFlags(dialogs, flags);
-  flags.complete = complete;
-  return flags;
+  const cached = archiveFlagsCache.get(client);
+  if (cached?.promise) return cached.promise;
+  if (cached?.flags && Date.now() - cached.at < ARCHIVE_FLAGS_TTL_MS) return cached.flags;
+
+  const promise = (async () => {
+    const flags = new Map();
+    flags.entities = new Map();
+    const { dialogs, complete } = await listUserDialogs(client);
+    rememberArchiveFlags(dialogs, flags);
+    flags.complete = complete;
+    flags.dialogs = dialogs;
+    return flags;
+  })();
+  archiveFlagsCache.set(client, { ...cached, promise });
+  try {
+    const flags = await promise;
+    archiveFlagsCache.set(client, { at: Date.now(), flags });
+    return flags;
+  } catch (err) {
+    if (cached?.flags) archiveFlagsCache.set(client, { at: cached.at, flags: cached.flags });
+    else archiveFlagsCache.delete(client);
+    throw err;
+  }
+}
+
+function markArchivedInCache(client, peer) {
+  const flags = archiveFlagsCache.get(client)?.flags;
+  const id = peer?.userId ?? peer?.id;
+  if (flags && id != null) flags.set(String(id), true);
+}
+
+// Собеседник запретил голосовые в настройках приватности — больше не пробуем.
+const voiceForbiddenPeers = new Set();
+
+function isVoiceForbiddenError(err) {
+  return /VOICE_MESSAGES_FORBIDDEN/.test(String(err?.errorMessage || err?.message || ''));
+}
+
+function isFloodError(err) {
+  const text = String(err?.errorMessage || err?.message || '');
+  return /FLOOD/i.test(text) || /A wait of \d+ seconds/i.test(text) || Number(err?.seconds) > 0;
 }
 
 function isHiddenFromReplies(flags, peerId) {
@@ -1936,11 +1978,16 @@ function loadOwnMediaDesc() {
   return ownMediaDescCache;
 }
 
-async function getOwnMediaDescription(client, item, mediaType, link) {
-  const key = `${link}#${item.id}`;
-  const cache = loadOwnMediaDesc();
-  if (cache[key]) return cache[key];
-  if (!item.msg) return '';
+function saveOwnMediaDesc(cache) {
+  try {
+    fs.writeFileSync(OWN_MEDIA_DESC_PATH, JSON.stringify(cache, null, 1));
+  } catch (e) {
+    console.error('Не удалось сохранить описания своих медиа:', e.message);
+  }
+}
+
+async function loadOwnMediaFrames(client, item, mediaType) {
+  if (!item.msg) return [];
   let frames = [];
   // Whisper на беззвучных кружках галлюцинирует («спасибо за просмотр») — звук не берём.
   const buf = await client.downloadMedia(item.msg, {});
@@ -1955,17 +2002,107 @@ async function getOwnMediaDescription(client, item, mediaType, link) {
       if (thumb && thumb.length) frames = [thumb];
     } catch (_) {}
   }
+  return frames;
+}
+
+async function getOwnMediaDescription(client, item, mediaType, link) {
+  const key = `${link}#${item.id}`;
+  const cache = loadOwnMediaDesc();
+  if (cache[key]) return cache[key];
+  const frames = await loadOwnMediaFrames(client, item, mediaType);
   const desc = await describeOwnMedia(frames, OWN_MEDIA_LABEL_GEN[mediaType] || 'видео');
   if (desc) {
     cache[key] = desc;
-    try {
-      fs.writeFileSync(OWN_MEDIA_DESC_PATH, JSON.stringify(cache, null, 1));
-    } catch (e) {
-      console.error('Не удалось сохранить описания своих медиа:', e.message);
-    }
+    saveOwnMediaDesc(cache);
   }
   return desc;
 }
+
+// ---------------------------------------------------------------------------
+// Свет на своих медиа: ночью не шлём кружок/фото, снятые при дневном свете
+// (человек сразу видит «у тебя что-то светло там» в полночь).
+// ---------------------------------------------------------------------------
+
+// Восход / закат по МСК для средней полосы, по месяцам (янв..дек).
+const SUNRISE_MSK = [9, 8, 7, 6, 5, 4, 4, 5, 6, 7, 8, 9];
+const SUNSET_MSK = [16, 17, 18, 19, 20, 21, 21, 20, 19, 17, 16, 16];
+const ownMediaLightInFlight = new Map();
+const ownMediaLightWarmup = new Set();
+
+function isDarkOutsideNow(date = new Date()) {
+  const msk = new Date(date.getTime() + 3 * 3600 * 1000);
+  const month = msk.getUTCMonth();
+  const hour = msk.getUTCHours() + msk.getUTCMinutes() / 60;
+  return hour < SUNRISE_MSK[month] || hour >= SUNSET_MSK[month] + 1;
+}
+
+function cachedOwnMediaLight(item, link) {
+  return loadOwnMediaDesc()[`${link}#${item.id}|light`] || null;
+}
+
+async function getOwnMediaLight(client, item, mediaType, link) {
+  const key = `${link}#${item.id}|light`;
+  const known = loadOwnMediaDesc()[key];
+  if (known) return known;
+  if (ownMediaLightInFlight.has(key)) return ownMediaLightInFlight.get(key);
+  const job = (async () => {
+    const frames = await loadOwnMediaFrames(client, item, mediaType);
+    const light = await classifyOwnMediaLight(frames);
+    if (light) {
+      const cache = loadOwnMediaDesc();
+      cache[key] = light;
+      saveOwnMediaDesc(cache);
+    }
+    return light;
+  })().finally(() => ownMediaLightInFlight.delete(key));
+  ownMediaLightInFlight.set(key, job);
+  return job;
+}
+
+/** Фоном размечает свет у всех медиа чата, чтобы ночью было из чего выбрать без задержки. */
+function warmOwnMediaLight(client, accountId, link, items) {
+  const key = `${accountId}:${link}`;
+  if (ownMediaLightWarmup.has(key)) return;
+  const todo = items.filter((i) => !cachedOwnMediaLight(i, link));
+  if (!todo.length) return;
+  ownMediaLightWarmup.add(key);
+  (async () => {
+    for (const item of todo) {
+      if (!getActiveClient(accountId)) break;
+      try {
+        await getOwnMediaLight(client, item, item.type, link);
+      } catch (err) {
+        if (isFloodError(err)) break;
+      }
+      await sleep(4000);
+    }
+  })().finally(() => ownMediaLightWarmup.delete(key));
+}
+
+/** Ночью — только то, что снято в темноте или в помещении. */
+async function filterMediaForDaylight(client, items, mediaType, link, sentIds) {
+  if (!isDarkOutsideNow()) return items;
+  const ofType = items.filter((i) => i.type === mediaType);
+  const ok = ofType.filter((i) => {
+    const light = cachedOwnMediaLight(i, link);
+    return light && light !== 'day';
+  });
+  if (ok.some((i) => !sentIds.has(i.id))) return ok;
+  const unknown = ofType
+    .filter((i) => !cachedOwnMediaLight(i, link) && !sentIds.has(i.id))
+    .sort(() => Math.random() - 0.5)
+    .slice(0, 2);
+  for (const item of unknown) {
+    const light = await Promise.race([
+      getOwnMediaLight(client, item, mediaType, link).catch(() => null),
+      new Promise((resolve) => setTimeout(() => resolve(null), 20000)),
+    ]);
+    if (light && light !== 'day') ok.push(item);
+  }
+  return ok;
+}
+
+const OWN_MEDIA_LIGHT_NOTE = { day: 'снято днём, при дневном свете', dark: 'снято вечером, темно', indoor: 'в помещении' };
 
 async function ownMediaHistoryTag(client, item, mediaType, link) {
   let desc = '';
@@ -1977,6 +2114,8 @@ async function ownMediaHistoryTag(client, item, mediaType, link) {
   } catch (e) {
     console.error('Не удалось описать своё медиа:', e.message);
   }
+  const light = OWN_MEDIA_LIGHT_NOTE[cachedOwnMediaLight(item, link)];
+  if (desc && light) desc = `${desc} (${light})`;
   return desc ? `${mediaTag(item.id)} {${OWN_MEDIA_LABEL[mediaType] || 'медиа'}: ${desc}}` : mediaTag(item.id);
 }
 
@@ -1996,10 +2135,16 @@ async function trySendMedia(
   try {
     const sentIds = await getSentMediaSet(accountId, peerId);
     let record = await getMediaItems(client, accountId, link);
-    let item = pickUnsentMedia(record.items, mediaType, sentIds);
+    warmOwnMediaLight(client, accountId, link, record.items);
+    let item = pickUnsentMedia(
+      await filterMediaForDaylight(client, record.items, mediaType, link, sentIds),
+      mediaType,
+      sentIds,
+    );
     if (!item) {
       console.log(
-        `[${accountLabel(accountId)}] В медиа-чате нет медиа типа "${mediaType}" для ${senderName}.`,
+        `[${accountLabel(accountId)}] Нет подходящего медиа типа "${mediaType}" для ${senderName}` +
+          (isDarkOutsideNow() ? ' (на улице темно, дневные не шлю).' : '.'),
       );
       return false;
     }
@@ -2012,7 +2157,7 @@ async function trySendMedia(
       if (String(e.message || '').includes('FILE_REFERENCE')) {
         clearMediaCache(accountId, link);
         record = await getMediaItems(client, accountId, link);
-        item = pickUnsentMedia(record.items, mediaType, sentIds) || item;
+        item = record.items.find((i) => i.id === item.id) || item;
         const caption = mediaType === 'circle' ? '' : pickCaption(mediaType);
         await sendMediaItem(client, sender, item, caption);
       } else {
@@ -2110,9 +2255,9 @@ function buildHowLongQuestion() {
 }
 
 // Вопрос — 3-м сообщением бота; если в тот ход нельзя (ответ уже с вопросом,
-// голосовое, медиа) — ещё два хода, дальше не спрашиваем.
+// голосовое, медиа, он сам что-то спросил) — ещё несколько ходов, дальше не спрашиваем.
 const HOWLONG_BOT_MSGS_FROM = 2;
-const HOWLONG_BOT_MSGS_TO = 4;
+const HOWLONG_BOT_MSGS_TO = 6;
 // Только новые диалоги: первое сообщение не старше этого.
 const HOWLONG_NEW_DIALOG_HOURS = 48;
 const HOWLONG_ARCHIVE_DAYS = 14;
@@ -2136,7 +2281,7 @@ async function wasHowLongAsked(accountId, peerId) {
 async function getHowLongDialogStats(accountId, peerId) {
   const [rows] = await db.execute(
     `SELECT
-       SUM(role = 'assistant' AND content NOT LIKE '[реакция:%') AS bot_msgs,
+       SUM(role = 'assistant' AND content NOT LIKE '[реакция:%' AND content NOT LIKE '%*') AS bot_msgs,
        TIMESTAMPDIFF(HOUR, MIN(created_at), NOW()) AS age_hours
      FROM conversation_messages
      WHERE account_id = ? AND peer_id = ?`,
@@ -2228,6 +2373,7 @@ async function archivePeer(client, inputPeer) {
       ],
     }),
   );
+  markArchivedInCache(client, peer);
   return true;
 }
 
@@ -3517,6 +3663,7 @@ async function processBufferedMessages(
     // уходило гол��совое вместо кружка.
     let voice =
       explicitMediaRequest && mediaLinkEarly ? null : findVoiceForText(text);
+    if (voice && voiceForbiddenPeers.has(inFlightKey)) voice = null;
 
     // Голосовые файлы на русском — англоязычным / не-RU собеседникам не шлём.
     const allowVoice = isRussianConversation(contextualText || text, history);
@@ -3565,7 +3712,17 @@ async function processBufferedMessages(
       );
       await waitBeforeReply(client, sender, delayMs);
       await markPeerAsRead(client, sender, message);
-      await sendVoiceReply(client, sender, voice.filePath);
+      try {
+        await sendVoiceReply(client, sender, voice.filePath);
+      } catch (err) {
+        if (!isVoiceForbiddenError(err)) throw err;
+        voiceForbiddenPeers.add(inFlightKey);
+        releaseVoiceSlot();
+        console.log(`[${accountLabel(accountId)}] ${senderName} запретил голосовые — отвечаю текстом.`);
+        voice = null;
+      }
+    }
+    if (voice && voice.voiceOnly) {
       if (msgId) lastAnsweredMsgId.set(inFlightKey, msgId);
       lastReplyAt.set(inFlightKey, Date.now());
       await saveMessage(
@@ -3863,23 +4020,29 @@ async function processBufferedMessages(
       }
       await sleep(3000 + Math.random() * 1000);
 
-      await sendVoiceReply(client, sender, voice.filePath);
-      await saveMessage(
-        accountId,
-        peerId,
-        senderName,
-        'assistant',
-        voiceTag(voice.fileName),
-      );
-      console.log(
-        `[${accountLabel(accountId)}] Вслед за ответом отправлена голосовая заготовка для ${senderName}.`,
-      );
+      try {
+        await sendVoiceReply(client, sender, voice.filePath);
+        await saveMessage(
+          accountId,
+          peerId,
+          senderName,
+          'assistant',
+          voiceTag(voice.fileName),
+        );
+        console.log(
+          `[${accountLabel(accountId)}] Вслед за ответом отправлена голосовая заготовка для ${senderName}.`,
+        );
+      } catch (err) {
+        if (!isVoiceForbiddenError(err)) throw err;
+        voiceForbiddenPeers.add(inFlightKey);
+        console.log(`[${accountLabel(accountId)}] ${senderName} запретил голосовые — заготовку пропускаю.`);
+      }
     }
 
     // 8. Третий день знакомства — голосовое с просьбой помочь с NFT-токеном.
     // Отправляем ОДИН раз за весь диалог (метка в истории) и не в тот же ход,
     // когда уже ушло друг��е голосовое или медиа — иначе выглядит ��ак спам.
-    if (nft.sendVoice && !voice && !mediaSentThisTurn) {
+    if (nft.sendVoice && !voice && !mediaSentThisTurn && !voiceForbiddenPeers.has(inFlightKey)) {
       const nftPath = path.join(VOICES_DIR, NFT_VOICE_FILE);
 
       if (!fs.existsSync(nftPath)) {
@@ -3908,7 +4071,12 @@ async function processBufferedMessages(
           // Пауза чуть больше обычной: голосовое длиннее, «записывает» дольше.
           await sleep(4000 + Math.random() * 3000);
 
-          await sendVoiceReply(client, sender, nftPath);
+          try {
+            await sendVoiceReply(client, sender, nftPath);
+          } catch (err) {
+            if (isVoiceForbiddenError(err)) voiceForbiddenPeers.add(inFlightKey);
+            throw err;
+          }
           await saveMessage(
             accountId,
             peerId,
@@ -3948,6 +4116,10 @@ async function processBufferedMessages(
       !nft.sendVoice &&
       !mediaSentThisTurn &&
       !/\?[)\s]*$/.test(stripQuestionTags(outText)) &&
+      // Он о чём-то спросил или дописывает — сначала разговор, вопрос про дв в следующий ход.
+      extractUserQuestions(text).length === 0 &&
+      !pendingAfterInFlight.has(inFlightKey) &&
+      !messageBuffers.has(inFlightKey) &&
       (await shouldAskHowLong(accountId, peerId))
     ) {
       howLongInFlight.add(inFlightKey);
@@ -4370,6 +4542,18 @@ const dailyLifeByAccount = new Map();
 const GREETING_RECENT_DAYS = 3;
 // Максимум приветствий за один перех��д (антифлуд Telegram).
 const GREETING_MAX_DIALOGS = 22;
+const GREETING_SKIP_IF_BOT_WROTE_HOURS = 4;
+
+async function botWroteWithin(accountId, peerId, hours) {
+  const [rows] = await db.execute(
+    `SELECT id FROM conversation_messages
+     WHERE account_id = ? AND peer_id = ? AND role = 'assistant'
+       AND created_at > NOW() - INTERVAL ${Number(hours) * 60} MINUTE
+     LIMIT 1`,
+    [accountId, peerId],
+  );
+  return rows.length > 0;
+}
 
 // Последнее со��тояние «рабочее время?» по аккаунту — для детекта перехода.
 const workStateByAccount = new Map();
@@ -4576,12 +4760,12 @@ function tickDailyLife(accountId) {
 const IDLE_POKE_RU = [
   'ты пропал совсем)',
   'ку, как ты там',
-  'эей',
   'ну что молчишь)',
-  'ау',
   'хех ты где)',
   'скучно без тебя немного)',
   'напиши как там у тебя',
+  'как день проходит?',
+  'я тут коробки разбираю, а ты чем занят?',
 ];
 const IDLE_POKE_EN = [
   'hey you alive?',
@@ -4720,6 +4904,8 @@ async function sendGreetings(accountId, kind, mood) {
       // входящего — только наши рассылки.
       const tail = await getDialogTail(accountId, peerId);
       if (!tail.hasIncoming) continue;
+      // Уже переписывались недавно — «доброе утро / проспала» после свежего ответа звучит как бот.
+      if (kind === 'morning' && (await botWroteWithin(accountId, peerId, GREETING_SKIP_IF_BOT_WROTE_HOURS))) continue;
 
       const senderName = sender.username || sender.firstName || peerId;
       const lang = await resolveGreetingLang(client, sender, message);
@@ -4805,6 +4991,14 @@ async function tickNftWorkMentions(accountId) {
     const settings = await getAccountSettings(accountId);
     if (!settings || !settings.is_autoreply_enabled) return;
     await ensureNftScheduleTable();
+    const [allRows] = await db.execute(
+      `SELECT peer_id, scheduled_at, work_mention_at FROM nft_voice_schedule
+       WHERE account_id = ? AND work_mention_sent = 0`,
+      [accountId],
+    );
+    const now = Date.now();
+    const rows = allRows.filter((row) => isWorkMentionWindow(new Date(row.scheduled_at), now));
+    if (!rows.length) return;
     let archiveFlags;
     try {
       archiveFlags = await loadArchiveFlags(client);
@@ -4815,16 +5009,8 @@ async function tickNftWorkMentions(accountId) {
       );
       return;
     }
-    const [rows] = await db.execute(
-      `SELECT peer_id, scheduled_at, work_mention_at FROM nft_voice_schedule
-       WHERE account_id = ? AND work_mention_sent = 0`,
-      [accountId],
-    );
-    const now = Date.now();
     for (const row of rows) {
       const peerId = String(row.peer_id);
-      const scheduledAt = new Date(row.scheduled_at);
-      if (!isWorkMentionWindow(scheduledAt, now)) continue;
       const ageHours = await getDialogAgeHours(accountId, peerId);
       if (ageHours == null || ageHours < NFT_VOICE_AFTER_HOURS) continue;
       if (isHiddenFromReplies(archiveFlags, peerId)) continue;
@@ -4899,16 +5085,6 @@ async function tickNftDueVoices(accountId) {
     if (!settings || !settings.is_autoreply_enabled) return;
     const nftPath = path.join(VOICES_DIR, NFT_VOICE_FILE);
     if (!fs.existsSync(nftPath)) return;
-    let archiveFlags;
-    try {
-      archiveFlags = await loadArchiveFlags(client);
-    } catch (err) {
-      console.error(
-        `[${accountLabel(accountId)}] Не смог проверить архив — NFT-голосовое не шлю:`,
-        err.errorMessage || err.message,
-      );
-      return;
-    }
 
     const [rows] = await db.execute(
       `SELECT peer_id,
@@ -4923,6 +5099,17 @@ async function tickNftDueVoices(accountId) {
           AND last_user_at >= (NOW() - INTERVAL ${Number(NFT_ACTIVE_DIALOGUE_IDLE_HOURS)} HOUR)`,
       [accountId],
     );
+    if (!rows.length) return;
+    let archiveFlags;
+    try {
+      archiveFlags = await loadArchiveFlags(client);
+    } catch (err) {
+      console.error(
+        `[${accountLabel(accountId)}] Не смог проверить архив — NFT-голосовое не шлю:`,
+        err.errorMessage || err.message,
+      );
+      return;
+    }
 
     let sent = 0;
     for (const row of rows) {
@@ -4930,6 +5117,7 @@ async function tickNftDueVoices(accountId) {
       const peerId = String(row.peer_id);
       const dialogKey = bufferKey(accountId, peerId);
       if (processingInFlight.has(dialogKey) || messageBuffers.has(dialogKey)) continue;
+      if (voiceForbiddenPeers.has(dialogKey)) continue;
       if (await isPeerBlacklisted(accountId, peerId)) continue;
       if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) continue;
       if (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE)) continue;
@@ -4988,6 +5176,7 @@ async function tickNftDueVoices(accountId) {
           `[${accountLabel(accountId)}] Отправлено голосовое про NFT (3-й день) для ${senderName}.`,
         );
       } catch (err) {
+        if (isVoiceForbiddenError(err)) voiceForbiddenPeers.add(dialogKey);
         console.error(
           `[${accountLabel(accountId)}] Не удалось отправить NFT-голосовое ${senderName}:`,
           err.errorMessage || err.message,
@@ -5012,17 +5201,23 @@ async function tickNftDueVoices(accountId) {
 
 const OUR_ONLY_WORK_RE = /проблем[а-яё]*\s+с\s+работ|ау,\s*ты\s*жив|ч[её]\s*молчиш|ты\s*пропал/i;
 const strayArchiveFixInFlight = new Set();
+const REARCHIVE_EVERY_MS = 30 * 60 * 1000;
+const rearchiveLastRun = new Map();
+// Чаты, где собеседник уже отвечал, мёртвыми не станут — историю по ним больше не листаем.
+const aliveDialogPeers = new Map();
 
 async function rearchiveOurOnlyWorkChats(accountId) {
   const key = accountKey(accountId);
   if (strayArchiveFixInFlight.has(key)) return;
+  if (Date.now() - (rearchiveLastRun.get(key) || 0) < REARCHIVE_EVERY_MS) return;
   strayArchiveFixInFlight.add(key);
+  rearchiveLastRun.set(key, Date.now());
   try {
     const client = getActiveClient(accountId);
     if (!client) return;
     let listed;
     try {
-      listed = await listUserDialogs(client);
+      listed = await loadArchiveFlags(client);
     } catch (err) {
       console.error(
         `[${accountLabel(accountId)}] Не смог найти мёртвые чаты:`,
@@ -5030,11 +5225,14 @@ async function rearchiveOurOnlyWorkChats(accountId) {
       );
       return;
     }
+    if (!aliveDialogPeers.has(key)) aliveDialogPeers.set(key, new Set());
+    const alive = aliveDialogPeers.get(key);
 
     for (const dialog of listed.dialogs) {
       if (!dialog.isUser || dialog.archived) continue;
       const entity = dialog.entity;
       if (!entity || entity.bot || entity.self) continue;
+      if (alive.has(String(entity.id))) continue;
 
       let incoming = false;
       let sample = '';
@@ -5047,12 +5245,16 @@ async function rearchiveOurOnlyWorkChats(accountId) {
         if (!texts.length && !isDeletedUser(entity)) continue;
         sample = texts.find((text) => OUR_ONLY_WORK_RE.test(text)) || texts[0] || '';
         incoming = await peerHasIncoming(client, entity);
-      } catch (_) {
+      } catch (err) {
+        if (isFloodError(err)) break;
         continue;
       }
       const deleted = isDeletedUser(entity);
       const dead = deleted || !incoming;
-      if (!dead) continue;
+      if (!dead) {
+        alive.add(String(entity.id));
+        continue;
+      }
 
       const name = entity.username || entity.firstName || String(entity.id);
       const why = deleted ? 'удалённый аккаунт' : 'только наши сообщения';
@@ -5066,6 +5268,7 @@ async function rearchiveOurOnlyWorkChats(accountId) {
           `[${accountLabel(accountId)}] Не удалось добавить мёртвый диалог ${name} в архив:`,
           err.errorMessage || err.message,
         );
+        if (isFloodError(err)) break;
       }
       await sleep(800);
     }
@@ -5117,6 +5320,8 @@ module.exports = {
   retireUnreachablePeer,
   saveMessage,
   archivePeer,
+  loadArchiveFlags,
+  isFloodError,
   NFT_VOICE_AFTER_HOURS,
   getDialogAgeHours,
   conversationIsRussian,
