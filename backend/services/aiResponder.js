@@ -604,6 +604,12 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   if (options.moodHint) {
     messages.push({ role: 'system', content: options.moodHint });
   }
+  if (options.accountMoodHint) {
+    messages.push({ role: 'system', content: options.accountMoodHint });
+  }
+  if (options.personaHint) {
+    messages.push({ role: 'system', content: options.personaHint });
+  }
   if (options.emotionHint) {
     messages.push({ role: 'system', content: options.emotionHint });
   }
@@ -611,8 +617,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     messages.push({ role: 'system', content: options.sessionForgetHint });
   }
 
-  // Memory Triggers: бот сам возвращается к факту, упомянутому собеседником
-  // 1-3 дня назад (питомец, работа, здоровье, город), см. services/memoryTriggers.js.
+  // Memory Triggers: бот сама возвращается к факту / помнит что уже говорила.
+  if (options.memoryContextHint) {
+    messages.push({ role: 'system', content: options.memoryContextHint });
+  }
   if (options.memoryHint) {
     messages.push({ role: 'system', content: options.memoryHint });
   }

@@ -60,6 +60,7 @@ const { isPhotoRecognitionDisabled } = require('./photoRecognitionSettings');
 const timeStyle = require('./timeStyle');
 const moodEngine = require('./moodEngine');
 const memoryTriggers = require('./memoryTriggers');
+const accountPersona = require('./accountPersona');
 const objectionHandler = require('./objectionHandler');
 const complimentEngine = require('./complimentEngine');
 
@@ -3266,6 +3267,8 @@ async function fireReengage(accountId, peerId) {
       return;
     }
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, text);
+    const accountMood = await moodEngine.getMood(accountId);
+    const personaHint = await accountPersona.buildPersonaHint(accountId);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     const liveHistory = await getHistory(accountId, peerId);
     const replyHistory = liveHistory.length ? liveHistory : history;
@@ -3302,6 +3305,9 @@ async function fireReengage(accountId, peerId) {
 
     const emotionHint = buildEmotionHint(replyHistory);
     const sessionForgetHint = buildSessionForgetHint(replyHistory.length <= 4);
+    const memoryContextHint = sessionForgetHint
+      ? null
+      : await memoryTriggers.buildMemoryContextHint(accountId, peerId);
 
     const rawReply = await generateReply(settings.prompt, replyHistory, text, {
       mediaEnabled,
@@ -3313,8 +3319,11 @@ async function fireReengage(accountId, peerId) {
       ragSnippet,
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
+      accountMoodHint: accountMood.hint || null,
+      personaHint,
       emotionHint,
       sessionForgetHint,
+      memoryContextHint,
       memoryHint: sessionForgetHint ? null : useMemoryHint,
       objectionHint,
       complimentHint,
@@ -3611,6 +3620,8 @@ async function sendHumanText(client, sender, accountId, peerId, senderName, outT
   const parsed = parseReplyBubbles(outText);
   const bubbles = parsed.map((b) => b.text);
   outText = bubbles.join('\n');
+  // Запоминаем, что рассказала о себе — для следующих ответов этому человеку.
+  memoryTriggers.extractSelfTold(accountId, peerId, outText).catch(() => {});
   if (bubbles.length > 1) {
     const replyTargets = await resolveReplyTargets(client, sender, parsed, incomingText);
     for (let i = 0; i < bubbles.length; i++) {
@@ -4072,6 +4083,8 @@ async function processBufferedMessages(
       return;
     }
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, contextualText);
+    const accountMood = await moodEngine.getMood(accountId);
+    const personaHint = await accountPersona.buildPersonaHint(accountId);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
     let objectionHint = objectionHandler.detectHint(text, history);
     if (flipPhotoQuestion) {
@@ -4099,6 +4112,9 @@ async function processBufferedMessages(
 
     const emotionHint = buildEmotionHint(history);
     const sessionForgetHint = buildSessionForgetHint(history.length <= 4);
+    const memoryContextHint = sessionForgetHint
+      ? null
+      : await memoryTriggers.buildMemoryContextHint(accountId, peerId);
 
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
@@ -4110,8 +4126,11 @@ async function processBufferedMessages(
       ragSnippet,
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
+      accountMoodHint: accountMood.hint || null,
+      personaHint,
       emotionHint,
       sessionForgetHint,
+      memoryContextHint,
       memoryHint: sessionForgetHint ? null : useMemoryHint,
       objectionHint,
       complimentHint,
@@ -5080,16 +5099,19 @@ async function sendIdlePokes(accountId) {
       if (await hasUnansweredProactive(accountId, peerId)) continue;
 
       const lang = await resolveGreetingLang(client, sender, message);
+      const memPoke = lang === 'en' ? null : await memoryTriggers.pickMemoryPoke(accountId, peerId);
       const bank = lang === 'en' ? IDLE_POKE_EN : IDLE_POKE_RU;
-      const phrase = bank[Math.floor(Math.random() * bank.length)];
+      const phrase = memPoke?.phrase || bank[Math.floor(Math.random() * bank.length)];
       const senderName = sender.username || sender.firstName || peerId;
       try {
         await sleep(2500 + Math.random() * 4000);
         await client.sendMessage(sender, { message: phrase });
         await saveMessage(accountId, peerId, senderName, 'assistant', phrase);
+        if (memPoke?.id) memoryTriggers.markFollowedUp(memPoke.id).catch(() => {});
         sent += 1;
         console.log(
-          `[${accountLabel(accountId)}] Дневная инициатива → ${senderName}: "${phrase}"`,
+          `[${accountLabel(accountId)}] Дневная инициатива → ${senderName}: "${phrase}"` +
+            (memPoke ? ' (память)' : ''),
         );
       } catch (_) {}
     }
