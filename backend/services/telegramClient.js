@@ -1822,7 +1822,7 @@ function stripContradictoryMediaParts(text) {
 // Требуем И глагол-просьбу («скинь/пришли/покажи/запиши/можешь»), И объект
 // («фото/видео/кружок/себя»), чтобы «куда едешь на кружочке?» НЕ считалось просьбой.
 const MEDIA_REQUEST_VERB_RE =
-  /(скинь|скинешь|кинь|кинешь|пришли|пришлёшь|пришлешь|отправь|отправишь|отправляй|покажи|покажешь|запиши|запишешь|сфоткай|сфоткайся|сделай|делай|можешь|можно|давай|хочу\s+(?:увидеть|посмотреть|фото|фотк|селфи|круж|видео|видос)|дай\s+посмотреть|есть\s+фото|фото\s+есть|нет\s+фото|фото\s+нет)/i;
+  /(?:^|[^а-яёa-z])(?:скинь|скинешь|кинь|кинешь|пришли|пришлёшь|пришлешь|отправь|отправишь|отправляй|покажись|покажи|покажешь|запиши|запишешь|сфоткай|сфоткайся|сделай|делай|можешь|можно|давай|хочу\s+(?:увидеть|посмотреть|фото|фотк|селфи|круж|видео|видос)|дай\s+посмотреть|есть\s+фото|фото\s+есть|нет\s+фото|фото\s+нет)(?![а-яёa-z])/i;
 const MEDIA_REQUEST_OBJ_RE =
   /(фото|фотк|фоточк|фоточ|селфи|видео|видосик|видос|кружок|кружочек|кружочк|себя|как ты выглядишь|как выглядишь|своё лицо|свое лицо|личико)/i;
 const MEDIA_REQUEST_SHORT_RE =
@@ -1834,6 +1834,24 @@ const MEDIA_REQUEST_ASK_RE =
 const MEDIA_PROMISE_RE =
   /((щас|сейчас|ща|щя)[,\s]+(подожди[,\s]+)?(найду|поищу|скину|кину|отправлю|выберу|сфоткаюсь|сфоткаю|запишу)|поищу\s+(нормальн|хорош|фот|получше)|подожди[^.?\n]{0,25}(найду|поищу|выберу|скину)|(скину|кину|отправлю)\s+(позже|потом|попозже|чуть\s+позже))/i;
 
+/**
+ * Из входящего кружка/фото/видео модель видит длинное описание кадров.
+ * Там часто «можно увидеть» + слово «кружок» в теге — это НЕ просьба скинуть своё.
+ * Для детекта просьбы берём только речь/подпись собеседника.
+ */
+function userTextForMediaIntent(text) {
+  const raw = String(text || '');
+  if (!/\[(?:кружок|фото|видео)\s+от\s+собеседника\]/i.test(raw)) return raw;
+  const bits = [];
+  for (const m of raw.matchAll(/на видео сказано:\s*[«"]([^»"]+)[»"]/gi)) {
+    if (m[1]) bits.push(m[1]);
+  }
+  for (const m of raw.matchAll(/Подпись:\s*"([^"]*)"/gi)) {
+    if (m[1] && !/^кадр\s+из\s+(кружок|фото|видео)/i.test(m[1].trim())) bits.push(m[1]);
+  }
+  return bits.join(' ').trim();
+}
+
 function lastAssistantPromisedMedia(history) {
   for (let i = (history || []).length - 1; i >= 0; i -= 1) {
     if (history[i].role === 'assistant') return MEDIA_PROMISE_RE.test(String(history[i].content || ''));
@@ -1843,12 +1861,13 @@ function lastAssistantPromisedMedia(history) {
 
 function isExplicitMediaRequest(text, history = null) {
   if (!text) return false;
-  const t = String(text);
+  const t = userTextForMediaIntent(text);
+  if (!t) return false;
   if (MEDIA_REQUEST_VERB_RE.test(t) && MEDIA_REQUEST_OBJ_RE.test(t)) return true;
   if (MEDIA_REQUEST_SHORT_RE.test(t)) return true;
   if (MEDIA_REQUEST_ASK_RE.test(t)) return true;
-  if (/(есть|скинь|покажи|пришли|кинь).{0,48}(фото|фотк|видео|круж|себя|селфи)/i.test(t)) return true;
-  // Бот пообещал «щас найду», он ответил «давай» / «любые можно» — ждёт фото.
+  if (/(есть|скинь|покажись|покажи|пришли|кинь).{0,48}(фото|фотк|видео|круж|себя|селфи)/i.test(t)) return true;
+  // Бот пообещала «щас найду», он ответил «давай» / «любые можно» — ждёт фото.
   if (history && lastAssistantPromisedMedia(history) && t.trim().split(/\s+/).length <= 8) return true;
   return false;
 }
@@ -1857,8 +1876,8 @@ function recentUserAskedMedia(text, history) {
   const recentUser = (history || [])
     .filter((h) => h && h.role === 'user')
     .slice(-3)
-    .map((h) => String(h.content || ''));
-  return [text, ...recentUser].some((s) => MEDIA_REQUEST_OBJ_RE.test(String(s || '')));
+    .map((h) => userTextForMediaIntent(h.content || ''));
+  return [userTextForMediaIntent(text), ...recentUser].some((s) => MEDIA_REQUEST_OBJ_RE.test(String(s || '')));
 }
 
 /**
@@ -2064,11 +2083,17 @@ async function getSentMediaSet(accountId, peerId) {
 /** Когда можно самой кинуть кружок по смыслу (не по прямой просьбе). */
 const CONTEXTUAL_CIRCLE_MIN_HISTORY = 8;
 const CONTEXTUAL_CIRCLE_COOLDOWN_HOURS = 3;
+/** Даже по просьбе — не больше стольких своих кружков за окно (защита от серии «на каждый его кружок»). */
+const CIRCLE_RATE_MAX = 2;
+const CIRCLE_RATE_WINDOW_MIN = 90;
 
 async function canSendContextualCircle(accountId, peerId, history) {
   const len = Array.isArray(history) ? history.length : 0;
   if (len < CONTEXTUAL_CIRCLE_MIN_HISTORY) return false;
   if (lastAssistantWasMedia(history)) return false;
+  // Он только что прислал свой кружок — не зеркалим автоматически.
+  const lastUser = [...(history || [])].reverse().find((h) => h?.role === 'user');
+  if (lastUser && /\[кружок\s+от\s+собеседника\]/i.test(String(lastUser.content || ''))) return false;
   try {
     const [[row]] = await db.execute(
       `SELECT COUNT(*) AS n FROM conversation_messages
@@ -2082,6 +2107,22 @@ async function canSendContextualCircle(accountId, peerId, history) {
     return false;
   }
   return true;
+}
+
+async function circleRateLimited(accountId, peerId) {
+  try {
+    const [[row]] = await db.execute(
+      `SELECT COUNT(*) AS n FROM conversation_messages
+       WHERE account_id = ? AND peer_id = ? AND role = 'assistant'
+         AND content LIKE '[медиа:#%'
+         AND content LIKE '%{кружок:%'
+         AND created_at > (NOW() - INTERVAL ${Number(CIRCLE_RATE_WINDOW_MIN)} MINUTE)`,
+      [accountId, String(peerId)],
+    );
+    return Number(row?.n || 0) >= CIRCLE_RATE_MAX;
+  } catch (_) {
+    return false;
+  }
 }
 
 /** Описания кадров медиа-чата: { [msgId]: 'сижу дома...' } */
@@ -2288,6 +2329,12 @@ async function trySendMedia(
   contextText = '',
 ) {
   try {
+    if (mediaType === 'circle' && (await circleRateLimited(accountId, peerId))) {
+      console.log(
+        `[${accountLabel(accountId)}] Лимит кружков (${CIRCLE_RATE_MAX} / ${CIRCLE_RATE_WINDOW_MIN} мин) для ${senderName} — не шлю.`,
+      );
+      return false;
+    }
     const sentIds = await getSentMediaSet(accountId, peerId);
     let record = await getMediaItems(client, accountId, link);
     warmOwnMediaLight(client, accountId, link, record.items);
@@ -2378,6 +2425,8 @@ async function sendRequestedMediaOrDeflect(
   );
   if (sent) return true;
   if (!allowDeflect) return false;
+  // Лимит кружков — текст ответа уже ушёл, не подменяем на «затык с фотками».
+  if (mediaType === 'circle' && (await circleRateLimited(accountId, peerId))) return false;
 
   const deflect = pickMediaFailDeflect();
   try {
