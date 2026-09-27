@@ -736,7 +736,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     const noRepeatGreeting = stripRepeatGreeting(clipped, history);
     // Ответ был одним приветствием, а мы уже здоровались — реакция вместо второго «привет)».
     if (clipped.trim() && !noRepeatGreeting.trim()) return `<<REACT:${['❤', '🥰', '😁'][Math.floor(Math.random() * 3)]}>>`;
-    return noRepeatGreeting;
+    return lowercaseSentenceStarts(noRepeatGreeting);
   };
 
   const raw = completion.choices[0]?.message?.content?.trim() || '';
@@ -851,6 +851,24 @@ function buildPokeFollowUpHint(history, userMessage) {
     'НЕ отвечай «просто жду ответ», «да, слушаю», «ничего», «просто так», «хотела написать». ' +
     'Скажи что-то конкретное: мелочь из своего дня или живой вопрос про него (чем занят, как день).'
   );
+}
+
+// Заготовки бота (пинги, приветствия, «по работе») все с маленькой, а модель скачет:
+// «Круто, рада» → «ага» → «…уютная. Как у тебя». В чате пишем единообразно с маленькой.
+// «ДВ», «NFT» и прочие аббревиатуры (две заглавные подряд) не трогаем.
+const SENTENCE_START_CAP_RE = /(^|[.!?…)]\s+|[\p{Extended_Pictographic}]\uFE0F?\s+)([А-ЯЁ])(?![А-ЯЁA-Z])/gu;
+
+function lowercaseSentenceStarts(text) {
+  return String(text || '')
+    .split('\n')
+    .map((line) => {
+      const tag = (line.match(/^\s*(?:<<Q:[\d,]+>>\s*)?/) || [''])[0];
+      const body = line
+        .slice(tag.length)
+        .replace(SENTENCE_START_CAP_RE, (m, before, letter) => before + letter.toLowerCase());
+      return tag + body;
+    })
+    .join('\n');
 }
 
 // gpt-4o-mini иногда вставляет «整理ую», «忙» посреди русского слова.
