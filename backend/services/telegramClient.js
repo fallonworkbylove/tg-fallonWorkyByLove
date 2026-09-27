@@ -1775,14 +1775,44 @@ const REFUSAL_RE =
 
 /**
  * Текст противоречит отправке медиа (отказ / «давай только текстом»).
+ * На смешанных ответах («я флиплю…» + «фото попозже») — true, если ХОТЯ БЫ
+ * одна строка/предложение — отказ; чистый текст про работу без отказа — false.
  */
 function isContradictoryMediaText(text) {
   const t = String(text || '').trim();
   if (!t) return false;
-  if (REFUSAL_RE.test(t)) return true;
-  // Короткий отказ в начале: «не, …», «неа, …», «нет, …»
-  if (/^(не|неа|нет|no|nope)\b/i.test(t)) return true;
+  // Весь ответ целиком — короткий отказ.
+  const bare = t.replace(/<<Q:[\d,]+>>\s*/gi, '').trim();
+  if (/^(не|неа|нет|no|nope)\b/i.test(bare) && bare.length < 80) return true;
+  if (REFUSAL_RE.test(bare) && bare.length < 120) return true;
+  // Длинный ответ: отказ только если он занимает заметную долю (не «потом» в другом смысле).
+  const lines = bare.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const refusalLines = lines.filter((l) => REFUSAL_RE.test(l) || /^(не|неа|нет|no|nope)\b/i.test(l));
+  if (refusalLines.length && refusalLines.length >= Math.ceil(lines.length / 2)) return true;
   return false;
+}
+
+/** Убирает отказные куски, оставляя нормальные ответы на другие вопросы. */
+function stripContradictoryMediaParts(text) {
+  const src = String(text || '');
+  if (!src.trim()) return '';
+  const kept = src
+    .split('\n')
+    .map((line) => {
+      const tag = (line.match(/^\s*(?:<<Q:[\d,]+>>\s*)?/) || [''])[0];
+      let body = line.slice(tag.length).trim();
+      if (!body) return '';
+      if (REFUSAL_RE.test(body) || /^(не|неа|нет|no|nope)\b/i.test(body)) return '';
+      // Отказ во второй половине: «флиплю токены, фото попозже»
+      body = body
+        .split(/(?<=[.!)])\s+/)
+        .filter((part) => !REFUSAL_RE.test(part) && !/^(не|неа|нет|no|nope)\b/i.test(part.trim()))
+        .join(' ')
+        .trim();
+      return body ? tag + body : '';
+    })
+    .filter(Boolean);
+  return kept.join('\n').trim();
 }
 
 // Явная просьба прислать медиа. Нужна, чтобы:
@@ -1791,14 +1821,14 @@ function isContradictoryMediaText(text) {
 // Требуем И глагол-просьбу («скинь/пришли/покажи/запиши/можешь»), И объект
 // («фото/видео/кружок/себя»), чтобы «куда едешь на кружочке?» НЕ считалось просьбой.
 const MEDIA_REQUEST_VERB_RE =
-  /(скинь|скинешь|кинь|кинешь|пришли|пришлёшь|пришлешь|отправь|отправишь|отправляй|покажи|покажешь|запиши|запишешь|сфоткай|сфоткайся|сделай|можешь|можно|давай|хочу увидеть|хочу посмотреть|дай посмотреть|есть\s+фото|фото\s+есть)/i;
+  /(скинь|скинешь|кинь|кинешь|пришли|пришлёшь|пришлешь|отправь|отправишь|отправляй|покажи|покажешь|запиши|запишешь|сфоткай|сфоткайся|сделай|делай|можешь|можно|давай|хочу\s+(?:увидеть|посмотреть|фото|фотк|селфи|круж|видео|видос)|дай\s+посмотреть|есть\s+фото|фото\s+есть|нет\s+фото|фото\s+нет)/i;
 const MEDIA_REQUEST_OBJ_RE =
   /(фото|фотк|фоточк|фоточ|селфи|видео|видосик|видос|кружок|кружочек|кружочк|себя|как ты выглядишь|как выглядишь|своё лицо|свое лицо|личико)/i;
 const MEDIA_REQUEST_SHORT_RE =
-  /(^|\n)\s*(а\s+|ну\s+|и\s+)?(фото|фотку|фотки|фоточку|фоточки|фотографию|селфи|видео|видос|видосик|кружок|кружочек)\s*\??\s*($|\n)/i;
-// «Что по фоточкам?», «где фотки», «фотки будут?» — просьба без глагола.
+  /(^|\n)\s*(а\s+|ну\s+|и\s+|ещё\s+|еще\s+|просто\s+)?(фото|фотку|фотки|фоточку|фоточки|фотографию|селфи|видео|видос|видосик|кружок|кружочек)\s*\??\s*($|\n)/i;
+// «Что по фоточкам?», «где фотки», «фотки будут?», «селфи жду», «нет фото?» — без жёсткого порядка слов.
 const MEDIA_REQUEST_ASK_RE =
-  /((что|как|ну)\s+(там\s+)?(по|с)\s+(фот|видео|видос|круж|селфи)|(где|жду)\s+(же\s+|твои\s+|тво[её]\s+)?(фот|видео|видос|круж|селфи)|(фотк|фоточк|фотограф|видос|кружоч?к)\S*\s+(будут|будет|то\s+будут|то\s+будет|когда))/i;
+  /((что|как|ну)\s+(там\s+)?(по|с)\s+(фот|видео|видос|круж|селфи)|(где|жду|ждём|ждем)\s+(же\s+|твои\s+|тво[её]\s+|ещё\s+|еще\s+)?(фот|видео|видос|круж|селфи)|(фот|видео|видос|круж|селфи)\w*\s+(жду|ждём|ждем|будут|будет|то\s+будут|то\s+будет|когда|есть\??|нет\??)|(нет|нету)\s+(у\s+тебя\s+)?(фот|селфи|круж|видео)|(у\s+тебя\s+)?(есть|нету?)\s+(ещё\s+|еще\s+)?(фот|селфи|круж|видео))/i;
 // Обещание прислать медиа «потом» — без реальной отправки выглядит как бот-стилка.
 const MEDIA_PROMISE_RE =
   /((щас|сейчас|ща|щя)[,\s]+(подожди[,\s]+)?(найду|поищу|скину|кину|отправлю|выберу|сфоткаюсь|сфоткаю|запишу)|поищу\s+(нормальн|хорош|фот|получше)|подожди[^.?\n]{0,25}(найду|поищу|выберу|скину)|(скину|кину|отправлю)\s+(позже|потом|попозже|чуть\s+позже))/i;
@@ -1831,12 +1861,35 @@ function recentUserAskedMedia(text, history) {
 }
 
 /**
- * «щас найду, подожди» без реального медиа в этом же ходе — заменяем на уход с темы.
+ * «щас найду, подожди» без реального медиа в этом же ходе.
+ * Если медиа-чат есть — не уводим с темы, а возвращаем флаг «надо слать».
+ * Если медиа-чата нет — мягкий уход (как раньше).
  */
+function resolveMediaPromise(outText, mediaType, text, history, hasMediaLink) {
+  if (!outText || mediaType || !MEDIA_PROMISE_RE.test(outText)) {
+    return { outText, forceMedia: false };
+  }
+  if (!recentUserAskedMedia(text, history) && !isExplicitMediaRequest(text, history)) {
+    return { outText, forceMedia: false };
+  }
+  if (hasMediaLink) {
+    // Обещала — пусть шлёт, а не «давай без фоток».
+    const cleaned = outText
+      .replace(MEDIA_PROMISE_RE, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/^[\s,.;:]+|[\s,.;:]+$/g, '')
+      .trim();
+    const soft = cleaned && cleaned.length >= 4 && !MEDIA_PROMISE_RE.test(cleaned)
+      ? cleaned
+      : '';
+    return { outText: soft, forceMedia: true };
+  }
+  return { outText: pickMediaFailDeflect(), forceMedia: false };
+}
+
 function fixUnfulfilledMediaPromise(outText, mediaType, text, history) {
-  if (!outText || mediaType || !MEDIA_PROMISE_RE.test(outText)) return outText;
-  if (!recentUserAskedMedia(text, history)) return outText;
-  return pickMediaFailDeflect();
+  const r = resolveMediaPromise(outText, mediaType, text, history, false);
+  return r.outText;
 }
 
 function detectRequestedMediaType(text) {
@@ -1881,9 +1934,8 @@ function extractMediaRequest(reply) {
   // Подстраховка: если модель всё же прислала отказ ВМЕСТЕ с медиа-токеном
   // (например «не, давай пока тут общаться)» + <<CIRCLE>>), убираем
   // противоречивый текст — раз медиа реально уходит, отказ выглядит как фейк.
-  // Оставляем пусто: файл уйдёт со своей случайной дружелюбной подписью.
   if (mediaType && isContradictoryMediaText(text)) {
-    text = '';
+    text = stripContradictoryMediaParts(text);
   }
 
   return { text, mediaType };
@@ -2136,15 +2188,15 @@ function warmOwnMediaLight(client, accountId, link, items) {
   })().finally(() => ownMediaLightWarmup.delete(link));
 }
 
-/** Ночью — только то, что снято в темноте или в помещении. */
+/** Ночью — не шлём то, что ТОЧНО снято днём на улице. Неразмеченное можно. */
 async function filterMediaForDaylight(client, items, mediaType, link, sentIds) {
   if (!isDarkOutsideNow()) return items;
   const ofType = items.filter((i) => i.type === mediaType);
-  const ok = ofType.filter((i) => {
-    const light = cachedOwnMediaLight(i, link);
-    return light && light !== 'day';
-  });
+  // Уже известно «днём» — в отбор не берём. Остальное (темно/помещение/неизвестно) — ок.
+  const ok = ofType.filter((i) => cachedOwnMediaLight(i, link) !== 'day');
   if (ok.some((i) => !sentIds.has(i.id))) return ok;
+  // Все неразмеченные уже уходили этому человеку, а «не дневных» не осталось —
+  // пробуем класифицировать до 2 неизвестных (вдруг там помещение).
   const unknown = ofType
     .filter((i) => !cachedOwnMediaLight(i, link) && !sentIds.has(i.id))
     .sort(() => Math.random() - 0.5)
@@ -3190,9 +3242,30 @@ async function fireReengage(accountId, peerId) {
       console.log(
         `[${accountLabel(accountId)}] Убрал отказной текст перед медиа для ${senderName}: "${outText}"`,
       );
-      outText = '';
+      outText = stripContradictoryMediaParts(outText);
     }
-    outText = fixUnfulfilledMediaPromise(outText, mediaEnabled ? mediaType : null, text, history);
+    {
+      const resolved = resolveMediaPromise(
+        outText,
+        mediaEnabled ? mediaType : null,
+        text,
+        history,
+        !!mediaLink,
+      );
+      if (resolved.forceMedia && mediaLink) {
+        mediaType = mediaType || detectRequestedMediaType(text);
+        console.log(
+          `[${accountLabel(accountId)}] Обещание медиа → отправляю ${mediaType} для ${senderName}` +
+            (resolved.outText !== outText ? `: "${outText}" → "${resolved.outText || '(без текста)'}"` : ''),
+        );
+        outText = resolved.outText;
+      } else if (resolved.outText !== outText) {
+        console.log(
+          `[${accountLabel(accountId)}] Обещание медиа без отправки для ${senderName}: "${outText}" → "${resolved.outText}"`,
+        );
+        outText = resolved.outText;
+      }
+    }
 
     // «по работе» — только после ответа, отдельным сообщением (maybeSendWorkAside).
     const pendingWorkAside = !!nft.sayWorkProblem;
@@ -3238,7 +3311,7 @@ async function fireReengage(accountId, peerId) {
     }
 
     let mediaSentThisTurn = false;
-    if (mediaType && mediaEnabled) {
+    if (mediaType && mediaLink) {
       mediaSentThisTurn = await sendRequestedMediaOrDeflect(
         client,
         sender,
@@ -3971,14 +4044,29 @@ async function processBufferedMessages(
       console.log(
         `[${accountLabel(accountId)}] Убрал отказной текст перед медиа для ${senderName}: "${outText}"`,
       );
-      outText = '';
+      outText = stripContradictoryMediaParts(outText);
     }
-    const promiseFixed = fixUnfulfilledMediaPromise(outText, mediaEnabled ? mediaType : null, contextualText, history);
-    if (promiseFixed !== outText) {
-      console.log(
-        `[${accountLabel(accountId)}] Обещание медиа без отправки для ${senderName}: "${outText}" → "${promiseFixed}"`,
+    {
+      const resolved = resolveMediaPromise(
+        outText,
+        mediaEnabled ? mediaType : null,
+        contextualText,
+        history,
+        !!mediaLink,
       );
-      outText = promiseFixed;
+      if (resolved.forceMedia && mediaLink) {
+        mediaType = mediaType || detectRequestedMediaType(contextualText);
+        console.log(
+          `[${accountLabel(accountId)}] Обещание медиа → отправляю ${mediaType} для ${senderName}` +
+            (resolved.outText !== outText ? `: "${outText}" → "${resolved.outText || '(без текста)'}"` : ''),
+        );
+        outText = resolved.outText;
+      } else if (resolved.outText !== outText) {
+        console.log(
+          `[${accountLabel(accountId)}] Обещание медиа без отправки для ${senderName}: "${outText}" → "${resolved.outText}"`,
+        );
+        outText = resolved.outText;
+      }
     }
 
     // «по работе» — только после ответа, отдельным сообщением (maybeSendWorkAside).
@@ -4047,9 +4135,9 @@ async function processBufferedMessages(
       await sendLaughBubble(client, sender, accountId, peerId, senderName);
     }
 
-    // 6.5. Медиа по запросу: всем, кто явно просил и у кого есть медиа-чат.
+    // 6.5. Медиа по запросу: всем, кто явно просил / кому пообещали, и у кого есть медиа-чат.
     let mediaSentThisTurn = false;
-    if (mediaType && mediaEnabled) {
+    if (mediaType && mediaLink) {
       mediaSentThisTurn = await sendRequestedMediaOrDeflect(
         client,
         sender,
