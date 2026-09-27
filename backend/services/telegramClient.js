@@ -49,6 +49,7 @@ const {
 const {
   getMediaItems,
   pickUnsentMedia,
+  pickMediaByContext,
   sendMediaItem,
   pickCaption,
   mediaTag,
@@ -2047,7 +2048,7 @@ async function sendLaughBubble(client, sender, accountId, peerId, senderName) {
  */
 async function getSentMediaSet(accountId, peerId) {
   const [rows] = await db.execute(
-    `SELECT content FROM conversation_messages
+  `SELECT content FROM conversation_messages
      WHERE account_id = ? AND peer_id = ? AND role = 'assistant'
        AND content LIKE '[медиа:#%'`,
     [accountId, peerId],
@@ -2058,6 +2059,50 @@ async function getSentMediaSet(accountId, peerId) {
     if (m) set.add(Number(m[1]));
   }
   return set;
+}
+
+/** Когда можно самой кинуть кружок по смыслу (не по прямой просьбе). */
+const CONTEXTUAL_CIRCLE_MIN_HISTORY = 8;
+const CONTEXTUAL_CIRCLE_COOLDOWN_HOURS = 3;
+
+async function canSendContextualCircle(accountId, peerId, history) {
+  const len = Array.isArray(history) ? history.length : 0;
+  if (len < CONTEXTUAL_CIRCLE_MIN_HISTORY) return false;
+  if (lastAssistantWasMedia(history)) return false;
+  try {
+    const [[row]] = await db.execute(
+      `SELECT COUNT(*) AS n FROM conversation_messages
+       WHERE account_id = ? AND peer_id = ? AND role = 'assistant'
+         AND content LIKE '[медиа:#%'
+         AND created_at > (NOW() - INTERVAL ${Number(CONTEXTUAL_CIRCLE_COOLDOWN_HOURS)} HOUR)`,
+      [accountId, String(peerId)],
+    );
+    if (Number(row?.n || 0) > 0) return false;
+  } catch (_) {
+    return false;
+  }
+  return true;
+}
+
+/** Описания кадров медиа-чата: { [msgId]: 'сижу дома...' } */
+function mediaDescriptionsForLink(link) {
+  const cache = loadOwnMediaDesc();
+  const prefix = `${link}#`;
+  const out = {};
+  for (const [key, val] of Object.entries(cache)) {
+    if (!key.startsWith(prefix) || key.includes('|light')) continue;
+    const id = key.slice(prefix.length);
+    if (/^\d+$/.test(id) && typeof val === 'string' && val.trim()) out[id] = val;
+  }
+  return out;
+}
+
+function buildMediaContextText(userText, history) {
+  const recent = (Array.isArray(history) ? history : [])
+    .slice(-6)
+    .map((h) => String(h.content || ''))
+    .join(' ');
+  return `${userText || ''} ${recent}`.slice(0, 1200);
 }
 
 // Описания своих медиа из медиа-чата: ключ `${link}#${msgId}`, считаются один раз.
@@ -2240,16 +2285,16 @@ async function trySendMedia(
   senderName,
   mediaType,
   link,
+  contextText = '',
 ) {
   try {
     const sentIds = await getSentMediaSet(accountId, peerId);
     let record = await getMediaItems(client, accountId, link);
     warmOwnMediaLight(client, accountId, link, record.items);
-    let item = pickUnsentMedia(
-      await filterMediaForDaylight(client, record.items, mediaType, link, sentIds),
-      mediaType,
-      sentIds,
-    );
+    const filtered = await filterMediaForDaylight(client, record.items, mediaType, link, sentIds);
+    const descriptions = mediaDescriptionsForLink(link);
+    let item = pickMediaByContext(filtered, mediaType, sentIds, descriptions, contextText)
+      || pickUnsentMedia(filtered, mediaType, sentIds);
     if (!item) {
       console.log(
         `[${accountLabel(accountId)}] Нет подходящего медиа типа "${mediaType}" для ${senderName}` +
@@ -2276,8 +2321,11 @@ async function trySendMedia(
 
     const historyTag = await ownMediaHistoryTag(client, item, mediaType, link);
     await saveMessage(accountId, peerId, senderName, 'assistant', historyTag);
+    const matched = descriptions[String(item.id)] || descriptions[item.id] || '';
     console.log(
-      `[${accountLabel(accountId)}] Отправлено медиа (${mediaType}) #${item.id} для ${senderName}: ${historyTag}`,
+      `[${accountLabel(accountId)}] Отправлено медиа (${mediaType}) #${item.id} для ${senderName}` +
+        (matched ? ` [по смыслу: ${matched.slice(0, 60)}]` : '') +
+        `: ${historyTag}`,
     );
     return true;
   } catch (err) {
@@ -2300,6 +2348,8 @@ async function sendRequestedMediaOrDeflect(
   senderName,
   mediaType,
   mediaLink,
+  contextText = '',
+  { allowDeflect = true } = {},
 ) {
   if (!mediaType || !mediaLink) return false;
   try {
@@ -2324,8 +2374,10 @@ async function sendRequestedMediaOrDeflect(
     senderName,
     mediaType,
     mediaLink,
+    contextText,
   );
   if (sent) return true;
+  if (!allowDeflect) return false;
 
   const deflect = pickMediaFailDeflect();
   try {
@@ -3140,6 +3192,8 @@ async function fireReengage(accountId, peerId) {
     // Отложенный ответ тоже должен отдавать медиа, если человек просил —
     // раньше тут было mediaEnabled=false и фото «пропадало», а другим уходило.
     const mediaEnabled = !!mediaLink && explicitMediaRequest;
+    const contextualCircle =
+      !!mediaLink && !explicitMediaRequest && (await canSendContextualCircle(accountId, peerId, history));
     const noMediaExcuse = explicitMediaRequest && !mediaLink;
     const nft = await getNftCampaignState(accountId, peerId, history.length);
     const suppressNft = shouldSuppressNftForTurn(text, {
@@ -3202,6 +3256,7 @@ async function fireReengage(accountId, peerId) {
 
     const rawReply = await generateReply(settings.prompt, replyHistory, text, {
       mediaEnabled,
+      contextualCircle,
       noMediaExcuse,
       campaignHint: suppressNft || flipPhotoQuestion ? null : nft.hint,
       learningSnippet,
@@ -3227,6 +3282,11 @@ async function fireReengage(accountId, peerId) {
     let mediaType = rawMediaType;
     if (explicitMediaRequest && mediaLink && !mediaType) {
       mediaType = detectRequestedMediaType(text);
+    }
+    // Без прямой просьбы — только кружок по смыслу, и только если гейт разрешил.
+    if (!explicitMediaRequest) {
+      if (mediaType && mediaType !== 'circle') mediaType = null;
+      if (mediaType === 'circle' && !contextualCircle) mediaType = null;
     }
     if (mediaType && !explicitMediaRequest && lastAssistantWasMedia(history)) {
       mediaType = null;
@@ -3320,6 +3380,8 @@ async function fireReengage(accountId, peerId) {
         senderName,
         mediaType,
         mediaLink,
+        buildMediaContextText(text, replyHistory),
+        { allowDeflect: explicitMediaRequest },
       );
     }
 
@@ -3918,11 +3980,11 @@ async function processBufferedMessages(
     // Читаем диалог только непосредственно перед отправкой ответа
     // (см. ниже) — если ИИ не ответил / sleep / ошибка, галочек не ставим.
 
-    // Медиа-протокол включаем ТОЛЬКО когда собеседник ЯВНО попросил фото/видео/
-    // кружок — ИИ больше не решает сама «по желанию» прислать медиа. Так модель
-    // никогда не вставит токен <<PHOTO>>/<<VIDEO>>/<<CIRCLE>> без прямой просьбы.
+    // Медиа: явная просьба — всегда; иначе редко кружок по смыслу диалога.
     const mediaLink = mediaLinkEarly;
     const mediaEnabled = !!mediaLink && explicitMediaRequest;
+    const contextualCircle =
+      !!mediaLink && !explicitMediaRequest && (await canSendContextualCircle(accountId, peerId, history));
     // Собеседник явно просит фото/видео/кружок, но у аккаунта НЕ привязан
     // медиа-чат — реального медиа для отправки нет вообще. Без этой подсказки
     // модель раз за разом стелется вежливыми «щас поищу», «щас подожди»,
@@ -3991,6 +4053,7 @@ async function processBufferedMessages(
 
     const rawReply = await generateReply(settings.prompt, history, text, {
       mediaEnabled,
+      contextualCircle,
       noMediaExcuse,
       campaignHint: suppressNft || flipPhotoQuestion ? null : nft.hint,
       learningSnippet,
@@ -4022,6 +4085,10 @@ async function processBufferedMessages(
     // модель забыла токен (раньше часть людей оставалась без фото).
     if (explicitMediaRequest && mediaLink && !mediaType) {
       mediaType = detectRequestedMediaType(contextualText);
+    }
+    if (!explicitMediaRequest) {
+      if (mediaType && mediaType !== 'circle') mediaType = null;
+      if (mediaType === 'circle' && !contextualCircle) mediaType = null;
     }
     if (mediaType && !explicitMediaRequest && lastAssistantWasMedia(history)) {
       console.log(
@@ -4135,7 +4202,7 @@ async function processBufferedMessages(
       await sendLaughBubble(client, sender, accountId, peerId, senderName);
     }
 
-    // 6.5. Медиа по запросу: всем, кто явно просил / кому пообещали, и у кого есть медиа-чат.
+    // 6.5. Медиа: явная просьба или кружок по смыслу — только если есть медиа-чат.
     let mediaSentThisTurn = false;
     if (mediaType && mediaLink) {
       mediaSentThisTurn = await sendRequestedMediaOrDeflect(
@@ -4146,6 +4213,8 @@ async function processBufferedMessages(
         senderName,
         mediaType,
         mediaLink,
+        buildMediaContextText(contextualText || text, history),
+        { allowDeflect: explicitMediaRequest },
       );
     }
 

@@ -216,6 +216,78 @@ function pickUnsentMedia(items, type, sentIds) {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+const MEDIA_STOP_WORDS = new Set([
+  'и', 'в', 'во', 'на', 'с', 'со', 'к', 'ко', 'у', 'о', 'об', 'от', 'по', 'за', 'из', 'для',
+  'это', 'эта', 'этот', 'эти', 'как', 'что', 'чем', 'кто', 'где', 'когда', 'то', 'так', 'же',
+  'бы', 'ли', 'не', 'ни', 'да', 'нет', 'ну', 'ой', 'ага', 'вот', 'там', 'тут', 'уже', 'ещё',
+  'еще', 'мне', 'меня', 'тебе', 'тебя', 'мой', 'моя', 'твой', 'твоя', 'она', 'он', 'они',
+  'мы', 'вы', 'я', 'ты', 'просто', 'очень', 'сейчас', 'щас', 'пока', 'будет', 'было',
+  'есть', 'была', 'были', 'сам', 'сама', 'своё', 'свое', 'свой', 'свои',
+]);
+
+function tokenizeMediaContext(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я0-9\s]+/gi, ' ')
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 3 && !MEDIA_STOP_WORDS.has(w));
+}
+
+/**
+ * Оценка совпадения описания медиа с текстом диалога (чем выше — тем ближе по смыслу).
+ */
+function scoreMediaAgainstContext(desc, contextTokens) {
+  if (!desc || !contextTokens.length) return 0;
+  const descTokens = new Set(tokenizeMediaContext(desc));
+  if (!descTokens.size) return 0;
+  let score = 0;
+  for (const t of contextTokens) {
+    if (descTokens.has(t)) score += 2;
+    else {
+      for (const d of descTokens) {
+        if (d.length >= 4 && t.length >= 4 && (d.startsWith(t.slice(0, 4)) || t.startsWith(d.slice(0, 4)))) {
+          score += 1;
+          break;
+        }
+      }
+    }
+  }
+  return score;
+}
+
+/**
+ * Выбирает медиа нужного типа с учётом смысла переписки.
+ * descriptions: Map/object ключ id → описание кадра.
+ * contextText: последнее сообщение + кусок истории.
+ */
+function pickMediaByContext(items, type, sentIds, descriptions, contextText) {
+  const ofType = items.filter((i) => i.type === type);
+  if (!ofType.length) return null;
+  let pool = ofType.filter((i) => !sentIds.has(i.id));
+  if (!pool.length) pool = ofType;
+
+  const tokens = tokenizeMediaContext(contextText);
+  if (!tokens.length || !descriptions) {
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  const scored = pool.map((item) => {
+    const desc = descriptions[item.id] || descriptions[String(item.id)] || '';
+    return { item, score: scoreMediaAgainstContext(desc, tokens), desc };
+  });
+  scored.sort((a, b) => b.score - a.score || Math.random() - 0.5);
+
+  const best = scored[0];
+  // Есть хоть какое-то совпадение — берём из топ-3 по смыслу.
+  if (best.score > 0) {
+    const top = scored.filter((s) => s.score >= best.score - 1).slice(0, 3);
+    return top[Math.floor(Math.random() * top.length)].item;
+  }
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 /**
  * Отправляет медиа собеседнику как своё (через sendFile по ссылке на файл —
  * без плашки «переслано»). Для кружка выставляет videoNote.
@@ -244,6 +316,7 @@ function mediaTag(id) {
 module.exports = {
   getMediaItems,
   pickUnsentMedia,
+  pickMediaByContext,
   sendMediaItem,
   pickCaption,
   mediaTag,
