@@ -585,7 +585,13 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
           continue;
         }
 
-        entity = await client.getEntity(row.peer_username || Number(row.peer_id) || row.peer_id);
+        // В peer_username бывает отображаемое имя («Позывной»), по нему getEntity не найдёт.
+        try {
+          entity = await client.getEntity(Number(row.peer_id));
+        } catch (idErr) {
+          if (!/^[A-Za-z][A-Za-z0-9_]{3,}$/.test(String(row.peer_username || ''))) throw idErr;
+          entity = await client.getEntity(row.peer_username);
+        }
         if (await shouldSkipProactivePeer(client, entity)) continue;
 
         try {
