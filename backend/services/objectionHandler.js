@@ -504,6 +504,7 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
   const {
     getActiveClient,
     shouldSkipProactivePeer,
+    hasUnansweredProactive,
     isPermanentSendError,
     retireUnreachablePeer,
   } = require('./telegramClient');
@@ -550,6 +551,7 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
         const settings = await getAccountSettings(row.account_id);
         if (!settings || !settings.is_autoreply_enabled) continue;
         if (!isWithinWorkingHours(row.account_id)) continue;
+        if (await hasUnansweredProactive(row.account_id, row.peer_id)) continue;
 
         // Решение (бросок монетки) принимается максимум один раз в
         // календарные сутки на диалог — вне зависимости от того, сколько

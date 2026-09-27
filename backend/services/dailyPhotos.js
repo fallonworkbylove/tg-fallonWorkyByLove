@@ -14,8 +14,10 @@ const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 // Окно по Москве (не UTC сервера!): 14:00–16:00 МСК — строго до NFT 16:00–21:00 МСК.
 const WINDOW_START_HOUR = Number(process.env.DAILY_PHOTO_START_HOUR || 14);
 const WINDOW_END_HOUR = Number(process.env.DAILY_PHOTO_END_HOUR || 16);
-// Не вклиниваться в живую переписку: скрин «из ниоткуда» посреди разговора палит.
-const ACTIVE_CHAT_QUIET_MIN = 20;
+// Не вклиниваться в живую переписку: скрин посреди разговора палит.
+const ACTIVE_CHAT_QUIET_MIN = 10;
+// Но и не кидать его в тишину: он должен был писать не позже этого.
+const LIVE_DIALOG_MAX_IDLE_MIN = 60;
 const PHOTO_TIMEZONE = process.env.WORK_TIMEZONE || 'Europe/Moscow';
 const NFT_VOICE_TAG = '[голосовое: nft.ogg]';
 
@@ -394,6 +396,17 @@ async function sendDuePhotos() {
           await db.execute('UPDATE daily_photo_sends SET scheduled_at = ? WHERE id = ?', [next, row.id]);
         } else {
           await markSkipped(row.id, 'active_chat', row.account_id, row.peer_id);
+        }
+        continue;
+      }
+
+      const idleMin = await tg().lastIncomingAgeMin(row.account_id, row.peer_id);
+      if (idleMin == null || idleMin > LIVE_DIALOG_MAX_IDLE_MIN) {
+        const next = new Date(Date.now() + (15 + Math.floor(Math.random() * 10)) * 60 * 1000);
+        if (next < windowEnd) {
+          await db.execute('UPDATE daily_photo_sends SET scheduled_at = ? WHERE id = ?', [next, row.id]);
+        } else {
+          await markSkipped(row.id, 'silent_peer', row.account_id, row.peer_id);
         }
         continue;
       }

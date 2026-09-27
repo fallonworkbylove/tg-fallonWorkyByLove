@@ -1219,20 +1219,6 @@ const WORK_PROBLEM_PHRASES_EN = [
   'hold on, work)',
 ];
 
-// Живая инициатива перед «по работе», чтобы не кидать проблему в пустоту.
-const WORK_LEAD_IN_POKE_RU = [
-  'ты как там)',
-  'как день проходит?',
-  'чем занимаешься?',
-  'ну что ты там)',
-];
-const WORK_LEAD_IN_POKE_EN = [
-  'hey',
-  'yo',
-  'u there?',
-  'hey how r u',
-];
-
 let nftScheduleReady = false;
 const nftWorkMentionInFlight = new Set();
 const nftVoiceTickInFlight = new Set();
@@ -1482,6 +1468,14 @@ async function claimWorkMention(accountId, peerId) {
   return res.affectedRows > 0;
 }
 
+async function postponeNftVoice(accountId, peerId, delayMs) {
+  await db.execute(
+    `UPDATE nft_voice_schedule SET scheduled_at = ?
+     WHERE account_id = ? AND peer_id = ?`,
+    [new Date(Date.now() + delayMs), accountId, String(peerId)],
+  );
+}
+
 async function releaseWorkMention(accountId, peerId) {
   await db.execute(
     `UPDATE nft_voice_schedule SET work_mention_sent = 0
@@ -1555,6 +1549,47 @@ async function getDialogTail(accountId, peerId) {
   const hasIncoming = rows.some((row) => row.role === 'user');
   const lastRole = rows[0]?.role || null;
   return { hasIncoming, lastRole };
+}
+
+// Сообщение бота, ушедшее позже этого после предыдущего, — не ответ, а инициатива.
+const PROACTIVE_GAP_MS = 60 * 60 * 1000;
+// NFT-шаги сами по себе шлём только в живой диалог: он писал совсем недавно.
+const NFT_LIVE_DIALOG_MIN = 30;
+const NFT_VOICE_LIVE_DIALOG_MIN = 60;
+
+/** Минут с последнего входящего от человека (null — входящих нет). */
+async function lastIncomingAgeMin(accountId, peerId) {
+  const [[row]] = await db.execute(
+    `SELECT TIMESTAMPDIFF(SECOND, MAX(created_at), NOW()) AS age_sec
+     FROM conversation_messages
+     WHERE account_id = ? AND peer_id = ? AND role = 'user'`,
+    [accountId, String(peerId)],
+  );
+  if (!row || row.age_sec == null) return null;
+  return Number(row.age_sec) / 60;
+}
+
+/**
+ * Уже висит наша инициатива без ответа (приветствие, пинг, голосовое) —
+ * вторую не шлём, пока он не напишет. Иначе выходит «спокойной» → «доброе утро»
+ * → «спокойной» в пустоту.
+ */
+async function hasUnansweredProactive(accountId, peerId) {
+  const [rows] = await db.execute(
+    `SELECT role, created_at FROM conversation_messages
+     WHERE account_id = ? AND peer_id = ?
+     ORDER BY id DESC
+     LIMIT 20`,
+    [accountId, String(peerId)],
+  );
+  for (let i = 0; i < rows.length; i += 1) {
+    if (rows[i].role === 'user') return false;
+    const prev = rows[i + 1];
+    if (!prev) return true;
+    const gap = new Date(rows[i].created_at).getTime() - new Date(prev.created_at).getTime();
+    if (gap > PROACTIVE_GAP_MS) return true;
+  }
+  return rows.length > 0;
 }
 
 /**
@@ -1676,6 +1711,17 @@ async function getNftCampaignState(accountId, peerId, historyLength) {
         sendVoice: false,
         // «по работе» уходит отдельным сообщением кодом, не вместо ответа.
         sayWorkProblem,
+      };
+    }
+    // Окно для «по работе» прошло, пока он молчал: сначала фраза, голосовое чуть позже.
+    if (!plan.workMentionSent) {
+      await postponeNftVoice(accountId, peerId, NFT_WORK_MENTION_MIN_MS + Math.random() * 15 * 60 * 1000);
+      return {
+        hint:
+          'Голосовое с просьбой ещё НЕ отправляй и не анонсируй. Не пиши про токен/помощь/nft. ' +
+          'Обычный живой ответ на его сообщение.',
+        sendVoice: false,
+        sayWorkProblem: true,
       };
     }
     return {
@@ -4814,6 +4860,7 @@ async function sendIdlePokes(accountId) {
 
       const tail = await getDialogTail(accountId, peerId);
       if (!tail.hasIncoming) continue;
+      if (await hasUnansweredProactive(accountId, peerId)) continue;
 
       const lang = await resolveGreetingLang(client, sender, message);
       const bank = lang === 'en' ? IDLE_POKE_EN : IDLE_POKE_RU;
@@ -4904,6 +4951,7 @@ async function sendGreetings(accountId, kind, mood) {
       // входящего — только наши рассылки.
       const tail = await getDialogTail(accountId, peerId);
       if (!tail.hasIncoming) continue;
+      if (await hasUnansweredProactive(accountId, peerId)) continue;
       // Уже переписывались недавно — «доброе утро / проспала» после свежего ответа звучит как бот.
       if (kind === 'morning' && (await botWroteWithin(accountId, peerId, GREETING_SKIP_IF_BOT_WROTE_HOURS))) continue;
 
@@ -5026,6 +5074,9 @@ async function tickNftWorkMentions(accountId) {
       if (tail.lastRole !== 'assistant' && tail.lastRole !== 'user') continue;
       // Человек написал и ждёт ответа — не лезем с «по работе», ответим обычным ходом.
       if (tail.lastRole === 'user') continue;
+      // Молчит — не пишем первой «по работе» в пустоту: скажет в ответ, когда напишет.
+      const idleMin = await lastIncomingAgeMin(accountId, peerId);
+      if (idleMin == null || idleMin > NFT_LIVE_DIALOG_MIN) continue;
       let entity;
       try {
         entity = await client.getEntity(Number(peerId));
@@ -5037,19 +5088,13 @@ async function tickNftWorkMentions(accountId) {
       if (!(await claimWorkMention(accountId, peerId))) continue;
       const senderName = entity.username || entity.firstName || peerId;
       try {
-        // Не кидаем «по работе» в пустоту: сначала живая инициатива, потом проблема.
         const isRussian = await conversationIsRussian(accountId, peerId);
-        const pokeBank = isRussian ? WORK_LEAD_IN_POKE_RU : WORK_LEAD_IN_POKE_EN;
-        const poke = pokeBank[Math.floor(Math.random() * pokeBank.length)];
         await sleep(1500 + Math.random() * 2500);
-        await client.sendMessage(entity, { message: poke });
-        await saveMessage(accountId, peerId, senderName, 'assistant', poke);
-        await sleep(4000 + Math.random() * 5000);
         const phrase = pickWorkProblemPhrase(isRussian);
         await client.sendMessage(entity, { message: phrase });
         await saveMessage(accountId, peerId, senderName, 'assistant', phrase);
         console.log(
-          `[${accountLabel(accountId)}] Перед NFT: инициатива + «по работе» для ${senderName}: "${poke}" → "${phrase}"`,
+          `[${accountLabel(accountId)}] Перед NFT: «по работе» в живом диалоге для ${senderName}: "${phrase}"`,
         );
       } catch (err) {
         await releaseWorkMention(accountId, peerId);
@@ -5096,7 +5141,7 @@ async function tickNftDueVoices(accountId) {
        GROUP BY peer_id
        HAVING msg_count >= 6
           AND last_user_at IS NOT NULL
-          AND last_user_at >= (NOW() - INTERVAL ${Number(NFT_ACTIVE_DIALOGUE_IDLE_HOURS)} HOUR)`,
+          AND last_user_at >= (NOW() - INTERVAL ${Number(NFT_VOICE_LIVE_DIALOG_MIN)} MINUTE)`,
       [accountId],
     );
     if (!rows.length) return;
@@ -5132,6 +5177,8 @@ async function tickNftDueVoices(accountId) {
 
       const plan = await getOrCreateNftVoiceAt(accountId, peerId);
       if (Date.now() < plan.scheduledAt.getTime()) continue;
+      // Без «по работе» перед ним голосовое с просьбой звучит из ниоткуда.
+      if (!plan.workMentionSent) continue;
 
       const sendKey = voiceSendKey(accountId, peerId, NFT_VOICE_FILE);
       if (voiceSendInFlight.has(sendKey)) continue;
@@ -5315,6 +5362,8 @@ module.exports = {
   isPeerArchived,
   isNeverContact,
   shouldSkipProactivePeer,
+  hasUnansweredProactive,
+  lastIncomingAgeMin,
   isDeletedUser,
   isPermanentSendError,
   retireUnreachablePeer,

@@ -718,7 +718,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   logUsage(usedModel, completion.usage, { fellBack }).catch(() => {});
 
   const finalize = (rawText) => {
-    const cleaned = applyAntiDetectStyle(convertQuestionTags(rawText));
+    const cleaned = applyAntiDetectStyle(convertQuestionTags(stripForeignScript(rawText)));
     const strippedFacts = stripReaskedKnownFacts(cleaned, contextGuard);
     const strippedStay = stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
     const strippedBot = humanizeBotAccusationReply(strippedStay, history, contextualUserMessage);
@@ -739,25 +739,37 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     return noRepeatGreeting;
   };
 
-  let result = finalize(completion.choices[0]?.message?.content?.trim() || '');
-  if (isVerbatimRepeat(result, history)) {
+  const raw = completion.choices[0]?.message?.content?.trim() || '';
+  let result = finalize(raw);
+  let retryNote = null;
+  let retryTemperature = 0.95;
+  if (FOREIGN_SCRIPT_RE.test(raw)) {
+    retryNote =
+      'В прошлом варианте ты вставила китайские/японские иероглифы посреди слова. ' +
+      'Пиши только буквами языка переписки (кириллица или латиница), без иероглифов.';
+    retryTemperature = 0.6;
+  } else if (isVerbatimRepeat(result, history)) {
+    retryNote = `Ты уже писала ему дословно «${result}». Не повторяйся — ответь иначе, своими словами.`;
+  }
+  if (retryNote) {
     try {
       const retryMessages = [
         ...messages.slice(0, -1),
-        { role: 'system', content: `Ты уже писала ему дословно «${result}». Не повторяйся — ответь иначе, своими словами.` },
+        { role: 'system', content: retryNote },
         messages[messages.length - 1],
       ];
       const retry = await openai.chat.completions.create({
         ...requestOptions,
         messages: retryMessages,
-        temperature: 0.95,
+        temperature: retryTemperature,
         model: usedModel,
       });
       logUsage(usedModel, retry.usage, { fellBack }).catch(() => {});
-      const alt = finalize(retry.choices[0]?.message?.content?.trim() || '');
-      if (alt && !isVerbatimRepeat(alt, history)) result = alt;
+      const altRaw = retry.choices[0]?.message?.content?.trim() || '';
+      const alt = finalize(altRaw);
+      if (alt && !FOREIGN_SCRIPT_RE.test(altRaw) && !isVerbatimRepeat(alt, history)) result = alt;
     } catch (_) {
-      // повтор лучше, чем тишина
+      // первый вариант лучше, чем тишина
     }
   }
   return result;
@@ -839,6 +851,30 @@ function buildPokeFollowUpHint(history, userMessage) {
     'НЕ отвечай «просто жду ответ», «да, слушаю», «ничего», «просто так», «хотела написать». ' +
     'Скажи что-то конкретное: мелочь из своего дня или живой вопрос про него (чем занят, как день).'
   );
+}
+
+// gpt-4o-mini иногда вставляет «整理ую», «忙» посреди русского слова.
+const FOREIGN_SCRIPT_CHARS = '\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uf900-\\ufaff';
+const FOREIGN_SCRIPT_RE = new RegExp(`[${FOREIGN_SCRIPT_CHARS}]`, 'u');
+const FOREIGN_SCRIPT_WORD_RE = new RegExp(`[\\p{L}\\p{M}]*[${FOREIGN_SCRIPT_CHARS}]+[\\p{L}\\p{M}]*`, 'gu');
+
+function stripForeignScript(text) {
+  const src = String(text || '');
+  if (!FOREIGN_SCRIPT_RE.test(src)) return src;
+  return src
+    .split('\n')
+    .map((line) =>
+      line
+        .replace(FOREIGN_SCRIPT_WORD_RE, '')
+        .replace(/([,.!?])\s*,/g, '$1')
+        .replace(/,\s*([.!?)])/g, '$1')
+        .replace(/\s+([,.!?)])/g, '$1')
+        .replace(/\s{2,}/g, ' ')
+        .replace(/^[\s,]+/, '')
+        .trim(),
+    )
+    .filter(Boolean)
+    .join('\n');
 }
 
 function normalizeForRepeat(text) {
