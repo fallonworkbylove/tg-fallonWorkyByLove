@@ -2105,24 +2105,35 @@ async function getOwnMediaLight(client, item, mediaType, link) {
   return job;
 }
 
+// Лимит OpenAI общий с ответами: фоновая разметка идёт медленно и уступает при 429.
+const OWN_MEDIA_LIGHT_WARMUP_STEP_MS = 15000;
+const OWN_MEDIA_LIGHT_RATE_PAUSE_MS = 5 * 60 * 1000;
+let ownMediaLightPausedUntil = 0;
+
 /** Фоном размечает свет у всех медиа чата, чтобы ночью было из чего выбрать без задержки. */
 function warmOwnMediaLight(client, accountId, link, items) {
-  const key = `${accountId}:${link}`;
-  if (ownMediaLightWarmup.has(key)) return;
+  if (Date.now() < ownMediaLightPausedUntil) return;
+  if (ownMediaLightWarmup.has(link)) return;
   const todo = items.filter((i) => !cachedOwnMediaLight(i, link));
   if (!todo.length) return;
-  ownMediaLightWarmup.add(key);
+  ownMediaLightWarmup.add(link);
   (async () => {
     for (const item of todo) {
-      if (!getActiveClient(accountId)) break;
+      if (!getActiveClient(accountId) || Date.now() < ownMediaLightPausedUntil) break;
+      if (cachedOwnMediaLight(item, link)) continue;
       try {
         await getOwnMediaLight(client, item, item.type, link);
       } catch (err) {
+        if (err?.status === 429) {
+          ownMediaLightPausedUntil = Date.now() + OWN_MEDIA_LIGHT_RATE_PAUSE_MS;
+          console.error('[медиа] Лимит OpenAI — разметку света ставлю на паузу 5 мин.');
+          break;
+        }
         if (isFloodError(err)) break;
       }
-      await sleep(4000);
+      await sleep(OWN_MEDIA_LIGHT_WARMUP_STEP_MS);
     }
-  })().finally(() => ownMediaLightWarmup.delete(key));
+  })().finally(() => ownMediaLightWarmup.delete(link));
 }
 
 /** Ночью — только то, что снято в темноте или в помещении. */

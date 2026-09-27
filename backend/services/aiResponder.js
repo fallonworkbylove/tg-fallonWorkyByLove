@@ -2242,7 +2242,10 @@ async function classifyOwnMediaLight(frames) {
                 'ТЕМНО — вечер или ночь, темно, фонари, тёмное окно; ' +
                 'ПОМЕЩЕНИЕ — в помещении при лампе, дневного света не видно.',
             },
-            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${images[0].toString('base64')}` } },
+            {
+              type: 'image_url',
+              image_url: { url: `data:image/jpeg;base64,${images[0].toString('base64')}`, detail: 'low' },
+            },
           ],
         },
       ],
@@ -2253,6 +2256,8 @@ async function classifyOwnMediaLight(frames) {
     if (answer.includes('ПОМЕЩ')) return 'indoor';
     return '';
   } catch (err) {
+    // 429 отдаём наверх: фоновая разметка должна встать на паузу, а не долбить лимит ответов.
+    if (err?.status === 429) throw err;
     console.error('Ошибка определения света на медиа:', err.message);
     return '';
   }
