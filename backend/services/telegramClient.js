@@ -432,12 +432,19 @@ function isWithinWorkingHours(accountId) {
  * Пока она ещё не «легла» по своему сну — не подсовываем «ты спишь».
  */
 function getAccountTimeStyle(accountId) {
-  const info = timeStyle.getTimeStyle();
+  const info = timeStyle.getTimeStyle(undefined, accountId);
   const awake = isWithinWorkingHours(accountId);
   if (!awake) {
     return { ...info, isSleep: true, isNight: true };
   }
   if (info.isSleep) {
+    let lateFlavor = '';
+    try {
+      const { getOnlineFlavor } = require('./lifeTexture');
+      lateFlavor = ` ${getOnlineFlavor(accountId, 'late_evening')}`;
+    } catch (_) {
+      /* optional */
+    }
     return {
       ...info,
       id: 'late_evening',
@@ -447,7 +454,7 @@ function getAccountTimeStyle(accountId) {
       hint:
         `${String(info.hint || '').replace(/\s*Ты спишь\.[^.]*/i, '')} ` +
         'Уже поздно, скоро спать — отвечай короче и спокойнее, можно сказать что скоро отключишься. ' +
-        'Не пиши, что уже спишь.',
+        `Не пиши, что уже спишь.${lateFlavor}`,
     };
   }
   return info;
@@ -1823,17 +1830,26 @@ function stripContradictoryMediaParts(text) {
 // Требуем И глагол-просьбу («скинь/пришли/покажи/запиши/можешь»), И объект
 // («фото/видео/кружок/себя»), чтобы «куда едешь на кружочке?» НЕ считалось просьбой.
 const MEDIA_REQUEST_VERB_RE =
-  /(?:^|[^а-яёa-z])(?:скинь|скинешь|кинь|кинешь|пришли|пришлёшь|пришлешь|отправь|отправишь|отправляй|покажись|покажи|покажешь|запиши|запишешь|сфоткай|сфоткайся|сделай|делай|можешь|можно|давай|хочу\s+(?:увидеть|посмотреть|фото|фотк|селфи|круж|видео|видос)|дай\s+посмотреть|есть\s+фото|фото\s+есть|нет\s+фото|фото\s+нет)(?![а-яёa-z])/i;
+  /(?:^|[^а-яёa-z])(?:скинь|скинешь|кинь|кинешь|пришли|пришлёшь|пришлешь|отправь|отправишь|отправляй|покажись|покажи|покажешь|запиши|запишешь|сфоткай|сфоткайся|сделай|делай|можешь|можно|давай|хочу\s+(?:увидеть|посмотреть|фото|фотк|селфи|круж|видео|видос)|дай\s+посмотреть|есть\s+фото|фото\s+есть|нет\s+фото|фото\s+нет|send|share|show|drop|give|got|wanna\s+see|want\s+(?:to\s+)?see|can\s+i\s+see|let\s+me\s+see|could\s+i\s+(?:see|get)|may\s+i\s+see|mind\s+sending)(?![а-яёa-z])/i;
 const MEDIA_REQUEST_OBJ_RE =
-  /(фото|фотк|фоточк|фоточ|селфи|видео|видосик|видос|кружок|кружочек|кружочк|себя|как ты выглядишь|как выглядишь|своё лицо|свое лицо|личико)/i;
+  /(фото|фотк|фоточк|фоточ|селфи|видео|видосик|видос|кружок|кружочек|кружочк|себя|как ты выглядишь|как выглядишь|своё лицо|свое лицо|личико|форм[уые]|фигур[уые]|тело|в\s+полный\s+рост|pic(?:ture)?s?|photos?|selfie|selfies|video\s*notes?|yourself|your\s+(?:face|body|shape)|how\s+you\s+look|physique)/i;
 const MEDIA_REQUEST_SHORT_RE =
-  /(^|\n)\s*(а\s+|ну\s+|и\s+|ещё\s+|еще\s+|просто\s+)?(фото|фотку|фотки|фоточку|фоточки|фотографию|селфи|видео|видос|видосик|кружок|кружочек)\s*\??\s*($|\n)/i;
+  /(^|\n)\s*(а\s+|ну\s+|и\s+|ещё\s+|еще\s+|просто\s+|a\s+|just\s+|ur\s+|your\s+)?(фото|фотку|фотки|фоточку|фоточки|фотографию|селфи|видео|видос|видосик|кружок|кружочек|форму|фигуру|pic(?:ture)?s?|photos?|selfie|selfies)\s*\??\s*($|\n)/i;
 // «Что по фоточкам?», «где фотки», «фотки будут?», «селфи жду», «нет фото?» — без жёсткого порядка слов.
 const MEDIA_REQUEST_ASK_RE =
-  /((что|как|ну)\s+(там\s+)?(по|с)\s+(фот|видео|видос|круж|селфи)|(где|жду|ждём|ждем)\s+(же\s+|твои\s+|тво[её]\s+|ещё\s+|еще\s+)?(фот|видео|видос|круж|селфи)|(фот|видео|видос|круж|селфи)\w*\s+(жду|ждём|ждем|будут|будет|то\s+будут|то\s+будет|когда|есть\??|нет\??)|(нет|нету)\s+(у\s+тебя\s+)?(фот|селфи|круж|видео)|(у\s+тебя\s+)?(есть|нету?)\s+(ещё\s+|еще\s+)?(фот|селфи|круж|видео))/i;
+  /((что|как|ну)\s+(там\s+)?(по|с)\s+(фот|видео|видос|круж|селфи|форм)|(где|жду|ждём|ждем)\s+(же\s+|твои\s+|тво[её]\s+|ещё\s+|еще\s+)?(фот|видео|видос|круж|селфи|форм)|(фот|видео|видос|круж|селфи|форм)\w*\s+(жду|ждём|ждем|будут|будет|то\s+будут|то\s+будет|когда|есть\??|нет\??)|(нет|нету)\s+(у\s+тебя\s+)?(фот|селфи|круж|видео|форм)|(у\s+тебя\s+)?(есть|нету?)\s+(ещё\s+|еще\s+)?(фот|селфи|круж|видео|форм))/i;
+// EN: "can I see a pic of you?", "send me a photo", "can I see you?", "pic?"
+const MEDIA_REQUEST_EN_RE =
+  /(?:can\s+i\s+see\s+you(?:\s+\w{1,12})?\s*[?.!]*$|can\s+i\s+see\s+(?:a\s+|your\s+|some\s+)?(?:pic(?:ture)?s?|photos?|selfie|you)|let\s+me\s+see\s+(?:a\s+|your\s+|some\s+)?(?:pic(?:ture)?s?|photos?|selfie|you)|(?:send|share|show|drop|give)\s+(?:me\s+)?(?:a\s+|your\s+|some\s+)?(?:pic(?:ture)?s?|photos?|selfie)|(?:pic(?:ture)?|photo|selfie)\s+of\s+you|your\s+(?:pic(?:ture)?s?|photos?|selfie|body|shape)|(?:got|have)\s+(?:a\s+)?(?:pic(?:ture)?|photo|selfie)|wanna\s+see\s+(?:you|your\s+(?:pic|photo|face|body))|show\s+(?:me\s+)?yourself|how\s+do\s+you\s+look)/i;
 // Обещание прислать медиа «потом» — без реальной отправки выглядит как бот-стилка.
 const MEDIA_PROMISE_RE =
-  /((щас|сейчас|ща|щя)[,\s]+(подожди[,\s]+)?(найду|поищу|скину|кину|отправлю|выберу|сфоткаюсь|сфоткаю|запишу)|поищу\s+(нормальн|хорош|фот|получше)|подожди[^.?\n]{0,25}(найду|поищу|выберу|скину)|(скину|кину|отправлю)\s+(позже|потом|попозже|чуть\s+позже))/i;
+  /((щас|сейчас|ща|щя)[,\s]+(подожди[,\s]+)?(найду|поищу|пощу|скину|кину|отправлю|выберу|сфоткаюсь|сфоткаю|запишу)|поищу\s+(нормальн|хорош|фот|получше)|подожди[^.?\n]{0,25}(найду|поищу|выберу|скину)|(скину|кину|отправлю)\s+(позже|потом|попозже|чуть\s+позже)|(sec|one\s+sec|hold\s+on|give\s+me\s+a\s+(?:sec|min))[^.?\n]{0,30}(find|send|pick|look)|(?:ill|i'?ll)\s+(?:find|send|pick)\s+(?:one|a\s+pic|a\s+photo))/i;
+
+/** Сообщение-правка опечатки («*поищу» / «поищу*») — не считается последней репликой. */
+function isTypoFixMessage(content) {
+  const t = String(content || '').trim();
+  return /^\*?[а-яёa-z]{2,30}\*?$/i.test(t);
+}
 
 /**
  * Из входящего кружка/фото/видео модель видит длинное описание кадров.
@@ -1854,8 +1870,14 @@ function userTextForMediaIntent(text) {
 }
 
 function lastAssistantPromisedMedia(history) {
-  for (let i = (history || []).length - 1; i >= 0; i -= 1) {
-    if (history[i].role === 'assistant') return MEDIA_PROMISE_RE.test(String(history[i].content || ''));
+  const rows = Array.isArray(history) ? history : [];
+  let seen = 0;
+  for (let i = rows.length - 1; i >= 0 && seen < 8; i -= 1) {
+    if (rows[i].role !== 'assistant') continue;
+    const content = String(rows[i].content || '');
+    if (isTypoFixMessage(content)) continue;
+    seen += 1;
+    if (MEDIA_PROMISE_RE.test(content)) return true;
   }
   return false;
 }
@@ -1867,8 +1889,9 @@ function isExplicitMediaRequest(text, history = null) {
   if (MEDIA_REQUEST_VERB_RE.test(t) && MEDIA_REQUEST_OBJ_RE.test(t)) return true;
   if (MEDIA_REQUEST_SHORT_RE.test(t)) return true;
   if (MEDIA_REQUEST_ASK_RE.test(t)) return true;
-  if (/(есть|скинь|покажись|покажи|пришли|кинь).{0,48}(фото|фотк|видео|круж|себя|селфи)/i.test(t)) return true;
-  // Бот пообещала «щас найду», он ответил «давай» / «любые можно» — ждёт фото.
+  if (MEDIA_REQUEST_EN_RE.test(t)) return true;
+  if (/(есть|скинь|покажись|покажи|пришли|кинь).{0,48}(фото|фотк|видео|круж|себя|селфи|форм|фигур|тело)/i.test(t)) return true;
+  // Бот пообещала «щас найду», он ответил «давай» / «жду» / «любые можно» — ждёт фото.
   if (history && lastAssistantPromisedMedia(history) && t.trim().split(/\s+/).length <= 8) return true;
   return false;
 }
@@ -1890,7 +1913,13 @@ function resolveMediaPromise(outText, mediaType, text, history, hasMediaLink) {
   if (!outText || mediaType || !MEDIA_PROMISE_RE.test(outText)) {
     return { outText, forceMedia: false };
   }
-  if (!recentUserAskedMedia(text, history) && !isExplicitMediaRequest(text, history)) {
+  const promisedPhoto =
+    /(фото|фотк|селфи|форм|фигур|круж|видео|pic|photo|selfie)/i.test(String(outText));
+  if (
+    !recentUserAskedMedia(text, history) &&
+    !isExplicitMediaRequest(text, history) &&
+    !promisedPhoto
+  ) {
     return { outText, forceMedia: false };
   }
   if (hasMediaLink) {
@@ -1905,7 +1934,7 @@ function resolveMediaPromise(outText, mediaType, text, history, hasMediaLink) {
       : '';
     return { outText: soft, forceMedia: true };
   }
-  return { outText: pickMediaFailDeflect(), forceMedia: false };
+  return { outText: pickMediaFailDeflect(text), forceMedia: false };
 }
 
 function fixUnfulfilledMediaPromise(outText, mediaType, text, history) {
@@ -1915,8 +1944,10 @@ function fixUnfulfilledMediaPromise(outText, mediaType, text, history) {
 
 function detectRequestedMediaType(text) {
   const t = String(text || '');
-  if (/кружок|кружочек|video\s*note/i.test(t)) return 'circle';
-  if (/видео|видос/i.test(t)) return 'video';
+  if (/кружок|кружочек|video\s*note|circle\s*video/i.test(t)) return 'circle';
+  if (/(?:^|[^а-яёa-z])(?:видео|видос|videos?)(?![а-яёa-z])/i.test(t) && !/video\s*note/i.test(t)) {
+    return 'video';
+  }
   return 'photo';
 }
 
@@ -1926,9 +1957,16 @@ const MEDIA_FAIL_DEFLECTS = [
   'потом как-нибудь, а сейчас лучше напиши что интересного было)',
   'давай без фоток, расскажи лучше что у тебя нового)',
 ];
+const MEDIA_FAIL_DEFLECTS_EN = [
+  'ugh pics acting up, tell me about your day instead)',
+  'nah later, what are you up to rn?',
+  'cant pull one up rn, whats new with you)',
+];
 
-function pickMediaFailDeflect() {
-  return MEDIA_FAIL_DEFLECTS[Math.floor(Math.random() * MEDIA_FAIL_DEFLECTS.length)];
+function pickMediaFailDeflect(userText = '') {
+  const en = /\b(pic|photo|selfie|see you|send|show)\b/i.test(String(userText || ''));
+  const bank = en ? MEDIA_FAIL_DEFLECTS_EN : MEDIA_FAIL_DEFLECTS;
+  return bank[Math.floor(Math.random() * bank.length)];
 }
 
 // Было ли ПОСЛЕДНЕЕ сообщение бота отправкой медиа (метка [медиа:#id]).
@@ -2352,7 +2390,9 @@ async function trySendMedia(
     }
 
     try {
-      const caption = mediaType === 'circle' ? '' : pickCaption(mediaType);
+      const hist = await getHistory(accountId, peerId).catch(() => []);
+      const capLang = isRussianConversation(contextText, hist) ? 'ru' : 'en';
+      const caption = mediaType === 'circle' ? '' : pickCaption(mediaType, capLang);
       await sendMediaItem(client, sender, item, caption);
     } catch (e) {
       // Устаревшая ссылка на файл — сбрасываем кэш и пробуем ещё раз.
@@ -2360,7 +2400,9 @@ async function trySendMedia(
         clearMediaCache(accountId, link);
         record = await getMediaItems(client, accountId, link);
         item = record.items.find((i) => i.id === item.id) || item;
-        const caption = mediaType === 'circle' ? '' : pickCaption(mediaType);
+        const hist = await getHistory(accountId, peerId).catch(() => []);
+        const capLang = isRussianConversation(contextText, hist) ? 'ru' : 'en';
+        const caption = mediaType === 'circle' ? '' : pickCaption(mediaType, capLang);
         await sendMediaItem(client, sender, item, caption);
       } else {
         throw e;
@@ -2429,7 +2471,7 @@ async function sendRequestedMediaOrDeflect(
   // Лимит кружков — текст ответа уже ушёл, не подменяем на «затык с фотками».
   if (mediaType === 'circle' && (await circleRateLimited(accountId, peerId))) return false;
 
-  const deflect = pickMediaFailDeflect();
+  const deflect = pickMediaFailDeflect(contextText);
   try {
     await client.sendMessage(sender, { message: deflect });
     await saveMessage(accountId, peerId, senderName, 'assistant', deflect);
@@ -3320,6 +3362,7 @@ async function fireReengage(accountId, peerId) {
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
       accountMoodHint: accountMood.hint || null,
+      flashEmotion: moodInfo.flash || null,
       personaHint,
       emotionHint,
       sessionForgetHint,
@@ -3500,7 +3543,8 @@ async function fireReengage(accountId, peerId) {
  * ��аботает уже ��о СКЛЕЕННЫМ текстом всех сообщений серии.
  */
 
-/** ~12% шанс: отправить с опечаткой, затем поправку отдельным сообщением. */
+/** ~12% шанс: отправить с опечаткой, затем поправку отдельным сообщением.
+ *  Без «ой» / русских вставок — иначе в EN-чатах выглядит инородно. */
 function maybeTypoPair(text) {
   const src = String(text || '').trim();
   if (!src || src.length < 6 || src.length > 90) return null;
@@ -3534,19 +3578,20 @@ function maybeTypoPair(text) {
   if (broken.toLowerCase() === word.toLowerCase()) return null;
   words[idx] = broken;
   const wrong = words.join('');
-  const fixVariants = [
-    `*${word}`,
-    `ой, ${word}`,
-    `${word}*`,
-  ];
-  const fix = fixVariants[Math.floor(Math.random() * fixVariants.length)];
+  // Только *слово / слово* — без «ой», «oops» и прочих префиксов.
+  const fix = Math.random() < 0.5 ? `*${word}` : `${word}*`;
   return { wrong, fix, original: src };
 }
 
 const Q_TAG_RE = /<<\s*Q\s*:\s*([\d,]+)\s*>>\s*/gi;
 
 function stripQuestionTags(text) {
-  return String(text || '').replace(Q_TAG_RE, '').trim();
+  return String(text || '')
+    .replace(Q_TAG_RE, '')
+    // Подстраховка: если [2] всё же проскочил в текст (не в <<Q:>>)
+    .replace(/\s*\[\s*\d+(?:\s*,\s*\d+)*\s*\]\s*/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
 }
 
 /** Строки ответа + номер вопроса из тега <<Q:n>> (пустые строки выкидываем вместе с тегом). */
@@ -4127,6 +4172,7 @@ async function processBufferedMessages(
       timeHint: timeInfo.hint,
       moodHint: moodInfo.hint,
       accountMoodHint: accountMood.hint || null,
+      flashEmotion: moodInfo.flash || null,
       personaHint,
       emotionHint,
       sessionForgetHint,
@@ -4614,7 +4660,7 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90) {
 //   день -> ночь  (наступает WORK_END_HOUR):   «спокойной ночи»
 //   ночь -> день  (наступает WORK_START_HOUR):  «доброе утро»
 // Ночью пишем ТОЛЬКО тем, где последнее слово за нами (разговор на паузе);
-// непрочитанные вопросы ночью не ��рогаем.
+// непрочитанные вопросы ночью не трогаем. Если уже попрощались — молча уходим.
 // Утром пишем «доброе утро» ВСЕМ недавним, и если человек написал ночью и
 // ждёт ответа — СЛЕДОМ (вторым сообщением) отвечаем ему по теме.
 // ---------------------------------------------------------------------------
@@ -4825,6 +4871,43 @@ const GREETING_RECENT_DAYS = 3;
 // Максимум приветствий за один перех��д (антифлуд Telegram).
 const GREETING_MAX_DIALOGS = 22;
 const GREETING_SKIP_IF_BOT_WROTE_HOURS = 4;
+// Если уже попрощались за это окно — ночью молча уходим, без второго «спокойной».
+const FAREWELL_LOOKBACK_HOURS = 10;
+
+/** Прощание / «иду спать» — не слать повторную «спокойной ночи» по таймеру. */
+function looksLikeFarewell(text) {
+  const t = String(text || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!t || t.length > 280) return false;
+  if (
+    /спокойн(ой|ая)\s*ночи|доброй\s*ночи|споки|сладких\s*снов|отрубаюсь|пойду\s*спать|иду\s*спать|пора\s*спать|я\s*спать|спать\s*пора|глаза\s*(слипа|закрыв)|засыпаю|ложусь(\s*спать)?|до\s*завтра.*(спать|ночи)|good\s*night|night\s*night|\bgn\b|sweet\s*dreams|going\s*to\s*(bed|sleep)|off\s*to\s*bed|gonna\s*(sleep|pass\s*out)/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(спокойной|доброй|споки|споки-споки|бай|bb|bye|good night)([\s).!,…♥❤💕]*)$/i.test(t)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+async function dialogAlreadySaidGoodbye(accountId, peerId, hours = FAREWELL_LOOKBACK_HOURS) {
+  const mins = Math.max(1, Math.floor(Number(hours) * 60));
+  const [rows] = await db.execute(
+    `SELECT content FROM conversation_messages
+     WHERE account_id = ? AND peer_id = ?
+       AND created_at > NOW() - INTERVAL ${mins} MINUTE
+     ORDER BY id DESC
+     LIMIT 24`,
+    [accountId, String(peerId)],
+  );
+  return rows.some((row) => looksLikeFarewell(row.content));
+}
 
 async function botWroteWithin(accountId, peerId, hours) {
   const [rows] = await db.execute(
@@ -5047,7 +5130,7 @@ const IDLE_POKE_RU = [
   'скучно без тебя немного)',
   'напиши как там у тебя',
   'как день проходит?',
-  'я тут коробки разбираю, а ты чем занят?',
+  'я тут кофе пью, а ты чем занят?',
 ];
 const IDLE_POKE_EN = [
   'hey you alive?',
@@ -5168,10 +5251,10 @@ async function sendGreetings(accountId, kind, mood) {
       const hasUnanswered = !message.out;
 
       // Ночью пишем «спокойной ночи» ТОЛЬКО тем, где последнее слово за нами
-      // (разговор на паузе). Непрочитанные ночью не трогаем.
+      // (разговор на паузе). Непрочитанные ночью не трогаем — утром ответим.
       // Утром пишем «доброе утро» ВСЕМ недавним; если есть непрочитанный
       // вопрос — следом идёт обычный ответ по теме.
-      if (kind === 'night' && !hasUnanswered) continue;
+      if (kind === 'night' && hasUnanswered) continue;
 
       const sender = dialog.entity;
       if (!sender || sender.bot || sender.self || isDeletedUser(sender) || isNeverContact(sender)) continue;
@@ -5193,6 +5276,13 @@ async function sendGreetings(accountId, kind, mood) {
       if (await hasUnansweredProactive(accountId, peerId)) continue;
       // Уже переписывались недавно — «доброе утро / проспала» после свежего ответа звучит как бот.
       if (kind === 'morning' && (await botWroteWithin(accountId, peerId, GREETING_SKIP_IF_BOT_WROTE_HOURS))) continue;
+      // Собеседник (или мы) уже попрощались — по режиму сна просто молча уходим.
+      if (kind === 'night') {
+        const lastText = message.message || '';
+        if (looksLikeFarewell(lastText) || (await dialogAlreadySaidGoodbye(accountId, peerId))) {
+          continue;
+        }
+      }
 
       const senderName = sender.username || sender.firstName || peerId;
       const lang = await resolveGreetingLang(client, sender, message);

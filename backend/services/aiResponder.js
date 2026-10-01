@@ -1,6 +1,8 @@
 const OpenAI = require('openai');
 const { toFile } = require('openai');
 const { logUsage } = require('./finetuneUsage');
+const humanizeSpeech = require('./humanizeSpeech');
+const lifeTexture = require('./lifeTexture');
 
 // ---------------------------------------------------------------------------
 // ПРОКСИ для OpenAI.
@@ -188,6 +190,8 @@ function buildLanguageReminder(lang) {
       'Use contractions. Max 2 short sentences. ' +
       'Do NOT say you cannot understand Russian if they wrote in English. ' +
       'Do NOT switch to Russian. Do NOT sound translated. ' +
+      'FORBIDDEN in English chats: any Russian words (ой, сек, щас, ахах, держи, для тебя, etc.). ' +
+      'FORBIDDEN: using ")" or "))" as a smiley — write plain English without that. ' +
       'Warmth in English naturally (miss you, glad you texted, take care) — no Russian words. ' +
       'Service tokens <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> <<REACT:emoji>> stay as-is.'
     );
@@ -350,7 +354,8 @@ function enrichGeoFollowUp(history, userMessage) {
 }
 
 async function generateReply(systemPrompt, history, userMessage, options = {}) {
-  const restraint = pickRestraintReaction(userMessage, history, options);
+  const humanize = humanizeSpeech.getHumanizeProfile(options.accountId);
+  const restraint = pickRestraintReaction(userMessage, history, options, humanize);
   if (restraint) return restraint;
   const finalPrompt = systemPrompt?.trim() || DEFAULT_PROMPT;
   let contextualUserMessage = enrichShortFollowUp(history, userMessage);
@@ -446,14 +451,22 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Если он хвастается или сам себя хвалит («разрядил обстановку своим присутствием») — подколи по-доброму («ну прям герой)», «скромность украшает)»), а не поддакивай. ' +
     'БЕЗ общих истин и морали: НЕ «дружба всегда хорошая тема», «для общего развития это полезно», «иногда надо себя подталкивать», «главное - верить в себя». ' +
     'Реагируй лично — что ТЫ думаешь или чувствуешь, со своей деталью или подколом («ну давай дружить, только чур не душнить)»). ' +
-    'Будь живой: иногда сама делись мелочью из своего дня (кофе остыл, опять коробки с переездом, погода, устала) — не повторяй одну и ту же мелочь — не только отвечай на вопросы. ' +
+    'Будь живой: иногда сама делись мелочью из своего дня (кофе остыл, сериал, погода, устала, работа) — не повторяй одну и ту же мелочь — не только отвечай на вопросы. ' +
+    'На «что делаешь / чем занимаешься / как день» обычно отвечай обычным (кофе, сериал, флип, устала, ничего особенного). ' +
+    'Про сборы/коробки/переезд — редко, примерно раз в 5-6 таких вопросов, и не подряд: если недавно уже говорила про переезд — не повторяй. ' +
+    'Если он сам спросил про переезд/переезжаешь/когда приедешь — можно ответить по теме. ' +
     'Разговорные слова как у живого человека: изредка (раз в 5-6 ответов) одно из «типо», «ну», «короче», «вроде», «кстати», «хз», «блин» — ' +
     'только перед содержательной фразой. НИКОГДА перед «спасибо», «рада», «приятно», «взаимно», «окей» («короче спасибо», «эм, рада» — так не пишут). ' +
     'Характер: у тебя есть своё мнение и лёгкая вредность. Иногда не соглашайся («не, мне кажется наоборот»), подкалывай, отвечай с иронией. ' +
     'Не восторгайся каждым его сообщением («круто», «классно», «прикольно», «интересно» подряд — нет), не поддакивай и не поучай. ' +
+    'Можно редкая бытовая опечатка или разговорная форма (щас, ваще, прсто) — но НИКОГДА не исправляй себя следующим сообщением «ой, …» / «*правильно*» / «ой имела в виду». ' +
+    'Иногда отвечай ультракоротко (2–5 слов) или с «сек, …» в начале — как живой человек в чате. ' +
     'НЕ заканчивай мудростью или моралью: «главное не терять надежду», «время покажет», «жизнь удивляет», «возраст — это цифра», «иногда нужно…», «береги себя». ' +
     'На комплимент не всегда «спасибо) приятно слышать» — можно «ой всё)», «засмущал)», «ну знаю)», «хах, продолжай)» или только реакция. ' +
     'Не благодари в ответ на благодарность («да не за что, всегда рада поддержать» — нет, максимум «хах)» или реакция). ' +
+    'ЗАПРЕЩЕНО по привычке писать «не шарю», «первый раз слышу», «объясни попроще», «не поняла контекст» — ' +
+    'это звучит как бот-заготовка. Так можно ТОЛЬКО если он реально спросил про неизвестный тебе термин/тему. ' +
+    'На комплимент, реакцию на твоё фото/кружок, «???», «странная» — НЕ отвечай «не шарю». ' +
     'Ты девушка: о себе ВСЕГДА в женском роде («поняла», «рада», «не ожидала», «устала»). ' +
     'ДВ / дв / давинчик / дайвинчик — это Дайвинчик (Leomatch), бот знакомств в Telegram, где вы познакомились. Ты это прекрасно знаешь, не переспрашивай что это. ' +
     'Реакции: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
@@ -529,19 +542,20 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
       role: 'system',
       content:
         'У тебя есть возможность прислать реальные фото, видео и кружки (видеосообщения). ' +
+        'If they ask in English (pic/photo/selfie/"can I see you"/"send a pic") — same rules, reply in English and add the token. ' +
         'Если собеседник просит скинуть/показать/отправить фото, фотку, свои фотки, себя, как ты выглядишь — ' +
         'добавь в ответ токен <<PHOTO>>. Если просит видео — токен <<VIDEO>>. ' +
         'Если просит кружок/видеосообщение — токен <<CIRCLE>>. ' +
         'ВАЖНО: если ты решила прислать медиа и вставила токен — текст в этом же сообщении ' +
         'НЕ должен быть отказом или отговоркой. Никаких «пока рано», «не могу», «рано», «попозже», ' +
-        '«не кидаю», «не, давай пока тут общаться», «мне так удобнее» вместе с токеном. ' +
+        '«не кидаю», «не, давай пока тут общаться», «lets just chat here», «мне так удобнее» вместе с токеном. ' +
         'Отправляешь — значит соглашаешься: пиши дружелюбно и коротко ' +
-        '(«ща», «щас», «окей держи», «ну лови») или вообще без текста, только токен. ' +
-        'Отнекивание («пока рано», «я не кидаю незнакомым», «давай пока тут общаться») используй ТОЛЬКО когда просят твои контакты ' +
+        '(«ща», «щас», «окей держи», «ну лови», «here», «one sec») или вообще без текста, только токен. ' +
+        'Отнекивание («пока рано», «я не кидаю незнакомым», «давай пока тут общаться», «lets just chat here») используй ТОЛЬКО когда просят твои контакты ' +
         '(номер, телеграм, инсту) — и тогда токен НЕ вставляй. ' +
-        'ЗАПРЕЩЕНО писать «давай пока тут общаться» / «мне так удобнее» на вопросы про работу, флипинг, переезд или даты — ' +
+        'ЗАПРЕЩЕНО писать «давай пока тут общаться» / «lets just chat here» / «мне так удобнее» на вопросы про работу, флипинг, переезд или даты — ' +
         'это обычные вопросы, отвечай по сути текстом. ' +
-        'Просьба «запиши кружочек / скинь фото / пришли видео» — это НЕ просьба контактов: соглашайся и ставь токен, без отказа. ' +
+        'Просьба «запиши кружочек / скинь фото / пришли видео / can I see a pic / can I see you» — это НЕ просьба контактов и НЕ встреча: соглашайся и ставь токен, без отказа. ' +
         'Если собеседник спрашивает «что это?», «это акции?», «что за картинка?» или похожим образом реагирует на недавно присланное фото, ' +
         'отвечай именно про это последнее фото/медиа и не подтягивай старую тему из истории. ' +
         'Если в истории есть пометка «[фото от меня: скриншот прибыли с флиппинга NFT…]» — ты ЗНАЕШЬ, что на фото: ' +
@@ -557,7 +571,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
       role: 'system',
       content:
         'Можешь РЕДКО сама прислать кружок (видеосообщение), если это живо подходит по смыслу разговора — ' +
-        'как будто реально записываешь момент: дома с коробками, в машине, на кухне, с кофе, после тренировки, ' +
+        'как будто реально записываешь момент: дома, в машине, на кухне, с кофе, после тренировки, ' +
         'собираешься, гуляешь и т.п. Тогда добавь в ответ токен <<CIRCLE>>. ' +
         'НЕ шли кружок просто так, на каждый ответ, на приветствие, на «как дела» без темы, ' +
         'и НЕ шли фото/видео токены <<PHOTO>>/<<VIDEO>> без прямой просьбы. ' +
@@ -575,10 +589,11 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
       role: 'system',
       content:
         'Собеседник просит фото/видео/кружок, но привязанного медиа-чата нет — отправить файл нельзя. ' +
-        'НЕ обещай прислать позже и не пиши «щас поищу», «выбираю», «погоди», «скину потом». ' +
+        'НЕ обещай прислать позже и не пиши «щас поищу», «выбираю», «погоди», «скину потом», «one sec ill find». ' +
         'Коротко и тепло уйди с темы: скажи что сейчас без фоток / не в том настроении кидать, ' +
         'и сразу спроси что-то живое про него (как день, чем занят, что интересного). ' +
-        'Пример тона: «давай лучше без фоток)» — своими словами, коротко, без допроса в конце. ' +
+        'If they write in English — refuse briefly in English (no «ой», no Russian). ' +
+        'Пример тона: «давай лучше без фоток)» / «later, tell me about your day)» — своими словами, коротко. ' +
         'НЕ вставляй токены <<PHOTO>>/<<VIDEO>>/<<CIRCLE>>.',
     });
   }
@@ -661,6 +676,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   if (shortAckHint) {
     messages.push({ role: 'system', content: shortAckHint });
   }
+  const voiceCtxHint = buildVoiceContextHint(contextualUserMessage, history);
+  if (voiceCtxHint) {
+    messages.push({ role: 'system', content: voiceCtxHint });
+  }
   const ownMediaHint = buildOwnMediaHint(history);
   if (ownMediaHint) {
     messages.push({ role: 'system', content: ownMediaHint });
@@ -678,6 +697,22 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const dayDetailsHint = replyLang === 'ru' ? buildDayDetailsHint(options.accountId, userMessage, history) : null;
   if (dayDetailsHint) {
     messages.push({ role: 'system', content: dayDetailsHint });
+  }
+  if (replyLang === 'ru' && options.accountId != null) {
+    const lifeHints = lifeTexture.buildLifeTextureHints(
+      options.accountId,
+      contextualUserMessage,
+      history,
+      {
+        accountMood: options.accountMoodHint,
+        flash: options.flashEmotion || null,
+        objectionHint: options.objectionHint || null,
+        campaignHint: options.campaignHint || null,
+      },
+    );
+    for (const h of lifeHints) {
+      if (h) messages.push({ role: 'system', content: h });
+    }
   }
 
   for (const h of history || []) {
@@ -746,13 +781,24 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     const strippedName = fixIgnoredNameQuestion(strippedCall, contextualUserMessage, finalPrompt);
     const strippedAbout = fixIgnoredAboutHerself(strippedName, contextualUserMessage, finalPrompt);
     const strippedMove = fixTemporaryMoveClaim(strippedAbout, contextualUserMessage, history);
-    const strippedPolite = replaceDesignerClaims(stripPlatitudes(stripRoboticPoliteness(strippedMove, userMessage)));
+    const strippedMoveSpam = softenMoveSpamOnDayAsk(strippedMove, contextualUserMessage, history);
+    const strippedConfused = fixConfusedScript(strippedMoveSpam, contextualUserMessage, history);
+    const strippedPolite = replaceDesignerClaims(stripPlatitudes(stripRoboticPoliteness(strippedConfused, userMessage)));
     const strippedQ = stripHabitualTrailingQuestion(strippedPolite, history, contextualUserMessage);
-    const varied = varyTrailingSmile(strippedQ, history);
+    const noSelfFix = humanizeSpeech.stripSelfCorrections(strippedQ);
+    const dehyped = humanizeSpeech.softenHype(noSelfFix, history, humanize);
+    const varied = replyLang === 'en' ? dehyped : varyTrailingSmile(dehyped, history);
     const withFiller = fixMisplacedFiller(maybeAddFillerWord(varied, replyLang, history));
     const gendered = fixFemaleSelfForms(russifyUkrainian(withFiller));
     const clipped = stripDanglingTail(clipOverlongReply(gendered, maxReplyLines));
-    const noRepeatGreeting = stripRepeatGreeting(clipped, history);
+    const shortBurst = humanizeSpeech.maybeShortBurst(clipped, humanize, replyLang);
+    const withBeat = humanizeSpeech.maybeWaitBeat(shortBurst, humanize, history, replyLang);
+    const withTypos = replyLang === 'ru' ? humanizeSpeech.applyHumanTypos(withBeat, humanize) : withBeat;
+    const cleanedEn =
+      replyLang === 'en'
+        ? humanizeSpeech.stripEnParenSmiles(humanizeSpeech.stripRuLeakFromEn(withTypos))
+        : withTypos;
+    const noRepeatGreeting = stripRepeatGreeting(cleanedEn, history);
     // Ответ был одним приветствием, а мы уже здоровались — реакция вместо второго «привет)».
     if (clipped.trim() && !noRepeatGreeting.trim()) return `<<REACT:${['❤', '🥰', '😁'][Math.floor(Math.random() * 3)]}>>`;
     return lowercaseSentenceStarts(noRepeatGreeting);
@@ -933,48 +979,106 @@ function isVerbatimRepeat(reply, history) {
 const THANKS_OR_COMPLIMENT_LINE_RE =
   /^(?:ну\s+|ой\s+|да\s+|а\s+)?(?:спасибо|спс|пасиб[оа]?|благодарю|мило|очень\s+мило|приятно|взаимно|класс|красивая|красотка|красавица|милая|милашка|ты\s+(?:очень\s+)?(?:красивая|милая|классная|прикольная|симпатичная|хорошая)|(?:ты\s+)?(?:очень\s+)?(?:красивая|милая)|обнимаю|целую)[\s).!,]*$/i;
 
+const RESTRAINT_EXTRA_ACK_RE =
+  /^(?:ну\s+)?(?:лол|кек|хах+|ахах+|хм|эм|🔥|👍|😁|😂|❤|❤️|🥰|😘)+[\s).!]*$/i;
+
 /**
- * На голое «спасибо / мило / ты красивая / 😘» живая девушка часто
- * просто ставит реакцию, а не отвечает «спасибо) приятно слышать)».
+ * На голое «спасибо / мило / ты красивая / 😘 / ага / ок» живая девушка часто
+ * просто ставит реакцию, а не отвечает текстом.
  */
-function pickRestraintReaction(userMessage, history, options = {}) {
+function pickRestraintReaction(userMessage, history, options = {}, humanize = null) {
   if (options.campaignHint || options.objectionHint) return null;
   const bare = bareUserText(userMessage);
   if (!bare || /\?/.test(bare)) return null;
   const lines = bare.split('\n').map((l) => l.replace(/\p{Extended_Pictographic}|[\uFE0F\u200D]/gu, '').trim());
   const emojiOnly = lines.every((l) => !l) && /\p{Extended_Pictographic}/u.test(bare);
   const thanks = lines.filter(Boolean).length > 0 && lines.filter(Boolean).every((l) => THANKS_OR_COMPLIMENT_LINE_RE.test(l));
-  if (!emojiOnly && !thanks) return null;
+  // SHORT_ACK_RE объявлен ниже — function hoisting не для const, поэтому isShortAck после инициализации.
+  // Здесь дублируем мягкую проверку через отложенный вызов:
+  const shortAck =
+    (typeof isShortAck === 'function' && isShortAck(userMessage)) ||
+    (lines.filter(Boolean).length > 0 && lines.filter(Boolean).every((l) => RESTRAINT_EXTRA_ACK_RE.test(l)));
+  if (!emojiOnly && !thanks && !shortAck) return null;
   const lastBot = [...(Array.isArray(history) ? history : [])].reverse().find((h) => h && h.role === 'assistant');
   if (lastBot && /^\s*\[реакция/i.test(String(lastBot.content || ''))) return null;
-  if (Math.random() > 0.4) return null;
-  const pool = /спасибо|спс|пасиб|благодар/i.test(bare) ? ['😁', '❤', '🥰'] : ['🥰', '❤', '😘', '😁'];
+  if (!humanizeSpeech.shouldRestraintReact(humanize)) return null;
+  const pool = /спасибо|спс|пасиб|благодар/i.test(bare)
+    ? ['😁', '❤', '🥰']
+    : shortAck
+      ? ['😁', '❤', '👍', '🔥']
+      : ['🥰', '❤', '😘', '😁'];
   return `<<REACT:${pool[Math.floor(Math.random() * pool.length)]}>>`;
 }
 
 const DAY_DETAILS_RU = [
-  'с утра таскала коробки, спина отваливается',
-  'кофе опять остыл, пока собирала вещи',
+  'кофе опять остыл, пока в телефоне сидела',
   'нашла в шкафу старые фотки и залипла на час',
-  'скотч для коробок закончился в самый нужный момент',
   'соседи сверху с утра что-то сверлят',
   'заказала роллы, курьер ехал целый час',
   'досмотрела сериал почти до 3 ночи, теперь сонная',
-  'сломала ноготь об коробку, обидно',
   'сегодня удачно перепродала токен, настроение норм',
   'купленный токен пока в минусе, жду когда отрастёт',
-  'мама звонила, спрашивала когда уже приеду',
-  'выкинула кучу старых вещей, прям легче стало',
+  'мама звонила, болтали минут двадцать',
   'пыталась готовить, получилось так себе',
   'в магазине забыла, зачем вообще пришла',
-  'разбила кружку, пока упаковывала посуду',
   'голова с утра побаливает, пью чай',
-  'продаю шкаф на авито, пишут одни странные',
-  'подружка приходила помогать собираться, в итоге больше болтали',
-  'полдня искала зарядку, а она была в коробке',
+  'полдня искала зарядку, а она была под подушкой',
   'хочу сладкого, но лень идти в магаз',
+  'с утра листала рилсы и время улетело',
+  'ногти подкрасила криво, переделываю',
+  'на улице мокро, сижу дома в пледе',
+  'подружка написала, болтаем уже час',
+  'купила круассан, оказался сухой',
+  'забыла разморозить ужин, теперь жду',
+  'плечо затекло от ноута, разминаюсь',
+  // редко: 2 из ~22 — иногда всплывает «собираю вещи», не каждый день
+  'собираю вещи потихоньку, устала уже',
+  'опять с коробками возилась полчаса',
 ];
-const DAY_ASK_RE = /(как\s+(твой\s+)?день|как\s+дела|как\s+ты|что\s+делаешь|чем\s+занята|чем\s+занимаешься\s+сейчас|что\s+нового|как\s+прошёл|как\s+прошел|чё\s+делаешь|че\s+делаешь|что\s+у\s+тебя)/i;
+const DAY_ASK_RE = /(как\s+(твой\s+)?день|как\s+дела|как\s+ты|что\s+делаешь|чем\s+занята|чем\s+(ты\s+)?занимаешься|что\s+нового|как\s+прошёл|как\s+прошел|чё\s+делаешь|че\s+делаешь|что\s+у\s+тебя|чем\s+занят[аы]?)/i;
+const MOVE_SPAM_RE =
+  /(переезд|переезжа|коробк|собира(ю|юсь|емся|ться)\s+(вещи|чемодан)|упаковыва|сборы|к\s+маме\s+пере)/i;
+const MOVE_SPAM_FALLBACKS = [
+  'ничего особенного, кофе пью)',
+  'дома сижу, сериал фоном)',
+  'флип смотрю потихоньку)',
+  'просто отдыхаю)',
+  'устала немного, валяюсь)',
+];
+/** Доля ответов на «что делаешь», где можно оставить тему сборов (~1 из 5). */
+const MOVE_ON_DAY_ASK_CHANCE = 0.2;
+
+/**
+ * На «что делаешь / как день» тема переезда/коробок — редко, не подряд.
+ * Если недавно уже говорила про это — режем. Иначе ~20% оставляем.
+ */
+function softenMoveSpamOnDayAsk(reply, userMessage, history) {
+  const msg = String(userMessage || '');
+  if (!DAY_ASK_RE.test(msg)) return reply;
+  if (/(переезд|переезжа|когда\s+(ты\s+)?(при|у)е|куда\s+(ты\s+)?пере|коробк|сборы)/i.test(msg)) {
+    return reply;
+  }
+  const text = String(reply || '').trim();
+  if (!text || !MOVE_SPAM_RE.test(text)) return reply;
+
+  const recentBot = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-10)
+    .map((h) => String(h.content || ''))
+    .join('\n');
+  const recentlyMentioned = MOVE_SPAM_RE.test(recentBot);
+  if (!recentlyMentioned && Math.random() < MOVE_ON_DAY_ASK_CHANCE) return reply;
+
+  const cleaned = text
+    .split('\n')
+    .map((line) => (MOVE_SPAM_RE.test(line) ? '' : line))
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  if (cleaned.length >= 8 && !MOVE_SPAM_RE.test(cleaned)) return cleaned;
+
+  return MOVE_SPAM_FALLBACKS[Math.floor(Math.random() * MOVE_SPAM_FALLBACKS.length)];
+}
 
 function seededPick(seedStr, arr, n) {
   let h = 2166136261;
@@ -1007,7 +1111,8 @@ function buildDayDetailsHint(accountId, userMessage, history) {
     (asked
       ? 'Он спрашивает про тебя — ответь одной из них своими словами, коротко. '
       : 'Можешь (не обязана) вставить одну, только если к месту. ') +
-    'Не вываливай все сразу и не повторяй то, что уже рассказывала.'
+    'Не вываливай все сразу и не повторяй то, что уже рассказывала. ' +
+    'Про сборы/коробки — только если эта мелочь в списке выше; не тащи переезд из общего промпта персонажа.'
   );
 }
 
@@ -1177,9 +1282,15 @@ function buildMultiQuestionHint(userMessage, questions) {
 function convertQuestionTags(text) {
   return String(text || '')
     .split('\n')
-    .map((line) =>
-      line.replace(/^\s*\[\s*(\d+(?:\s*,\s*\d+)*)\s*\]\s*[-:.)]?\s*/, (_, nums) => `<<Q:${nums.replace(/\s+/g, '')}>> `),
-    )
+    .map((line) => {
+      let l = line.replace(
+        /^\s*\[\s*(\d+(?:\s*,\s*\d+)*)\s*\]\s*[-:.)]?\s*/,
+        (_, nums) => `<<Q:${nums.replace(/\s+/g, '')}>> `,
+      );
+      // Остаточные [1]/[2,3] внутри строки — не для reply, только мусор
+      l = l.replace(/\s*\[\s*\d+(?:\s*,\s*\d+)*\s*\]\s*/g, ' ');
+      return l.replace(/[ \t]{2,}/g, ' ').trimEnd();
+    })
     .join('\n');
 }
 
@@ -1218,7 +1329,7 @@ function fixTemporaryMoveClaim(reply, userMessage, history) {
 }
 
 const SHORT_ACK_RE =
-  /^(хорошо|хоршо|ок|окей|оке|окэй|ok|ладно|лан|понятно|понятненько|ясно|ясненько|пон|понял|поняла|норм|нормально|молодец|молодчина|умница|красава|красавица|класс|круто|супер|отлично|ага|угу|ну\s+да|да|ну\s+ок|ну\s+ладно|бывает|ну\s+бывает|прикольно|ааа|а+\s*понятно)[\s).!👍😊🙂☺️❤️]*$/i;
+  /^(хорошо|хоршо|ок|окей|оке|окэй|ok|ладно|лан|понятно|понятненько|ясно|ясненько|пон|понял|поняла|норм|нормально|молодец|молодчина|умница|красава|красавица|класс|круто|супер|отлично|ага|угу|ну\s+да|да|ну\s+ок|ну\s+ладно|бывает|ну\s+бывает|прикольно|ааа|а+\s*понятно|лол|кек|хах+|ахах+|хм|эм)[\s).!👍😊🙂☺️❤️🔥😁😂❤🥰😘]*$/i;
 
 function bareUserText(userMessage) {
   return String(userMessage || '')
@@ -1237,11 +1348,90 @@ function buildShortAckHint(userMessage) {
   const said = bareUserText(userMessage).replace(/\s+/g, ' ').slice(0, 40);
   return (
     `Он ответил коротким «${said}» — это не вопрос и не комплимент, за это не благодарят. ` +
-    'ЗАПРЕЩЕНО: «спасибо», «всё нормально», «всё хорошо», «рада что тебе нравится», «стараюсь держаться в тонусе». ' +
+    'ЗАПРЕЩЕНО: «спасибо», «всё нормально», «всё хорошо», «рада что тебе нравится», «стараюсь держаться в тонусе», ' +
+    '«не шарю», «первый раз слышу», «объясни попроще». ' +
     'Как живая девушка: коротко продолжи тему своей деталью (что у тебя сейчас происходит, что делаешь, что бесит/радует), ' +
     'или подколи его, или переведи на своё («кстати, а я сегодня…»). ' +
     'Если сказать нечего — только реакция <<REACT:👍>> или <<REACT:😁>> без текста.'
   );
+}
+
+const CONFUSED_SCRIPT_RE =
+  /(?:не\s+шар[юи]|первый\s+раз\s+слышу|объясни\s+попроще|не\s+поняла\s+контекст|что[- ]то\s+не\s+так\s+поняла)/i;
+const REAL_TOPIC_Q_RE =
+  /(?:что\s+такое|что\s+за|как\s+это\s+работает|в\s+смысле|пакет\s+документ|нфт|nft|токен|флип|крипт|блокчейн|платформ)/i;
+const WARM_RECENT_RE =
+  /(?:милая|красив|секси|нрав|😍|🥰|😘|кружок|фото|умниц|очаровательн|спасибо|нифига\s+ты)/i;
+
+/**
+ * Whisper часто криво расшифровывает голос → модель уходит в «не шарю».
+ * Подсказываем держать нить диалога.
+ */
+function buildVoiceContextHint(userMessage, history) {
+  const msg = String(userMessage || '');
+  if (!/\[Голосовое\]/i.test(msg)) return null;
+  const recent = (Array.isArray(history) ? history : []).slice(-6);
+  const recentText = recent.map((h) => String(h.content || '')).join('\n');
+  const warm = WARM_RECENT_RE.test(recentText);
+  const body = msg.replace(/\[Голосовое\]:\s*/gi, '').trim();
+  return (
+    'Это расшифровка ГОЛОСОВОГО — Whisper часто врёт и врёт сильно. ' +
+    'Смотри на весь недавний диалог, не только на странную расшифровку. ' +
+    (warm
+      ? 'Перед этим был тёплый/флиртовый разговор или твоё медиа — не срывайся в «не шарю / первый раз слышу / объясни попроще». '
+      : '') +
+    (body
+      ? `Расшифровка: «${body.slice(0, 160)}». Если звучит невпопад — коротко «чего-чего?) / не расслышала)» или среагируй по атмосфере диалога. `
+      : '') +
+    '«не шарю» — только если он реально спросил про термин/тему, в которой ты не разбираешься.'
+  );
+}
+
+const CONFUSED_FALLBACKS = [
+  'чего-чего?)',
+  'не расслышала)',
+  'ахах погоди, ещё раз)',
+  'хм, не пойму)',
+];
+
+/**
+ * Убирает заезженный скрипт «не шарю / первый раз слышу», когда это не к месту.
+ */
+function fixConfusedScript(reply, userMessage, history) {
+  const text = String(reply || '').trim();
+  if (!text || !CONFUSED_SCRIPT_RE.test(text)) return reply;
+
+  const msg = bareUserText(userMessage);
+  const recent = (Array.isArray(history) ? history : [])
+    .slice(-8)
+    .map((h) => String(h.content || ''))
+    .join('\n');
+
+  // После «???» / «странная» — не продолжать тот же скрипт.
+  if (/^\?+$/i.test(msg) || /странн/i.test(msg)) {
+    return 'ахах ладно, проехали)';
+  }
+
+  const realTopic = REAL_TOPIC_Q_RE.test(msg);
+  const warmContext = WARM_RECENT_RE.test(recent) || THANKS_OR_COMPLIMENT_LINE_RE.test(msg);
+  const isVoice = /\[Голосовое\]/i.test(String(userMessage || ''));
+
+  // Комплимент / тёплый контекст / голос без явной техтемы — режем скрипт.
+  if (!realTopic && (warmContext || isVoice || SHORT_ACK_RE.test(msg))) {
+    if (isVoice) {
+      return CONFUSED_FALLBACKS[Math.floor(Math.random() * CONFUSED_FALLBACKS.length)];
+    }
+    if (THANKS_OR_COMPLIMENT_LINE_RE.test(msg)) {
+      return ['ой всё)', 'засмущал)', 'хах ну ты)', 'ну знаю)'][Math.floor(Math.random() * 4)];
+    }
+    return CONFUSED_FALLBACKS[Math.floor(Math.random() * CONFUSED_FALLBACKS.length)];
+  }
+
+  // Уже писала этот скрипт недавно — не повторять.
+  if (CONFUSED_SCRIPT_RE.test(recent)) {
+    return CONFUSED_FALLBACKS[Math.floor(Math.random() * CONFUSED_FALLBACKS.length)];
+  }
+  return reply;
 }
 
 function buildOwnMediaHint(history) {
@@ -1849,7 +2039,7 @@ function fixIgnoredAboutHerself(reply, userMessage, prompt) {
 
   const name = extractCharacterName(prompt);
   const about = /флип|nft|нфт|токен/i.test(String(prompt || ''))
-    ? 'флипингом цифровых токенов занимаюсь, ну и переезд сейчас'
+    ? 'флипингом цифровых токенов занимаюсь)'
     : 'в основном дома и по работе кручусь';
   if (/допрос|допрашива/i.test(msg)) {
     return `хах ну да любопытная) ${about}`;
