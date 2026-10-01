@@ -97,9 +97,26 @@ async function findOrCreateUser(tgUser) {
  * Express-middleware: проверяет заголовок X-Telegram-Init-Data,
  * находит/создаёт пользователя в БД и кладёт его в req.dbUser.
  */
+function datingWorkerSecretOk(req) {
+  const expected = String(process.env.DATING_WORKER_SECRET || '').trim();
+  if (!expected) return false;
+  const got = String(
+    req.header('X-Dating-Worker-Secret') ||
+      req.header('x-dating-worker-secret') ||
+      '',
+  ).trim();
+  return got.length > 0 && got === expected;
+}
+
 module.exports = async function telegramAuth(req, res, next) {
   // Health-check пропускаем без авторизации
   if (req.path === '/api/health') return next();
+
+  // Tagged Playwright-воркер: секрет вместо miniapp initData
+  if (req.path === '/api/dating-sites/outreach' && datingWorkerSecretOk(req)) {
+    req.datingWorker = true;
+    return next();
+  }
 
   try {
     const initData = req.header('X-Telegram-Init-Data');

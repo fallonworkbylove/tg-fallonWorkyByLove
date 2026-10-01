@@ -10,11 +10,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Telegram Mini App</title>
-    <meta name="format-detection" content="telephone=no" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <link rel="stylesheet" href="styles.css?v=23" />
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
-    <meta http-equiv="Pragma" content="no-cache" />
+    <link rel="stylesheet" href="styles.css?v=8" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -34,6 +30,7 @@
             <p class="eyebrow">Telegram Mini App</p>
             <h1 id="page-title">Панель</h1>
           </div>
+          <button class="icon-btn" type="button">⋯</button>
         </div>
       </header>
 
@@ -54,6 +51,8 @@
               <button id="bulk-stop-panel" class="btn btn-secondary bulk-action" data-action="bulk-stop" type="button">Выключить все аккаунты</button>
             </div>
             <button class="btn btn-secondary" data-action="open-accounts" type="button">Добавить аккаунт</button>
+            <button class="btn btn-secondary" data-action="open-dating" type="button" data-beta-only hidden>Сайты знакомств</button>
+            <button class="btn btn-secondary" data-action="topup" type="button">Пополнить</button>
             <button class="btn btn-danger" data-action="logout" type="button">Выйти</button>
           </div>
 
@@ -67,7 +66,7 @@
             <form id="account-form" class="form-grid">
               <label>
                 <span>Телефон</span>
-                <input id="account-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+7 999 000 00 00" required />
+                <input id="account-phone" type="text" placeholder="+79990000000" required />
               </label>
 
               <label id="account-code-field" hidden>
@@ -94,6 +93,7 @@
           <div class="section-card card">
             <div class="section-card__header">
               <h3>Лимиты</h3>
+              <span class="badge badge-soft">Бесплатно</span>
             </div>
             <div id="limits-values" class="limits-grid">
               <div>
@@ -124,6 +124,99 @@
           </div>
         </section>
 
+        <section class="tab-panel" data-panel="dating" data-beta-only hidden>
+          <div class="panel-hero card">
+            <div class="panel-hero__icon">💘</div>
+            <div>
+              <h2>Сайты знакомств</h2>
+              <p>Подключи Tagged: ИИ пишет на сайте и через ~3–4 минуты зовёт в твой Telegram.</p>
+            </div>
+          </div>
+
+          <div class="section-card card">
+            <h3>Как это работает (бета)</h3>
+            <ul class="list">
+              <li>Подключаешь логин Tagged и указываешь свой Telegram @username.</li>
+              <li>Через ~3–4 минуты общения на сайте ИИ мягко зовёт собеседника в этот TG.</li>
+              <li>У каждого аккаунта Tagged — свой Telegram. Несколько профилей = несколько TG.</li>
+              <li>Опционально укажи Dolphin Anty profile id — воркер откроет Tagged в этом профиле.</li>
+              <li>Кнопка «Экспорт воркеру» готовит файл для работы на сервере / ПК.</li>
+            </ul>
+            <p id="dating-invite-preview" class="form-hint" hidden></p>
+            <div class="action-row">
+              <button class="btn btn-secondary" type="button" data-action="dating-preview">Пример инвайта</button>
+              <button class="btn btn-secondary" type="button" data-action="dating-export">Экспорт воркеру</button>
+            </div>
+          </div>
+
+          <div class="section-card card">
+            <h2>Подключить сайт</h2>
+            <form id="dating-form" class="form-grid">
+              <label>
+                <span>Сайт</span>
+                <select id="dating-site">
+                  <option value="tagged" selected>Tagged (app.tagged.com)</option>
+                </select>
+              </label>
+              <label>
+                <span>Логин / email сайта</span>
+                <input id="dating-login" type="text" placeholder="email@example.com" required autocomplete="username" />
+              </label>
+              <label>
+                <span>Пароль сайта</span>
+                <input id="dating-password" type="password" placeholder="Пароль от аккаунта на сайте" required autocomplete="current-password" />
+              </label>
+              <label>
+                <span>Имя персонажа</span>
+                <input id="dating-persona-name" type="text" placeholder="Mila" />
+              </label>
+              <label>
+                <span>Telegram для инвайта</span>
+                <input id="dating-tg" type="text" placeholder="@username" required />
+              </label>
+              <label>
+                <span>Связать с TG-аккаунтом бота (опционально)</span>
+                <select id="dating-tg-account">
+                  <option value="">— не связывать —</option>
+                </select>
+              </label>
+              <label>
+                <span>Dolphin Anty profile id (опционально)</span>
+                <input id="dating-dolphin" type="text" placeholder="123456789" autocomplete="off" />
+              </label>
+              <label>
+                <span>Язык общения на сайте</span>
+                <select id="dating-lang">
+                  <option value="en">English</option>
+                  <option value="ru">Русский</option>
+                </select>
+              </label>
+              <label>
+                <span>Инвайт в TG через (сек), от</span>
+                <input id="dating-invite-min" type="number" min="60" max="900" value="180" />
+              </label>
+              <label>
+                <span>до</span>
+                <input id="dating-invite-max" type="number" min="60" max="900" value="240" />
+              </label>
+              <label>
+                <span>Промпт персонажа</span>
+                <textarea id="dating-prompt" rows="3" placeholder="Friendly girl on Tagged, short warm replies…"></textarea>
+              </label>
+              <p id="dating-form-hint" class="form-hint" hidden></p>
+              <button id="dating-submit" class="btn btn-primary full" type="submit">Подключить</button>
+            </form>
+          </div>
+
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Подключённые сайты</h3>
+              <button class="btn btn-secondary small" type="button" data-action="refresh-dating">Обновить</button>
+            </div>
+            <div id="dating-list" class="stack"></div>
+          </div>
+        </section>
+
         <section class="tab-panel" data-panel="learn">
           <div class="section-card card">
             <div class="section-card__header">
@@ -134,7 +227,7 @@
           </div>
 
           <div class="section-card card">
-            <h3 id="example-form-title">Новый пример</h3>
+            <h3>Новый пример</h3>
             <form id="example-form" class="form-grid">
               <label>
                 <span>Аккаунт</span>
@@ -152,10 +245,7 @@
                 <span>Заметка</span>
                 <input id="example-note" type="text" placeholder="Например: отвечать конкретнее, без воды" />
               </label>
-              <div class="example-form__actions">
-                <button id="example-cancel" class="btn btn-secondary" type="button" hidden>Отмена</button>
-                <button id="example-submit" class="btn btn-primary" type="submit">Сохранить пример</button>
-              </div>
+              <button class="btn btn-primary full" type="submit" data-action="save-example">Сохранить пример</button>
             </form>
           </div>
         </section>
@@ -170,7 +260,7 @@
             <ul class="list">
               <li>Добавляйте аккаунты с промптом и проверяйте лимиты.</li>
               <li>Сохраняйте проверенные сценарии в разделе Учить.</li>
-              <li>Задержку ответа задавайте в карточке аккаунта. Черный список — в разделе Опции.</li>
+              <li>Настройте задержку и черный список в разделе Опции.</li>
             </ul>
           </div>
         </section>
@@ -179,6 +269,19 @@
           <div class="section-card card">
             <h2>Опции</h2>
             <div class="form-grid">
+              <label>
+                <span>Задержка ответов</span>
+                <input id="delay-input" type="number" min="15" max="25" value="15" />
+              </label>
+              <label>
+                <span>Минимум секунд</span>
+                <input id="min-input" type="number" min="15" max="25" value="15" />
+              </label>
+              <label>
+                <span>Максимум секунд</span>
+                <input id="max-input" type="number" min="15" max="25" value="25" />
+              </label>
+              <button id="save-options" class="btn btn-primary" type="button" data-action="save-options">Сохранить</button>
               <label>
                 <span>Blacklist</span>
                 <input id="blacklist-input" type="text" placeholder="User ID" />
@@ -205,7 +308,6 @@
           <div id="stats-cards" class="stats-grid"></div>
           <div class="section-card card">
             <h3>Сообщения по аккаунтам</h3>
-            <p style="opacity:.7;margin:6px 0 0;">Полный счётчик, автообновление каждую минуту</p>
             <div class="action-row account-bulk-actions">
               <button class="btn btn-primary" data-action="bulk-start" type="button">Включить все аккаунты</button>
               <button class="btn btn-secondary" data-action="bulk-stop" type="button">Выключить все аккаунты</button>
@@ -213,85 +315,19 @@
             <div id="stats-accounts" class="stack"></div>
           </div>
         </section>
-
-        <section class="tab-panel" data-panel="profiles">
-          <div class="section-card card">
-            <div class="section-card__header">
-              <h3>Мои анкеты</h3>
-              <span class="badge badge-soft">Лендинг</span>
-            </div>
-            <p>Создавайте анкеты и копируйте ссылку на лендинг для трафика.</p>
-            <div class="action-row" style="margin-top:10px;">
-              <button class="btn btn-primary" id="profile-create-btn" type="button">Создать анкету</button>
-              <button class="btn btn-secondary" id="profile-refresh-btn" type="button">Обновить</button>
-            </div>
-            <p id="profiles-error" class="form-hint" hidden></p>
-            <div id="profiles-list" class="stack" style="margin-top:12px;"></div>
-          </div>
-
-          <div class="section-card card" id="profile-form-card" hidden>
-            <h3 id="profile-form-title">Новая анкета</h3>
-            <form id="profile-form" class="form-grid">
-              <input type="hidden" id="profile-id" value="" />
-              <label>
-                <span>Имя</span>
-                <input id="profile-name" type="text" maxlength="100" required placeholder="Алина" />
-              </label>
-              <label>
-                <span>Возраст</span>
-                <input id="profile-age" type="number" min="18" max="45" required placeholder="23" />
-              </label>
-              <label>
-                <span>Город</span>
-                <input id="profile-city" type="text" maxlength="100" placeholder="Москва" />
-              </label>
-              <label>
-                <span>О себе</span>
-                <textarea id="profile-bio" rows="3" placeholder="Описание от лица девушки"></textarea>
-              </label>
-              <label>
-                <span>Ссылка Telegram</span>
-                <input id="profile-tg" type="url" placeholder="https://t.me/username" />
-              </label>
-              <label>
-                <span>Фото</span>
-                <input id="profile-photo-file" type="file" accept="image/*" />
-              </label>
-              <p id="profile-photo-status" class="form-hint" hidden></p>
-              <label>
-                <span>Или ссылка на фото (URL)</span>
-                <input id="profile-photo" type="url" placeholder="https://..." />
-              </label>
-              <div class="profile-photo-preview-wrap">
-                <img id="profile-photo-preview" class="profile-thumb" alt="" hidden />
-              </div>
-              <label class="profile-toggle">
-                <span>Анкета активна</span>
-                <input id="profile-active" type="checkbox" checked />
-              </label>
-              <div class="example-form__actions">
-                <button id="profile-cancel" class="btn btn-secondary" type="button">Отмена</button>
-                <button id="profile-submit" class="btn btn-primary" type="submit">Сохранить анкету</button>
-              </div>
-            </form>
-          </div>
-        </section>
       </main>
 
       <nav class="bottom-nav" aria-label="Вкладки">
         <button class="nav-btn active" data-tab="panel" type="button">Панель</button>
-        <button class="nav-btn" data-tab="accounts" type="button">Аккаунты</button>
+        <button class="nav-btn" data-tab="accounts" type="button">TG</button>
+        <button class="nav-btn" data-tab="dating" type="button" data-beta-only hidden>Сайты</button>
         <button class="nav-btn" data-tab="learn" type="button">Учить</button>
-        <button class="nav-btn" data-tab="profiles" type="button">Анкеты</button>
-        <button class="nav-btn" data-tab="info" type="button">Инфо</button>
         <button class="nav-btn" data-tab="options" type="button">Опции</button>
         <button class="nav-btn" data-tab="stats" type="button">Статы</button>
       </nav>
     </div>
 
-    <div id="app-snackbar" class="app-snackbar" hidden>Сохранено ✅</div>
-
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=23"></script>
+    <script src="app.js?v=12"></script>
     </body>
     </html>

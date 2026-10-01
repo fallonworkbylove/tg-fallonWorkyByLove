@@ -3,15 +3,6 @@ const tg = window.Telegram?.WebApp || null;
 if (tg) {
   tg.ready();
   tg.expand();
-  try {
-    if (typeof tg.disableVerticalSwipes === 'function') tg.disableVerticalSwipes();
-  } catch (_) {}
-  try {
-    if (typeof tg.setHeaderColor === 'function') tg.setHeaderColor('#111827');
-  } catch (_) {}
-  try {
-    if (typeof tg.setBackgroundColor === 'function') tg.setBackgroundColor('#111827');
-  } catch (_) {}
 }
 
 function isTelegramWebApp() {
@@ -142,6 +133,14 @@ const api = {
       method: 'POST',
     }),
 
+  getOptions: () => request('/options'),
+
+  saveDelay: (delayMin, delayMax) =>
+    request('/options/delay', {
+      method: 'POST',
+      body: { delayMin, delayMax },
+    }),
+
   getBlacklist: () => request('/blacklist'),
 
   addBlacklist: (userId) =>
@@ -186,78 +185,82 @@ const api = {
       body: data,
     }),
 
-  updateExample: (id, data) =>
-    request(`/examples/${id}`, {
-      method: 'PUT',
-      body: data,
+  getConversations: () => request('/accounts/conversations'),
+
+  getDatingSites: () => request('/dating-sites'),
+
+  addDatingSite: (payload) =>
+    request('/dating-sites', {
+      method: 'POST',
+      body: payload,
     }),
 
-  deleteExample: (id) =>
-    request(`/examples/${id}`, {
+  updateDatingSite: (id, payload) =>
+    request(`/dating-sites/${id}`, {
+      method: 'PATCH',
+      body: payload,
+    }),
+
+  deleteDatingSite: (id) =>
+    request(`/dating-sites/${id}`, {
       method: 'DELETE',
     }),
 
-  getConversations: () => request('/accounts/conversations'),
+  exportDatingWorker: () =>
+    request('/dating-sites/export-worker', {
+      method: 'POST',
+      body: {},
+    }),
+
+  previewDatingInvite: (tg, lang) =>
+    request(
+      `/dating-sites/invite-preview?tg=${encodeURIComponent(tg || '')}&lang=${encodeURIComponent(lang || 'en')}`,
+    ),
 
   clearConversation: (accountId, peerId) =>
     request(`/accounts/conversations/${accountId}/${peerId}`, {
       method: 'DELETE',
     }),
 
-  getStats: (force = false) =>
-    request(force ? '/stats?refresh=1' : '/stats'),
+  getStats: () => request('/stats'),
 };
 
 /**
  * Начальное состояние не содержит тестовых данных.
  * После загрузки страницы значения заменяются данными backend.
  */
-const ALLOWED_TABS = [
-  'panel',
-  'accounts',
-  'learn',
-  'profiles',
-  'info',
-  'options',
-  'stats',
-];
-
-function resolveInitialTab() {
-  try {
-    const saved = localStorage.getItem('currentTab');
-    if (ALLOWED_TABS.includes(saved)) return saved;
-  } catch (_) {}
-  return 'panel';
-}
-
 const state = {
-  activeTab: resolveInitialTab(),
+  activeTab: localStorage.getItem('currentTab') || 'panel',
 
   dashboard: {
+    balance: 0,
+    subscription: false,
     accountsUsed: 0,
     accountsLimit: 10,
     messages: 0,
+    isBetaTester: false,
   },
 
   accounts: [],
+  datingAccounts: [],
   examples: [],
   conversations: [],
+
+  options: {
+    delay: 15,
+    min: 15,
+    max: 25,
+  },
 
   blacklist: [],
   photoExceptions: [],
 
   stats: {
     messages: 0,
+    referrals: 0,
+    income: 0,
     accounts: 0,
-    messagesByAccount: [],
-    computedAt: 0,
-    nextUpdateAt: 0,
   },
-  autoRefreshTimer: null,
-  autoRefreshInFlight: false,
-
-  profiles: [],
-  profileEditingId: null,
 };
 
 const elements = {
@@ -267,6 +270,10 @@ const elements = {
   panelSummary: document.getElementById('panel-summary'),
   panelAccounts: document.getElementById('panel-accounts'),
   accountsList: document.getElementById('accounts-list'),
+  datingList: document.getElementById('dating-list'),
+  datingForm: document.getElementById('dating-form'),
+  datingTgAccount: document.getElementById('dating-tg-account'),
+  datingFormHint: document.getElementById('dating-form-hint'),
   accountForm: document.getElementById('account-form'),
   exampleForm: document.getElementById('example-form'),
   learnList: document.getElementById('learn-list'),
@@ -275,6 +282,9 @@ const elements = {
   statsCards: document.getElementById('stats-cards'),
   statsAccounts: document.getElementById('stats-accounts'),
   optionsPreview: document.getElementById('options-preview'),
+  delayInput: document.getElementById('delay-input'),
+  minInput: document.getElementById('min-input'),
+  maxInput: document.getElementById('max-input'),
   blacklistInput: document.getElementById('blacklist-input'),
   addBlacklist: document.getElementById('add-blacklist'),
   clearBlacklist: document.getElementById('clear-blacklist'),
@@ -302,30 +312,8 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
-function shownDelayPair(min, max) {
-  const a = Number(min);
-  const b = Number(max);
-  if (!Number.isFinite(a) || !Number.isFinite(b) || (a <= 8 && b <= 15)) return [25, 50];
-  const low = Math.min(90, Math.max(8, Math.round(a)));
-  const high = Math.min(90, Math.max(8, Math.round(b)));
-  return low <= high ? [low, high] : [high, low];
-}
-
-function normalizePhone(value) {
-  let digits = String(value || '').replace(/\D/g, '');
-  if (!digits) return '';
-  if (digits.length === 11 && digits.startsWith('8')) digits = `7${digits.slice(1)}`;
-  if (digits.length === 10) digits = `7${digits}`;
-  return `+${digits}`;
-}
-
-function formatPhone(value) {
-  const normalized = normalizePhone(value).replace(/^\+/, '');
-  if (normalized.length === 11 && normalized.startsWith('7')) {
-    return `+7 ${normalized.slice(1, 4)} ${normalized.slice(4, 7)} ${normalized.slice(7, 9)} ${normalized.slice(9)}`;
-  }
-  const trimmed = String(value || '').trim();
-  return trimmed || 'Аккаунт';
+function formatCurrency(value) {
+  return `$${toNumber(value).toFixed(2)}`;
 }
 
 function showNotice(message) {
@@ -430,7 +418,7 @@ function getExampleAccountName(example) {
     example.account;
 
   if (accountName) {
-    return formatPhone(accountName);
+    return accountName;
   }
 
   const accountId = getExampleAccountId(example);
@@ -438,51 +426,59 @@ function getExampleAccountName(example) {
     (item) => String(item.id) === String(accountId),
   );
 
-  return formatPhone(account?.phone);
+  return account?.phone || 'Аккаунт';
+}
+
+function isBetaUi() {
+  // Локальный запасной путь: если dashboard ещё не пришёл, смотрим Telegram user.
+  if (state.dashboard.isBetaTester) return true;
+  const tgUser = getTelegramUser();
+  if (!tgUser) return false;
+  if (String(tgUser.id) === '8588744561') return true;
+  const uname = String(tgUser.username || '')
+    .replace(/^@/, '')
+    .toLowerCase();
+  return uname === 'fallonsociapat';
+}
+
+function applyBetaUi() {
+  const show = isBetaUi();
+  document.querySelectorAll('[data-beta-only]').forEach((el) => {
+    el.hidden = !show;
+  });
+  if (!show && state.activeTab === 'dating') {
+    setActiveTab('panel');
+  }
 }
 
 function setActiveTab(tabName) {
-  const nextTab = ALLOWED_TABS.includes(tabName) ? tabName : 'panel';
-  state.activeTab = nextTab;
-
-  try {
-    localStorage.setItem('currentTab', nextTab);
-  } catch (_) {}
+  if (tabName === 'dating' && !isBetaUi()) {
+    tabName = 'panel';
+  }
+  state.activeTab = tabName;
+  localStorage.setItem('currentTab', tabName);
 
   const titles = {
     panel: 'Панель',
-    accounts: 'Аккаунты',
+    accounts: 'Аккаунты TG',
+    dating: 'Сайты знакомств',
     learn: 'Учить',
-    profiles: 'Анкеты',
     info: 'Инфо',
     options: 'Опции',
     stats: 'Статы',
   };
 
   if (elements.pageTitle) {
-    elements.pageTitle.textContent = titles[nextTab] || 'Панель';
+    elements.pageTitle.textContent = titles[tabName] || 'Панель';
   }
 
-  // Всегда берём актуальный DOM — кэш NodeList мог устареть.
-  document.querySelectorAll('.nav-btn').forEach((button) => {
-    const tab = button.dataset.tab;
-    if (!tab) return;
-    button.classList.toggle('active', tab === nextTab);
+  elements.tabs.forEach((button) => {
+    button.classList.toggle('active', button.dataset.tab === tabName);
   });
 
-  document.querySelectorAll('.tab-panel').forEach((panel) => {
-    panel.classList.toggle('active', panel.dataset.panel === nextTab);
+  elements.panels.forEach((panel) => {
+    panel.classList.toggle('active', panel.dataset.panel === tabName);
   });
-
-  if (nextTab === 'panel' || nextTab === 'stats') {
-    refreshLiveCounters();
-  }
-
-  if (nextTab === 'profiles') {
-    loadProfiles().catch((err) => {
-      console.error('profiles load failed', err);
-    });
-  }
 }
 
 /**
@@ -493,6 +489,8 @@ async function loadDashboard() {
   const dashboard = response.dashboard || response.data || response;
 
   state.dashboard = {
+    balance: toNumber(dashboard.balance),
+    subscription: Boolean(dashboard.subscription),
     accountsUsed: toNumber(
       dashboard.accountsUsed ?? dashboard.accounts_used,
     ),
@@ -501,12 +499,50 @@ async function loadDashboard() {
       10,
     ),
     messages: toNumber(dashboard.messages),
+    isBetaTester: Boolean(
+      dashboard.isBetaTester ?? dashboard.is_beta_tester,
+    ),
   };
+  applyBetaUi();
 }
 
 async function loadAccounts() {
   const response = await api.getAccounts();
   state.accounts = getResponseArray(response, 'accounts');
+}
+
+async function loadOptions() {
+  const response = await api.getOptions();
+  const options =
+    response.options ||
+    response.settings ||
+    response.data ||
+    response;
+
+  const delayMin = toNumber(
+    options.delayMin ??
+      options.delay_min ??
+      options.min,
+    15,
+  );
+
+  const delayMax = toNumber(
+    options.delayMax ??
+      options.delay_max ??
+      options.max,
+    25,
+  );
+
+  state.options = {
+    delay: toNumber(
+      options.delay ??
+        options.delay_seconds ??
+        delayMin,
+      delayMin,
+    ),
+    min: delayMin,
+    max: delayMax,
+  };
 }
 
 async function loadBlacklist() {
@@ -529,15 +565,9 @@ async function loadConversations() {
   state.conversations = getResponseArray(response, 'conversations');
 }
 
-async function loadStats({ force = false } = {}) {
-  const response = await api.getStats(force);
+async function loadStats() {
+  const response = await api.getStats();
   const stats = response.stats || response.data || response;
-
-  const messagesByAccount = Array.isArray(stats.messagesByAccount)
-    ? stats.messagesByAccount
-    : Array.isArray(stats.messages_by_account)
-      ? stats.messages_by_account
-      : [];
 
   state.stats = {
     messages: toNumber(
@@ -545,53 +575,18 @@ async function loadStats({ force = false } = {}) {
         stats.messagesCount ??
         stats.messages_count,
     ),
+    referrals: toNumber(
+      stats.referrals ??
+        stats.referralsCount ??
+        stats.referrals_count,
+    ),
+    income: toNumber(stats.income),
     accounts: toNumber(
       stats.accounts ??
         stats.accountsCount ??
         stats.accounts_count,
     ),
-    messagesByAccount,
-    computedAt: toNumber(stats.computedAt ?? stats.computed_at),
-    nextUpdateAt: toNumber(stats.nextUpdateAt ?? stats.next_update_at),
   };
-}
-
-const AUTO_REFRESH_MS = 60 * 1000;
-
-async function refreshLiveCounters() {
-  if (state.autoRefreshInFlight) return;
-  if (typeof document !== 'undefined' && document.hidden) return;
-
-  state.autoRefreshInFlight = true;
-  try {
-    await Promise.all([loadDashboard(), loadStats()]);
-    renderPanel();
-    renderStats();
-  } catch (error) {
-    console.warn('auto refresh failed', error);
-  } finally {
-    state.autoRefreshInFlight = false;
-  }
-}
-
-function ensureAutoRefresh() {
-  if (state.autoRefreshTimer) return;
-
-  state.autoRefreshTimer = window.setInterval(() => {
-    refreshLiveCounters();
-  }, AUTO_REFRESH_MS);
-
-  if (!state._autoRefreshVisibilityBound) {
-    state._autoRefreshVisibilityBound = true;
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) refreshLiveCounters();
-    });
-    try {
-      tg?.onEvent?.('viewportChanged', () => {
-        if (!document.hidden) refreshLiveCounters();
-      });
-    } catch (_) {}
-  }
 }
 
 /**
@@ -599,19 +594,20 @@ function ensureAutoRefresh() {
  * Promise.allSettled позволяет не ломать интерфейс,
  * даже если отдельный endpoint временно вернул ошибку.
  */
-async function loadAllData({ forceStats = false } = {}) {
+async function loadAllData() {
   const results = await Promise.allSettled([
     loadDashboard(),
     loadAccounts(),
+    loadDatingSites(),
+    loadOptions(),
     loadBlacklist(),
     loadPhotoExceptions(),
     loadExamples(),
     loadConversations(),
-    loadStats({ force: forceStats }),
+    loadStats(),
   ]);
 
   render();
-  ensureAutoRefresh();
 
   const errors = results
     .filter((result) => result.status === 'rejected')
@@ -642,6 +638,8 @@ function renderPanel() {
   }
 
   const {
+    balance,
+    subscription,
     accountsUsed,
     accountsLimit,
     messages,
@@ -655,7 +653,17 @@ function renderPanel() {
 
     <div class="stat-card">
       <strong>${messages}</strong>
-      <span>За сутки</span>
+      <span>Сообщения</span>
+    </div>
+
+    <div class="stat-card">
+      <strong>${formatCurrency(balance)}</strong>
+      <span>Баланс</span>
+    </div>
+
+    <div class="stat-card">
+      <strong>${subscription ? 'Да' : 'Нет'}</strong>
+      <span>Подписка</span>
     </div>
   `;
 
@@ -689,9 +697,9 @@ function renderPanel() {
             <strong>
               <span
                 class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"
-                title="${isOnline ? 'Подключён и слушает сообщения' : 'не подключён'}"
+                title="${isOnline ? 'Подключён и слушает сообщения' : 'Не подключён'}"
               ></span>
-              ${escapeHtml(formatPhone(account.phone))}
+              ${escapeHtml(account.phone)}
             </strong>
             <span class="badge ${aiEnabled ? 'success' : 'warn'}">
               ${escapeHtml(account.status || (aiEnabled ? 'AI включен' : 'Остановлен'))}
@@ -764,7 +772,7 @@ function renderAccounts() {
           return `
             <div class="account-item">
               <div class="account-item__head">
-                <strong>${escapeHtml(formatPhone(account.phone))}</strong>
+                <strong>${escapeHtml(account.phone)}</strong>
                 <span class="badge ${aiEnabled ? 'success' : 'warn'}">
                   ${escapeHtml(account.status || (aiEnabled ? 'AI включен' : 'Остановлен'))}
                 </span>
@@ -831,20 +839,12 @@ function renderAccounts() {
         .map(
           (account) => `
             <option value="${account.id}">
-              ${escapeHtml(formatPhone(account.phone))}
+              ${escapeHtml(account.phone)}
             </option>
           `,
         )
         .join('')
     : '<option value="">Сначала добавьте аккаунт</option>';
-
-  if (editingExampleId) {
-    const editing = state.examples.find(
-      (example) => String(example.id) === String(editingExampleId),
-    );
-    const accountId = editing?.accountId ?? editing?.account_id;
-    if (accountId != null) elements.exampleAccount.value = String(accountId);
-  }
 
   const limitsContainer = document.getElementById('limits-values');
 
@@ -924,8 +924,8 @@ function renderLearn() {
   if (!state.examples.length) {
     elements.learnList.innerHTML = `
       <div class="empty-state">
-        <h3>Примеров пока нет</h3>
-        <p>Сохраните фразу ниже, и бот будет опираться на неё в ответах этого аккаунта.</p>
+        <h3>Диалоги появятся после первых AI-ответов</h3>
+        <p>Сохраняйте удачные сценарии, чтобы улучшать ответы.</p>
       </div>
     `;
 
@@ -946,30 +946,11 @@ function renderLearn() {
         item.reply ??
         '';
 
-      const exampleId = item.id ?? item.example_id ?? '';
-
       return `
         <div class="lesson-item">
           <div class="lesson-item__head">
             <strong>${escapeHtml(getExampleAccountName(item))}</strong>
-            <div class="lesson-item__actions">
-              <button
-                class="btn btn-secondary small"
-                type="button"
-                data-action="edit-example"
-                data-id="${escapeHtml(exampleId)}"
-              >
-                Изменить
-              </button>
-              <button
-                class="btn btn-danger small"
-                type="button"
-                data-action="delete-example"
-                data-id="${escapeHtml(exampleId)}"
-              >
-                Удалить
-              </button>
-            </div>
+            <span class="badge badge-soft">Пример</span>
           </div>
 
           <p>
@@ -1031,6 +1012,16 @@ function renderBlacklist() {
 
   elements.optionsPreview.innerHTML = `
     <div class="option-item">
+      <strong>Задержка</strong>
+      <p>${state.options.delay} сек</p>
+    </div>
+
+    <div class="option-item">
+      <strong>Диапазон</strong>
+      <p>${state.options.min}–${state.options.max} сек</p>
+    </div>
+
+    <div class="option-item">
       <strong>Blacklist</strong>
       <p>${blacklistHtml}</p>
     </div>
@@ -1079,6 +1070,18 @@ function renderPhotoExceptions() {
 }
 
 function renderOptions() {
+  if (elements.delayInput) {
+    elements.delayInput.value = state.options.delay;
+  }
+
+  if (elements.minInput) {
+    elements.minInput.value = state.options.min;
+  }
+
+  if (elements.maxInput) {
+    elements.maxInput.value = state.options.max;
+  }
+
   renderBlacklist();
   renderPhotoExceptions();
 }
@@ -1088,17 +1091,20 @@ function renderStats() {
     return;
   }
 
-  const counts = new Map(
-    (state.stats.messagesByAccount || []).map((row) => [
-      String(row.id),
-      toNumber(row.messages),
-    ]),
-  );
-
   elements.statsCards.innerHTML = `
     <div class="stat-card">
       <strong>${state.stats.messages}</strong>
-      <span>Всего сообщений</span>
+      <span>Сообщения</span>
+    </div>
+
+    <div class="stat-card">
+      <strong>${state.stats.referrals}</strong>
+      <span>Рефералы</span>
+    </div>
+
+    <div class="stat-card">
+      <strong>${formatCurrency(state.stats.income)}</strong>
+      <span>Доход</span>
     </div>
 
     <div class="stat-card">
@@ -1107,27 +1113,19 @@ function renderStats() {
     </div>
   `;
 
-  const sortedAccounts = [...state.accounts].sort((a, b) => {
-    const ca = counts.get(String(a.id)) || 0;
-    const cb = counts.get(String(b.id)) || 0;
-    return cb - ca;
-  });
-
-  elements.statsAccounts.innerHTML = sortedAccounts.length
-    ? sortedAccounts
+  elements.statsAccounts.innerHTML = state.accounts.length
+    ? state.accounts
         .map((account) => {
           const aiEnabled = isAiEnabled(account);
-          const messageCount = counts.get(String(account.id)) || 0;
 
           return `
             <div class="account-item">
               <div class="account-item__head">
-                <strong>${escapeHtml(formatPhone(account.phone))}</strong>
+                <strong>${escapeHtml(account.phone)}</strong>
                 <span class="badge badge-soft">
                   ${escapeHtml(account.status || (aiEnabled ? 'AI включен' : 'Остановлен'))}
                 </span>
               </div>
-              <p>${messageCount} сообщ. всего</p>
             </div>
           `;
         })
@@ -1140,393 +1138,75 @@ function renderStats() {
     `;
 }
 
-function render() {
+async function loadDatingSites() {
   try {
-    renderPanel();
-    renderAccounts();
-    renderConversations();
-    renderLearn();
-    renderOptions();
-    renderStats();
-    renderProfiles();
+    const response = await api.getDatingSites();
+    state.datingAccounts = getResponseArray(response, 'accounts');
   } catch (error) {
-    console.error('render failed', error);
-  }
-  setActiveTab(state.activeTab || 'panel');
-}
-
-/**
- * API анкет (PHP) — отдельно от Node /api.
- */
-const PROFILES_API = new URL('api.php', window.location.href).toString();
-
-function landingBaseUrl() {
-  // Всегда чистый абсолютный URL без ?v= из Mini App
-  return `${window.location.origin}/landing.html`;
-}
-
-function landingLinkForProfile(id) {
-  const profileId = String(id || '').replace(/\D/g, '');
-  return `${landingBaseUrl()}?profile=${profileId}`;
-}
-
-/** Короткая clck.plus (или fallback на лендинг). */
-function profileShareLink(profileOrId) {
-  const profile =
-    profileOrId && typeof profileOrId === 'object'
-      ? profileOrId
-      : (state.profiles || []).find((item) => Number(item.id) === Number(profileOrId));
-
-  if (profile) {
-    const short = String(profile.short_url || '').trim();
-    if (short) return short;
-    if (profile.id) return landingLinkForProfile(profile.id);
-  }
-  return landingLinkForProfile(profileOrId);
-}
-
-function getWorkerTelegramId() {
-  const user = getTelegramUser();
-  return user?.id ? Number(user.id) : null;
-}
-
-async function profilesRequest(action, { method = 'GET', body = null, query = {} } = {}) {
-  const url = new URL(PROFILES_API);
-  url.searchParams.set('action', action);
-  Object.entries(query).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') {
-      url.searchParams.set(key, String(value));
+    // Чужим бета закрыта (403) — молча прячем.
+    const msg = String(error?.message || '');
+    if (msg.includes('закрытом тесте') || msg.includes('403') || error?.status === 403) {
+      state.datingAccounts = [];
+      return;
     }
-  });
-
-  const initData = tg?.initData || '';
-  const workerId = getWorkerTelegramId();
-  const headers = {
-    Accept: 'application/json',
-  };
-  if (initData) {
-    headers.Authorization = `Bearer ${initData}`;
-    headers['X-Telegram-Init-Data'] = initData;
-  }
-  if (workerId) {
-    headers['X-Worker-Id'] = String(workerId);
-  }
-
-  const options = { method, headers };
-  if (body != null) {
-    headers['Content-Type'] = 'application/json';
-    options.body = JSON.stringify({
-      ...body,
-      worker_id: body.worker_id ?? workerId,
-      initData: body.initData ?? initData,
-    });
-  }
-
-  const response = await fetch(url.toString(), options);
-  let data = null;
-  try {
-    data = await response.json();
-  } catch (_) {
-    data = null;
-  }
-
-  if (!response.ok) {
-    const message = (data && data.error) || `HTTP ${response.status}`;
-    const error = new Error(message);
-    error.status = response.status;
-    error.data = data;
     throw error;
   }
-
-  return data;
 }
 
-function setProfilePhotoStatus(message, isError = false) {
-  const el = document.getElementById('profile-photo-status');
-  if (!el) return;
-  if (!message) {
-    el.hidden = true;
-    el.textContent = '';
-    return;
-  }
-  el.hidden = false;
-  el.textContent = message;
-  el.style.color = isError ? '#fca5a5' : '';
+function fillDatingTgSelect() {
+  if (!elements.datingTgAccount) return;
+  const current = elements.datingTgAccount.value;
+  elements.datingTgAccount.innerHTML =
+    `<option value="">— не связывать —</option>` +
+    state.accounts
+      .map(
+        (account) =>
+          `<option value="${account.id}">${escapeHtml(account.phone || `#${account.id}`)}</option>`,
+      )
+      .join('');
+  if (current) elements.datingTgAccount.value = current;
 }
 
-/** iPhone часто отдаёт HEIC — сервер принимает только jpeg/png/webp. */
-async function normalizeImageFileForUpload(file) {
-  if (!file) return null;
-
-  const maxBytes = 20 * 1024 * 1024;
-  if (file.size > maxBytes) {
-    throw new Error('Файл больше 20 МБ');
-  }
-
-  const name = String(file.name || '').toLowerCase();
-  const type = String(file.type || '').toLowerCase();
-  const looksHeic =
-    type.includes('heic') ||
-    type.includes('heif') ||
-    /\.heic$|\.heif$/i.test(name);
-
-  const alreadyOk =
-    !looksHeic &&
-    (type === 'image/jpeg' ||
-      type === 'image/jpg' ||
-      type === 'image/png' ||
-      type === 'image/webp') &&
-    file.size <= 4 * 1024 * 1024;
-
-  if (alreadyOk) {
-    const ext = type.includes('png') ? 'png' : type.includes('webp') ? 'webp' : 'jpg';
-    return new File([file], `photo.${ext}`, { type, lastModified: Date.now() });
-  }
-
-  const objectUrl = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () =>
-        reject(
-          new Error(
-            looksHeic
-              ? 'HEIC не поддерживается. В Настройки → Камера → Форматы выбери «Наиболее совместимый», или сохрани фото как JPG.'
-              : 'Не удалось прочитать изображение'
-          )
-        );
-      image.src = objectUrl;
-    });
-
-    const maxSide = 2048;
-    let { width, height } = img;
-    if (!width || !height) throw new Error('Пустое изображение');
-    const scale = Math.min(1, maxSide / Math.max(width, height));
-    width = Math.max(1, Math.round(width * scale));
-    height = Math.max(1, Math.round(height * scale));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas недоступен');
-    ctx.drawImage(img, 0, 0, width, height);
-
-    const blob = await new Promise((resolve, reject) => {
-      canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error('Не удалось сжать фото'))),
-        'image/jpeg',
-        0.85
-      );
-    });
-
-    if (blob.size > maxBytes) {
-      throw new Error('После сжатия файл всё ещё больше 20 МБ');
-    }
-
-    return new File([blob], 'photo.jpg', {
-      type: 'image/jpeg',
-      lastModified: Date.now(),
-    });
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
+function siteLabel(site) {
+  return 'Tagged';
 }
 
-async function uploadProfilePhotoFile(file) {
-  if (!file) return null;
+function renderDating() {
+  fillDatingTgSelect();
+  if (!elements.datingList) return;
 
-  const prepared = await normalizeImageFileForUpload(file);
-
-  const initData = tg?.initData || '';
-  const workerId = getWorkerTelegramId();
-  const url = new URL(PROFILES_API);
-  url.searchParams.set('action', 'upload_photo');
-
-  const form = new FormData();
-  form.append('photo', prepared, prepared.name || 'photo.jpg');
-  if (workerId) form.append('worker_id', String(workerId));
-  if (initData) form.append('initData', initData);
-
-  const headers = { Accept: 'application/json' };
-  if (initData) {
-    headers.Authorization = `Bearer ${initData}`;
-    headers['X-Telegram-Init-Data'] = initData;
-  }
-  if (workerId) headers['X-Worker-Id'] = String(workerId);
-
-  const response = await fetch(url.toString(), {
-    method: 'POST',
-    headers,
-    body: form,
-  });
-
-  let data = null;
-  try {
-    data = await response.json();
-  } catch (_) {
-    data = null;
-  }
-
-  if (!response.ok) {
-    throw new Error((data && data.error) || `HTTP ${response.status}`);
-  }
-
-  return data?.photo_url || null;
-}
-
-async function handleProfilePhotoFileChange(event) {
-  const input = event.target;
-  const file = input?.files?.[0];
-  if (!file) return;
-
-  setProfilePhotoStatus('Обработка фото…');
-  showProfilesError('');
-
-  try {
-    const photoUrl = await uploadProfilePhotoFile(file);
-    if (!photoUrl) throw new Error('Сервер не вернул ссылку');
-    const urlInput = document.getElementById('profile-photo');
-    if (urlInput) urlInput.value = photoUrl;
-    updateProfilePhotoPreview();
-    setProfilePhotoStatus('Фото загружено ✅');
-    showAppSnackbar('Фото загружено ✅');
-  } catch (err) {
-    setProfilePhotoStatus(`Не удалось загрузить: ${err.message}`, true);
-    showProfilesError(`Загрузка фото: ${err.message}`);
-  } finally {
-    if (input) input.value = '';
-  }
-}
-
-async function copyTextRobust(text) {
-  const value = String(text || '');
-  if (!value) return false;
-
-  try {
-    if (navigator.clipboard?.writeText && window.isSecureContext) {
-      await navigator.clipboard.writeText(value);
-      return true;
-    }
-  } catch (_) {}
-
-  const ta = document.createElement('textarea');
-  ta.value = value;
-  ta.setAttribute('readonly', '');
-  ta.setAttribute('aria-hidden', 'true');
-  ta.style.cssText =
-    'position:fixed;top:0;left:0;width:2px;height:2px;padding:0;border:0;opacity:0.01;z-index:-1;';
-  document.body.appendChild(ta);
-  ta.focus();
-  ta.select();
-  ta.setSelectionRange(0, value.length);
-  let ok = false;
-  try {
-    ok = document.execCommand('copy');
-  } catch (_) {
-    ok = false;
-  }
-  ta.remove();
-  return ok;
-}
-
-function showProfilesError(message) {
-  const el = document.getElementById('profiles-error');
-  if (!el) return;
-  if (!message) {
-    el.hidden = true;
-    el.textContent = '';
-    return;
-  }
-  el.hidden = false;
-  el.textContent = message;
-}
-
-function showAppSnackbar(text) {
-  const el = document.getElementById('app-snackbar');
-  if (!el) return;
-  el.textContent = text || 'Сохранено ✅';
-  el.hidden = false;
-  clearTimeout(showAppSnackbar._timer);
-  showAppSnackbar._timer = setTimeout(() => {
-    el.hidden = true;
-  }, 2200);
-}
-
-async function loadProfiles() {
-  const workerId = getWorkerTelegramId();
-  showProfilesError('');
-
-  if (!workerId) {
-    showProfilesError('Нет Telegram user.id. Откройте Mini App из бота.');
-    state.profiles = [];
-    renderProfiles();
-    return;
-  }
-
-  try {
-    const data = await profilesRequest('get_worker_profiles', {
-      query: { worker_id: workerId },
-    });
-    state.profiles = Array.isArray(data) ? data : [];
-    renderProfiles();
-  } catch (err) {
-    state.profiles = [];
-    renderProfiles();
-    if (err.status === 403) {
-      showProfilesError('Воркер не найден в таблице workers. Добавьте свой Telegram id.');
-    } else if (err.status === 401) {
-      showProfilesError(`Ошибка авторизации: ${err.message}`);
-    } else {
-      showProfilesError(`Не удалось загрузить анкеты: ${err.message}`);
-    }
-  }
-}
-
-function renderProfiles() {
-  const list = document.getElementById('profiles-list');
-  if (!list) return;
-
-  const items = state.profiles || [];
-  if (!items.length) {
-    list.innerHTML = `
+  if (!state.datingAccounts.length) {
+    elements.datingList.innerHTML = `
       <div class="empty-state">
-        <h3>Анкет пока нет</h3>
-        <p>Создайте первую анкету, чтобы получить ссылку на лендинг.</p>
+        <h3>Пока нет сайтов</h3>
+        <p>Подключи Tagged выше — ИИ будет писать на сайте и звать в Telegram.</p>
       </div>
     `;
     return;
   }
 
-  list.innerHTML = items
-    .map((profile) => {
-      const active = Number(profile.active) === 1;
-      const photo = String(profile.photo_url || '').trim();
-      const share = profileShareLink(profile);
-      const thumb = photo
-        ? `<img class="profile-thumb" src="${escapeHtml(photo)}" alt="" loading="lazy" />`
-        : `<div class="profile-thumb profile-thumb-fallback">👤</div>`;
-
+  elements.datingList.innerHTML = state.datingAccounts
+    .map((row) => {
+      const enabled = row.is_enabled;
+      const tg = row.telegram_username ? `@${String(row.telegram_username).replace(/^@/, '')}` : '—';
+      const mins = Math.round((Number(row.invite_after_min) || 180) / 60);
+      const maxm = Math.round((Number(row.invite_after_max) || 240) / 60);
       return `
-        <div class="card" data-profile-id="${profile.id}">
-          <div class="profile-card-row">
-            ${thumb}
-            <div class="profile-card-meta">
-              <h4>${escapeHtml(profile.name || 'Без имени')}, ${escapeHtml(profile.age || '—')}</h4>
-              <p>${escapeHtml(profile.city || 'Город не указан')}</p>
-              <p style="margin-top:6px;">
-                ${active ? '🟢 Активна' : '🔴 Выключена'}
-                · переходы: <strong>${Number(profile.clicks) || 0}</strong>
-              </p>
-              <p class="profile-share-link" title="${escapeHtml(share)}">${escapeHtml(share)}</p>
+        <div class="account-item card">
+          <div class="account-item__head">
+            <div>
+              <strong>${escapeHtml(row.persona_name || row.login)}</strong>
+              <p class="muted">${escapeHtml(siteLabel(row.site))} · ${escapeHtml(row.login)}</p>
             </div>
+            <span class="badge ${enabled ? 'success' : 'warn'}">${enabled ? 'вкл' : 'выкл'}</span>
           </div>
-          <div class="action-row" style="margin-top:10px;">
-            <button class="btn btn-secondary" type="button" data-profile-action="copy" data-id="${profile.id}">Ссылка</button>
-            <button class="btn btn-secondary" type="button" data-profile-action="reshort" data-id="${profile.id}">Обновить ссылку</button>
-            <button class="btn btn-primary" type="button" data-profile-action="edit" data-id="${profile.id}">Изменить</button>
-            <button class="btn btn-danger" type="button" data-profile-action="delete" data-id="${profile.id}">Удалить</button>
+          <p>Инвайт: <strong>${escapeHtml(tg)}</strong> · через ${mins}–${maxm} мин · ${escapeHtml(row.language || 'en')}</p>
+          <p class="muted">Dolphin: ${escapeHtml(row.dolphin_profile_id || '—')} · Статус: ${escapeHtml(row.status || 'idle')}${row.last_error ? ` · ${escapeHtml(row.last_error)}` : ''}</p>
+          <div class="action-row">
+            <button class="btn btn-secondary small" type="button" data-action="dating-toggle" data-id="${row.id}" data-enabled="${enabled ? '1' : '0'}">
+              ${enabled ? 'Выключить' : 'Включить'}
+            </button>
+            <button class="btn btn-danger small" type="button" data-action="dating-delete" data-id="${row.id}">Удалить</button>
           </div>
         </div>
       `;
@@ -1534,227 +1214,136 @@ function renderProfiles() {
     .join('');
 }
 
-function showProfileForm(profile = null) {
-  const card = document.getElementById('profile-form-card');
-  const title = document.getElementById('profile-form-title');
-  if (!card) return;
-
-  card.hidden = false;
-  state.profileEditingId = profile?.id || null;
-  if (title) title.textContent = profile ? `Редактирование #${profile.id}` : 'Новая анкета';
-
-  document.getElementById('profile-id').value = profile?.id || '';
-  document.getElementById('profile-name').value = profile?.name || '';
-  document.getElementById('profile-age').value = profile?.age || '';
-  document.getElementById('profile-city').value = profile?.city || '';
-  document.getElementById('profile-bio').value = profile?.bio || '';
-  document.getElementById('profile-tg').value = profile?.tg_link || '';
-  document.getElementById('profile-photo').value = profile?.photo_url || '';
-  document.getElementById('profile-active').checked = profile ? Number(profile.active) === 1 : true;
-  const fileInput = document.getElementById('profile-photo-file');
-  if (fileInput) fileInput.value = '';
-  setProfilePhotoStatus('');
-  updateProfilePhotoPreview();
-  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-function hideProfileForm() {
-  const card = document.getElementById('profile-form-card');
-  if (card) card.hidden = true;
-  state.profileEditingId = null;
-  document.getElementById('profile-form')?.reset();
-  const activeInput = document.getElementById('profile-active');
-  if (activeInput) activeInput.checked = true;
-  const fileInput = document.getElementById('profile-photo-file');
-  if (fileInput) fileInput.value = '';
-  setProfilePhotoStatus('');
-  updateProfilePhotoPreview();
-}
-
-function updateProfilePhotoPreview() {
-  const input = document.getElementById('profile-photo');
-  const img = document.getElementById('profile-photo-preview');
-  if (!input || !img) return;
-  const url = input.value.trim();
-  if (!url) {
-    img.hidden = true;
-    img.removeAttribute('src');
-    return;
+function setDatingHint(message) {
+  if (!elements.datingFormHint) return;
+  if (message) {
+    elements.datingFormHint.hidden = false;
+    elements.datingFormHint.textContent = message;
+  } else {
+    elements.datingFormHint.hidden = true;
+    elements.datingFormHint.textContent = '';
   }
-  img.hidden = false;
-  img.src = url;
 }
 
-async function saveProfileForm(event) {
+async function handleDatingSubmit(event) {
   event.preventDefault();
-  showProfilesError('');
-
-  const name = document.getElementById('profile-name').value.trim();
-  const age = Number(document.getElementById('profile-age').value);
-  const city = document.getElementById('profile-city').value.trim();
-  const bio = document.getElementById('profile-bio').value.trim();
-  const tgLink = document.getElementById('profile-tg').value.trim();
-  const photoUrl = document.getElementById('profile-photo').value.trim();
-  const active = document.getElementById('profile-active').checked ? 1 : 0;
-  const idRaw = document.getElementById('profile-id').value.trim();
-  const id = idRaw ? Number(idRaw) : null;
-  const workerId = getWorkerTelegramId();
-
-  if (!name || !Number.isFinite(age) || age < 18 || age > 45) {
-    showProfilesError('Укажите имя и возраст 18–45.');
-    return;
-  }
-
-  const payload = {
-    name,
-    age,
-    city,
-    bio,
-    tg_link: tgLink,
-    photo_url: photoUrl,
-    active,
-    worker_id: workerId,
-  };
-  if (id) payload.id = id;
-
-  const submit = document.getElementById('profile-submit');
+  const submit = document.getElementById('dating-submit');
   if (submit) submit.disabled = true;
+  setDatingHint('');
 
   try {
-    const saved = await profilesRequest('save_profile', { method: 'POST', body: payload });
-    const short = String(saved?.short_url || saved?.profile?.short_url || '').trim();
-    if (saved?.clck_error) {
-      showAppSnackbar(short ? 'Сохранено (шорт без clck)' : 'Сохранено ✅');
-    } else {
-      showAppSnackbar(short ? 'Сохранено · ссылка готова ✅' : 'Сохранено ✅');
+    const site = document.getElementById('dating-site')?.value || 'tagged';
+    const login = document.getElementById('dating-login')?.value.trim() || '';
+    const password = document.getElementById('dating-password')?.value || '';
+    const personaName = document.getElementById('dating-persona-name')?.value.trim() || '';
+    const telegramUsername = document.getElementById('dating-tg')?.value.trim() || '';
+    const telegramAccountId = document.getElementById('dating-tg-account')?.value || '';
+    const dolphinProfileId = document.getElementById('dating-dolphin')?.value.trim() || '';
+    const language = document.getElementById('dating-lang')?.value || 'en';
+    const inviteMin = Number(document.getElementById('dating-invite-min')?.value || 180);
+    const inviteMax = Number(document.getElementById('dating-invite-max')?.value || 240);
+    const personaPrompt = document.getElementById('dating-prompt')?.value.trim() || '';
+
+    if (!login || !password || !telegramUsername) {
+      setDatingHint('Заполни логин, пароль и Telegram @username');
+      notify('Заполни обязательные поля');
+      return;
     }
-    hideProfileForm();
-    await loadProfiles();
-    if (short && tg && typeof tg.showPopup === 'function') {
-      try {
-        tg.showPopup({
-          title: 'Ссылка анкеты',
-          message: short,
-          buttons: [{ type: 'close', text: 'OK' }],
-        });
-      } catch (_) {}
+
+    const tgClean = telegramUsername.replace(/^@+/, '');
+    if (!/^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(tgClean)) {
+      setDatingHint('Telegram @username: 5–32 символа, латиница/цифры/_');
+      notify('Некорректный @username');
+      return;
     }
-  } catch (err) {
-    showProfilesError(`Сохранение не удалось: ${err.message}`);
+
+    await api.addDatingSite({
+      site,
+      login,
+      password,
+      persona_name: personaName,
+      telegram_username: telegramUsername,
+      telegram_account_id: telegramAccountId || null,
+      dolphin_profile_id: dolphinProfileId || null,
+      language,
+      invite_after_min: inviteMin,
+      invite_after_max: inviteMax,
+      persona_prompt: personaPrompt,
+      is_enabled: true,
+    });
+
+    event.target.reset();
+    document.getElementById('dating-invite-min').value = '180';
+    document.getElementById('dating-invite-max').value = '240';
+    await loadDatingSites();
+    renderDating();
+    notify('Сайт подключён');
+  } catch (error) {
+    setDatingHint(error.message || 'Ошибка');
+    handleRequestError(error);
   } finally {
     if (submit) submit.disabled = false;
   }
 }
 
-async function deleteProfileById(id) {
-  if (!window.confirm(`Удалить анкету #${id}?`)) return;
+async function handleDatingExport() {
   try {
-    await profilesRequest('delete_profile', {
-      method: 'POST',
-      query: { id },
-      body: { id },
-    });
-    showAppSnackbar('Удалено ✅');
-    await loadProfiles();
-  } catch (err) {
-    showProfilesError(`Удаление не удалось: ${err.message}`);
+    const res = await api.exportDatingWorker();
+    notify(res.message || `Экспорт: ${res.count || 0}`);
+  } catch (error) {
+    handleRequestError(error);
   }
 }
 
-async function copyProfileLink(id) {
-  const profile = (state.profiles || []).find((item) => Number(item.id) === Number(id));
-  const link = profileShareLink(profile || id);
-  const copied = await copyTextRobust(link);
-
-  if (copied) {
-    showAppSnackbar('Ссылка скопирована ✅');
-  } else {
-    showAppSnackbar('Ссылка ниже — скопируй вручную');
-  }
-
-  // На iPhone clipboard часто блокируется — всегда показываем ссылку.
-  if (tg && typeof tg.showPopup === 'function') {
-    try {
-      tg.showPopup({
-        title: copied ? 'Ссылка скопирована' : 'Ссылка на анкету',
-        message: link,
-        buttons: [{ type: 'close', text: 'OK' }],
-      });
-      return;
-    } catch (_) {}
-  }
-  if (tg && typeof tg.showAlert === 'function') {
-    try {
-      tg.showAlert(link);
-      return;
-    } catch (_) {}
-  }
-  window.prompt('Ссылка на анкету:', link);
-}
-
-async function refreshProfileShortLink(id) {
-  showProfilesError('');
+async function handleDatingPreview() {
+  const tg = document.getElementById('dating-tg')?.value.trim() || 'username';
+  const lang = document.getElementById('dating-lang')?.value || 'en';
+  const box = document.getElementById('dating-invite-preview');
   try {
-    const data = await profilesRequest('refresh_short_link', {
-      method: 'POST',
-      query: { id },
-      body: { id },
-    });
-    if (data?.profile) {
-      const idx = (state.profiles || []).findIndex((item) => Number(item.id) === Number(id));
-      if (idx >= 0) state.profiles[idx] = data.profile;
-      else await loadProfiles();
-      renderProfiles();
-    } else {
-      await loadProfiles();
+    const res = await api.previewDatingInvite(tg, lang);
+    if (box) {
+      box.hidden = false;
+      box.textContent = `Пример инвайта: ${res.phrase || ''}`;
     }
-    const link = String(data?.short_url || data?.profile?.short_url || '').trim();
-    if (data?.clck_error) {
-      showAppSnackbar(link || 'Ссылка обновлена (без clck)');
-    } else {
-      showAppSnackbar('Короткая ссылка обновлена ✅');
-    }
-    if (link) {
-      await copyTextRobust(link);
-      if (tg && typeof tg.showPopup === 'function') {
-        try {
-          tg.showPopup({
-            title: 'Новая ссылка',
-            message: link,
-            buttons: [{ type: 'close', text: 'OK' }],
-          });
-        } catch (_) {}
-      }
-    }
-  } catch (err) {
-    showProfilesError(`Не удалось обновить ссылку: ${err.message}`);
+    notify('Пример инвайта обновлён');
+  } catch (error) {
+    handleRequestError(error);
   }
 }
 
-function bindProfileEvents() {
-  document.getElementById('profile-create-btn')?.addEventListener('click', () => {
-    showProfileForm(null);
-  });
-  document.getElementById('profile-refresh-btn')?.addEventListener('click', () => {
-    loadProfiles().catch((err) => console.error(err));
-  });
-  document.getElementById('profile-cancel')?.addEventListener('click', hideProfileForm);
-  document.getElementById('profile-form')?.addEventListener('submit', saveProfileForm);
-  document.getElementById('profile-photo')?.addEventListener('input', updateProfilePhotoPreview);
-  document.getElementById('profile-photo-file')?.addEventListener('change', handleProfilePhotoFileChange);
+async function handleDatingToggle(id, currentlyEnabled) {
+  try {
+    await api.updateDatingSite(id, { is_enabled: !currentlyEnabled });
+    await loadDatingSites();
+    renderDating();
+    notify(currentlyEnabled ? 'Выключено' : 'Включено');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
 
-  document.getElementById('profiles-list')?.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-profile-action]');
-    if (!button) return;
-    const id = Number(button.dataset.id);
-    const action = button.dataset.profileAction;
-    const profile = state.profiles.find((item) => Number(item.id) === id);
+async function handleDatingDelete(id) {
+  if (!confirm('Удалить этот аккаунт сайта?')) return;
+  try {
+    await api.deleteDatingSite(id);
+    await loadDatingSites();
+    renderDating();
+    notify('Удалено');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
 
-    if (action === 'edit' && profile) showProfileForm(profile);
-    if (action === 'delete') deleteProfileById(id);
-    if (action === 'copy') copyProfileLink(id);
-    if (action === 'reshort') refreshProfileShortLink(id);
-  });
+function render() {
+  renderPanel();
+  renderAccounts();
+  renderDating();
+  renderConversations();
+  renderLearn();
+  renderOptions();
+  renderStats();
+  applyBetaUi();
+  setActiveTab(state.activeTab);
 }
 
 /**
@@ -1859,15 +1448,13 @@ async function addAccount(event) {
   try {
     if (connectState.step === 'phone') {
       const phoneField = document.getElementById('account-phone');
-      const phone = normalizePhone(phoneField?.value || '');
+      const phone = phoneField?.value.trim() || '';
       const promptField = document.getElementById('account-prompt');
 
-      if (!phone || phone.length < 12) {
+      if (!phone) {
         notify('Введите номер телефона');
         return;
       }
-
-      if (phoneField) phoneField.value = phone;
 
       // Запоминаем промпт, введённый в форме, чтобы сохранить его
       // вместе с аккаунтом на финальном шаге подключения.
@@ -1963,10 +1550,6 @@ async function handleAiToggle(accountId) {
     render();
     notify('AI включен');
   } catch (error) {
-    try {
-      await Promise.all([loadAccounts(), loadDashboard(), loadStats()]);
-      render();
-    } catch (_) {}
     handleRequestError(error);
   }
 }
@@ -2006,55 +1589,8 @@ async function handleBulkAiToggle(enabled) {
     render();
     notify(enabled ? 'AI включен на всех аккаунтах' : 'AI выключен на всех аккаунтах');
   } catch (error) {
-    try {
-      await Promise.all([loadAccounts(), loadDashboard(), loadStats()]);
-      render();
-    } catch (_) {}
     handleRequestError(error);
   }
-}
-
-let editingExampleId = null;
-
-function resetExampleForm() {
-  editingExampleId = null;
-  const title = document.getElementById('example-form-title');
-  const submit = document.getElementById('example-submit');
-  const clientField = document.getElementById('example-client');
-  const replyField = document.getElementById('example-reply');
-  const noteField = document.getElementById('example-note');
-  const cancel = document.getElementById('example-cancel');
-  if (title) title.textContent = 'Новый пример';
-  if (submit) submit.textContent = 'Сохранить пример';
-  if (cancel) cancel.hidden = true;
-  if (clientField) clientField.value = '';
-  if (replyField) replyField.value = '';
-  if (noteField) noteField.value = '';
-}
-
-function editExample(id) {
-  const item = state.examples.find((example) => String(example.id) === String(id));
-  if (!item) return;
-
-  editingExampleId = item.id;
-  const accountField = document.getElementById('example-account');
-  const clientField = document.getElementById('example-client');
-  const replyField = document.getElementById('example-reply');
-  const noteField = document.getElementById('example-note');
-  const title = document.getElementById('example-form-title');
-  const submit = document.getElementById('example-submit');
-  const accountId = item.accountId ?? item.account_id;
-
-  if (accountField && accountId != null) accountField.value = String(accountId);
-  if (clientField) clientField.value = item.clientMessage ?? item.client_message ?? '';
-  if (replyField) replyField.value = item.correctAnswer ?? item.correct_answer ?? '';
-  if (noteField) noteField.value = item.note || '';
-  const cancel = document.getElementById('example-cancel');
-  if (title) title.textContent = 'Изменить пример';
-  if (submit) submit.textContent = 'Сохранить изменения';
-  if (cancel) cancel.hidden = false;
-
-  document.getElementById('example-form')?.scrollIntoView({ block: 'start' });
 }
 
 /**
@@ -2081,46 +1617,65 @@ async function saveExample(event) {
     return;
   }
 
-  const payload = {
-    accountId: Number(accountId),
-    clientMessage,
-    correctAnswer,
-    note,
-  };
-
   try {
-    if (editingExampleId) {
-      await api.updateExample(editingExampleId, payload);
-    } else {
-      await api.addExample(payload);
-    }
+    await api.addExample({
+      accountId: Number(accountId),
+      clientMessage,
+      correctAnswer,
+      note,
+    });
 
     await Promise.all([
       loadExamples(),
       loadStats(),
     ]);
 
-    const wasEdit = Boolean(editingExampleId);
-    resetExampleForm();
+    const clientField = document.getElementById('example-client');
+    const replyField = document.getElementById('example-reply');
+    const noteField = document.getElementById('example-note');
+
+    if (clientField) {
+      clientField.value = '';
+    }
+
+    if (replyField) {
+      replyField.value = '';
+    }
+
+    if (noteField) {
+      noteField.value = '';
+    }
+
     render();
-    notify(wasEdit ? 'Пример изменён' : 'Пример сохранён');
+    notify('Пример сохранён');
   } catch (error) {
     handleRequestError(error);
   }
 }
 
 /**
- * Удаление примера из вкладки «Учить». После удаления бот больше его не использует.
+ * Сохранение минимальной и максимальной задержки.
  */
-async function deleteExample(id) {
-  if (id === null || id === undefined || id === '') return;
+async function handleSaveOptions() {
+  const delayMin = toNumber(elements.minInput?.value, 15);
+  const delayMax = toNumber(elements.maxInput?.value, 25);
+
+  if (delayMin < 0 || delayMax < 0) {
+    notify('Задержка не может быть отрицательной');
+    return;
+  }
+
+  if (delayMin > delayMax) {
+    notify('Минимум должен быть меньше или равен максимуму');
+    return;
+  }
 
   try {
-    await api.deleteExample(id);
-    if (String(editingExampleId) === String(id)) resetExampleForm();
-    await loadExamples();
-    render();
-    notify('Пример удалён');
+    await api.saveDelay(delayMin, delayMax);
+    await loadOptions();
+
+    renderOptions();
+    notify('Настройки сохранены');
   } catch (error) {
     handleRequestError(error);
   }
@@ -2285,11 +1840,30 @@ async function handleClearPhotoExceptions() {
   }
 }
 
+function updateOptionsPreview() {
+  state.options.delay = toNumber(
+    elements.delayInput?.value,
+    state.options.delay,
+  );
+
+  state.options.min = toNumber(
+    elements.minInput?.value,
+    state.options.min,
+  );
+
+  state.options.max = toNumber(
+    elements.maxInput?.value,
+    state.options.max,
+  );
+
+  renderBlacklist();
+}
+
 /**
  * Обновление всех данных по кнопке "Обновить".
  */
 async function handleRefresh() {
-  const success = await loadAllData({ forceStats: true });
+  const success = await loadAllData();
 
   if (success) {
     notify('Данные обновлены');
@@ -2306,11 +1880,7 @@ function closeAccountModal() {
   }
   document.removeEventListener('keydown', onModalKeydown);
   // Снимаем блокировку прокрутки фона и слушатель клавиатуры (см. handleDetails).
-  const lockedY = Number(document.body.dataset.scrollLockY || 0);
   document.body.classList.remove('modal-open');
-  document.body.style.top = '';
-  delete document.body.dataset.scrollLockY;
-  window.scrollTo(0, lockedY);
   if (visualViewportHandler && window.visualViewport) {
     window.visualViewport.removeEventListener('resize', visualViewportHandler);
     visualViewportHandler = null;
@@ -2404,7 +1974,7 @@ function handleDetails(accountId) {
       <div class="modal-card__header">
         <div>
           <p class="modal-card__eyebrow">Аккаунт</p>
-          <h3 class="modal-card__title">${escapeHtml(formatPhone(account.phone))}</h3>
+          <h3 class="modal-card__title">${escapeHtml(account.phone || '')}</h3>
         </div>
         <button class="modal-close" type="button" aria-label="Закрыть" data-modal-close>×</button>
       </div>
@@ -2437,27 +2007,23 @@ function handleDetails(accountId) {
         <div class="modal-delay">
           <input
             id="modal-delay-min"
-            type="text"
-            inputmode="numeric"
-            pattern="[0-9]*"
-            enterkeyhint="done"
-            autocomplete="off"
-            value="${shownDelayPair(account.reply_delay_min, account.reply_delay_max)[0]}"
+            type="number"
+            min="1"
+            max="60"
+            value="${Number(account.reply_delay_min) || 3}"
             aria-label="Минимальная задержка в секундах"
           />
           <span class="modal-delay__sep">—</span>
           <input
             id="modal-delay-max"
-            type="text"
-            inputmode="numeric"
-            pattern="[0-9]*"
-            enterkeyhint="done"
-            autocomplete="off"
-            value="${shownDelayPair(account.reply_delay_min, account.reply_delay_max)[1]}"
+            type="number"
+            min="1"
+            max="60"
+            value="${Number(account.reply_delay_max) || 8}"
             aria-label="Максимальная задержка в секундах"
           />
         </div>
-        <small class="modal-field__hint">Случайная пауза перед ответом, 8–90 секунд. Короткие значения вроде 3–8 больше не используются.</small>
+        <small class="modal-field__hint">Бот ответит через случайное время в этом диапазоне (1–60 сек). Например 10 и 20 — ответ придёт через 10–20 секунд.</small>
       </div>
 
       <label class="modal-field">
@@ -2486,8 +2052,6 @@ function handleDetails(accountId) {
   document.body.appendChild(overlay);
   document.addEventListener('keydown', onModalKeydown);
   // Блокируем прокрутку фона и включаем мобильную обработку клавиатуры.
-  document.body.dataset.scrollLockY = String(window.scrollY || window.pageYOffset || 0);
-  document.body.style.top = `-${document.body.dataset.scrollLockY}px`;
   document.body.classList.add('modal-open');
   setupMobileKeyboardHandling(overlay);
 
@@ -2518,13 +2082,13 @@ function handleDetails(accountId) {
     saveButton.addEventListener('click', async () => {
       // Диапазон задержки: ограничиваем 1..60 и упорядочиваем min <= max.
       const clamp = (v, def) => {
-        const n = Math.round(Number(String(v || '').replace(/\D/g, '')));
-        if (!Number.isFinite(n) || n === 0) return def;
-        return Math.min(90, Math.max(8, n));
+        const n = Math.round(Number(v));
+        if (!Number.isFinite(n)) return def;
+        return Math.min(60, Math.max(1, n));
       };
 
-      let delayMin = clamp(delayMinInput?.value, 25);
-      let delayMax = clamp(delayMaxInput?.value, 50);
+      let delayMin = clamp(delayMinInput?.value, 3);
+      let delayMax = clamp(delayMaxInput?.value, 8);
       if (delayMin > delayMax) {
         [delayMin, delayMax] = [delayMax, delayMin];
       }
@@ -2540,26 +2104,21 @@ function handleDetails(accountId) {
 
 function bindEvents() {
   elements.tabs.forEach((button) => {
-    button.addEventListener('click', (event) => {
-      if (!button.dataset.tab) {
-        return;
-      }
-      event.preventDefault();
+    button.addEventListener('click', () => {
       setActiveTab(button.dataset.tab);
     });
   });
 
-  bindProfileEvents();
-
-  if (elements.accountForm) {
-    elements.accountForm.addEventListener('submit', addAccount);
-  }
+    if (elements.accountForm) {
+      elements.accountForm.addEventListener('submit', addAccount);
+    }
+    if (elements.datingForm) {
+      elements.datingForm.addEventListener('submit', handleDatingSubmit);
+    }
 
   if (elements.exampleForm) {
     elements.exampleForm.addEventListener('submit', saveExample);
   }
-
-  document.getElementById('example-cancel')?.addEventListener('click', resetExampleForm);
 
   if (elements.addBlacklist) {
     elements.addBlacklist.addEventListener('click', addToBlacklist);
@@ -2577,6 +2136,16 @@ function bindEvents() {
     elements.clearPhotoExceptions.addEventListener('click', handleClearPhotoExceptions);
   }
 
+  [
+    elements.delayInput,
+    elements.minInput,
+    elements.maxInput,
+  ]
+    .filter(Boolean)
+    .forEach((input) => {
+      input.addEventListener('input', updateOptionsPreview);
+    });
+
   document.addEventListener('click', (event) => {
     const target = event.target.closest('button, [data-action]');
 
@@ -2592,8 +2161,45 @@ function bindEvents() {
       return;
     }
 
+    if (action === 'open-dating') {
+      setActiveTab('dating');
+      return;
+    }
+
+    if (action === 'refresh-dating') {
+      loadDatingSites()
+        .then(() => renderDating())
+        .catch(handleRequestError);
+      return;
+    }
+
+    if (action === 'dating-toggle') {
+      handleDatingToggle(id, target.dataset.enabled === '1');
+      return;
+    }
+
+    if (action === 'dating-delete') {
+      handleDatingDelete(id);
+      return;
+    }
+
+    if (action === 'dating-export') {
+      handleDatingExport();
+      return;
+    }
+
+    if (action === 'dating-preview') {
+      handleDatingPreview();
+      return;
+    }
+
     if (action === 'refresh') {
       handleRefresh();
+      return;
+    }
+
+    if (action === 'topup') {
+      notify('Оплата будет подключена позже');
       return;
     }
 
@@ -2602,6 +2208,11 @@ function bindEvents() {
         tg.close();
       }
 
+      return;
+    }
+
+    if (action === 'save-options' || action === 'save-delay') {
+      handleSaveOptions();
       return;
     }
 
@@ -2645,16 +2256,6 @@ function bindEvents() {
       return;
     }
 
-    if (action === 'edit-example') {
-      editExample(id);
-      return;
-    }
-
-    if (action === 'delete-example') {
-      deleteExample(id);
-      return;
-    }
-
     if (action === 'clear-history') {
       handleClearHistory(target.dataset.account, target.dataset.peer);
     }
@@ -2666,15 +2267,9 @@ function bindEvents() {
  * и подтягиваем реальные данные из backend.
  */
 async function startApp() {
-  try {
-    bindEvents();
-    render();
-    await loadAllData();
-  } catch (error) {
-    console.error('startApp failed', error);
-    setActiveTab('panel');
-    notify(error?.message || 'Ошибка загрузки интерфейса');
-  }
+  bindEvents();
+  render();
+  await loadAllData();
 }
 
 /**

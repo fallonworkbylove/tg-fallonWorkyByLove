@@ -1,0 +1,32 @@
+{
+  "openai_api_key": "",
+  "openai_model": "gpt-4o-mini",
+  "openai_base_url": "",
+  "proxy": "",
+  "headless": true,
+  "chat_url": "https://app.tagged.com/chats",
+  "dolphin_api": "http://127.0.0.1:3001",
+  "backend_url": "https://loverussian.duckdns.org",
+  "dating_worker_secret": "",
+  "invite": {
+    "after_seconds_min": 180,
+    "after_seconds_max": 240,
+    "max_invites_per_dialog": 1,
+    "cooldown_seconds": 120
+  },
+  "accounts": [
+    {
+      "id": "girl1",
+      "enabled": true,
+      "tagged_email": "girl1@example.com",
+      "tagged_password": "CHANGE_ME",
+      "persona_name": "Mila",
+      "persona_prompt": "Mila, ~23, warm and a bit playful. Short phone-text style, light flirt, curious without interviewing. Own opinions, tiny life crumbs sometimes. Never restart hellos — always react to what he said.",
+      "telegram_username": "mila_example",
+      "telegram_display": "@mila_example",
+      "telegram_account_id": null,
+      "language": "en",
+      "dolphin_profile_id": ""
+    }
+  ]
+}
