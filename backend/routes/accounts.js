@@ -60,16 +60,29 @@ async function getAccountLimit(userId) {
   return Number.isFinite(limit) && limit > 0 ? limit : 10;
 }
 
+/** Начало календарных суток по Москве (UTC+3), как в adminMenu. */
+function sqlMskDayStart(daysAgo = 0) {
+  const d = Math.max(0, Number(daysAgo) || 0);
+  return (
+    `DATE_ADD(DATE_ADD(DATE(DATE_ADD(UTC_TIMESTAMP(), INTERVAL 3 HOUR)), ` +
+    `INTERVAL -${d} DAY), INTERVAL -3 HOUR)`
+  );
+}
+
 // Получить все аккаунты текущего demo-пользователя.
 router.get('/', async (req, res) => {
   try {
+    const dayStart = sqlMskDayStart(0);
     const [accounts] = await db.execute(
-      `SELECT id, phone, prompt, status, is_autoreply_enabled,
-              reply_delay_min, reply_delay_max, media_chat_link,
-              created_at, updated_at
-       FROM accounts
-       WHERE user_id = ?
-       ORDER BY id DESC`,
+      `SELECT a.id, a.phone, a.prompt, a.status, a.is_autoreply_enabled,
+              a.reply_delay_min, a.reply_delay_max, a.media_chat_link,
+              a.created_at, a.updated_at,
+              (SELECT COUNT(*) FROM conversation_messages m
+                WHERE m.account_id = a.id AND m.role = 'assistant'
+                  AND m.created_at >= ${dayStart}) AS sent_today
+       FROM accounts a
+       WHERE a.user_id = ?
+       ORDER BY a.id DESC`,
       [getUserId(req)],
     );
 
@@ -79,6 +92,7 @@ router.get('/', async (req, res) => {
     const withOnline = accounts.map((account) => ({
       ...account,
       is_online: isActive(account.id),
+      sent_today: Number(account.sent_today) || 0,
     }));
 
     res.json({ success: true, accounts: withOnline });
@@ -204,10 +218,7 @@ router.delete('/conversations/:accountId/:peerId', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
     }
 
-    await db.execute(
-      'DELETE FROM conversation_messages WHERE account_id = ? AND peer_id = ?',
-      [accountId, peerId],
-    );
+    await leadScoring.clearPeerConversation(accountId, peerId);
 
     res.json({ success: true });
   } catch (error) {
@@ -403,20 +414,33 @@ router.post('/connect/password', async (req, res) => {
   }
 });
 
-// Массовое управление автоответами для всех аккаунтов текущего пользователя.
+function readBulkIds(body) {
+  if (!Array.isArray(body?.ids) || !body.ids.length) return null;
+  const ids = [...new Set(body.ids.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0))];
+  return ids.length ? ids : null;
+}
+
+// Массовое управление автоответами (все или выбранные ids).
 router.post('/bulk/start-ai', async (req, res) => {
   try {
+    const ids = readBulkIds(req.body);
+    const params = [getUserId(req)];
+    let where = 'user_id = ?';
+    if (ids) {
+      where += ` AND id IN (${ids.map(() => '?').join(',')})`;
+      params.push(...ids);
+    }
     const [result] = await db.execute(
       `UPDATE accounts
        SET status = 'AI включен', is_autoreply_enabled = TRUE
-       WHERE user_id = ?`,
-      [getUserId(req)],
+       WHERE ${where}`,
+      params,
     );
     const [accounts] = await db.execute(
       `SELECT id, session_string
        FROM accounts
-       WHERE user_id = ? AND is_autoreply_enabled = TRUE`,
-      [getUserId(req)],
+       WHERE ${where} AND is_autoreply_enabled = TRUE`,
+      params,
     );
     let offline = 0;
     for (const account of accounts) {
@@ -443,11 +467,18 @@ router.post('/bulk/start-ai', async (req, res) => {
 
 router.post('/bulk/stop-ai', async (req, res) => {
   try {
+    const ids = readBulkIds(req.body);
+    const params = [getUserId(req)];
+    let where = 'user_id = ?';
+    if (ids) {
+      where += ` AND id IN (${ids.map(() => '?').join(',')})`;
+      params.push(...ids);
+    }
     const [result] = await db.execute(
       `UPDATE accounts
        SET status = 'Остановлен', is_autoreply_enabled = FALSE
-       WHERE user_id = ?`,
-      [getUserId(req)],
+       WHERE ${where}`,
+      params,
     );
     return res.json({ success: true, affectedRows: result.affectedRows, is_autoreply_enabled: false });
   } catch (error) {

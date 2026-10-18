@@ -994,21 +994,47 @@ function delayBeforeSendMs(settings, text, opts = {}) {
   return think + typing;
 }
 
+function plainTextLen(text) {
+  return String(text || '')
+    .replace(/<<[^>]+>>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim().length;
+}
+
 /**
- * Длительность «печатает...» по длине текста (быстрый набор на телефоне).
+ * Сколько «смотрит» сообщение после галочек прочитано — от длины входящего.
+ */
+function computeReadDwellMs(incomingText) {
+  const len = plainTextLen(incomingText);
+  const openChat = 450 + Math.random() * 900;
+  if (!len) return Math.round(openChat + 200 + Math.random() * 500);
+  // Беглое чтение ~22–36 симв/сек; длинные — не читает каждую букву.
+  const charsPerSec = 22 + Math.random() * 14;
+  const readMs = Math.min(5500, (len / charsPerSec) * 1000);
+  const thinkBit = Math.random() < 0.4 ? 350 + Math.random() * 1100 : 0;
+  return Math.min(7500, Math.round(openChat + readMs * 0.55 + thinkBit));
+}
+
+/**
+ * Длительность «печатает...» по длине ответа (набор с телефона).
+ * Короткие — быстро; длинные — дольше, с редкими заминками.
  */
 function computeTypingMs(text) {
-  const len = String(text || '')
-    .replace(/<<[^>]+>>/g, '')
-    .trim().length;
-  if (!len) return 400 + Math.random() * 500;
-  const reactMs = 200 + Math.random() * 400;
-  // ~12–18 символов/сек — живой темп в активном чате.
-  const charsPerSec = 12 + Math.random() * 6;
-  const typeMs = (len / charsPerSec) * 1000;
-  const pauseMs = len > 50 && Math.random() < 0.25 ? 400 + Math.random() * 700 : 0;
-  const ms = reactMs + typeMs + pauseMs;
-  return Math.min(4500, Math.max(500, Math.round(ms)));
+  const len = plainTextLen(text);
+  if (!len) return Math.round(350 + Math.random() * 450);
+  if (len <= 6) return Math.round(420 + Math.random() * 480);
+  if (len <= 18) return Math.round(650 + Math.random() * 700 + len * 35);
+
+  // Большой палец / RU: ~7–13 симв/сек в живом чате.
+  const charsPerSec = 7.2 + Math.random() * 5.8;
+  let typeMs = (len / charsPerSec) * 1000;
+  // Заминка «подумала слово» раз в ~50–70 символов.
+  const hesitations = Math.floor(len / (50 + Math.floor(Math.random() * 20)));
+  for (let i = 0; i < hesitations; i += 1) {
+    if (Math.random() < 0.6) typeMs += 280 + Math.random() * 780;
+  }
+  // Видимый typing не бесконечный — иначе палево на длинных ответах.
+  return Math.min(9000, Math.max(600, Math.round(typeMs)));
 }
 
 /**
@@ -1040,27 +1066,17 @@ function startTypingPulse(client, peer) {
 }
 
 /**
- * Выдерживает случайную паузу перед ответом. Индикатор «печатает...»
- * показывается ТОЛЬКО в последние typingMs миллисекунд перед отправкой
- * (по умолчанию 10 сек, но можно передать длительность в зависимости от
- * длины сообщения через computeTypingMs), а до этого бот ждёт молча.
- * Индикатор обновляется каждые ~4 секунды, т.к. Telegram гасит его сам.
+ * Выдерживает паузу перед ответом. «Печатает...» — только в конце,
+ * длительность = typingMs (от длины ответа). До этого — тишина («читает/думает»).
+ * Индикатор обновляем каждые ~3–4.5 с (Telegram сам гасит ~5 с).
  */
-async function waitBeforeReply(client, peer, delayMs, typingMs = 10000) {
-  const TYPING_LEAD_MS = typingMs; // за сколько до отправки включать «печатает»
-  const TYPING_REFRESH = 4000;
+async function waitBeforeReply(client, peer, delayMs, typingMs = 4000) {
+  const typeBudget = Math.max(0, Math.min(Number(typingMs) || 0, Math.max(0, delayMs)));
+  const silentMs = Math.max(0, delayMs - typeBudget);
+  if (silentMs > 0) await sleep(silentMs);
 
-  // 1. Тихая фаза: ждём без индикатора (если пауза длиннее 10 сек).
-  const silentMs = Math.max(0, delayMs - TYPING_LEAD_MS);
-  if (silentMs > 0) {
-    await sleep(silentMs);
-  }
-
-  // 2. Фаза «печатает»: последние до 10 секунд с индикатором набора.
   let typingElapsed = 0;
-  const typingPhaseMs = Math.min(delayMs, TYPING_LEAD_MS);
-
-  while (typingElapsed < typingPhaseMs) {
+  while (typingElapsed < typeBudget) {
     try {
       await client.invoke(
         new Api.messages.SetTyping({
@@ -1072,23 +1088,57 @@ async function waitBeforeReply(client, peer, delayMs, typingMs = 10000) {
       // Индикатор печати не критичен.
     }
 
-    const chunk = Math.min(TYPING_REFRESH, typingMs - typingElapsed);
+    // Иногда коротко «передумала» — сброс typing, потом снова печатает.
+    if (
+      typeBudget - typingElapsed > 2200 &&
+      typingElapsed > 1200 &&
+      Math.random() < 0.14
+    ) {
+      try {
+        await client.invoke(
+          new Api.messages.SetTyping({
+            peer,
+            action: new Api.SendMessageCancelAction(),
+          }),
+        );
+      } catch (_) {}
+      const pause = 350 + Math.random() * 700;
+      await sleep(pause);
+      typingElapsed += pause;
+      continue;
+    }
+
+    const refresh = 3000 + Math.floor(Math.random() * 1500);
+    const chunk = Math.min(refresh, typeBudget - typingElapsed);
     await sleep(chunk);
     typingElapsed += chunk;
   }
 }
 
 /**
- * Живой порядок: сначала «прочитано», потом пауза «смотрю», потом «печатает», потом send.
- * Раньше typing шёл до read (даже во время AI) — палило бота.
+ * Живой порядок: прочитано → смотрит (от длины входящего) → думает → печатает (от длины ответа) → send.
+ * Бюджет delayMs не раздуваем второй паузой: чтение входит в тихую фазу.
  */
-async function humanPauseBeforeSend(client, peer, message, delayMs, typingMs) {
+async function humanPauseBeforeSend(client, peer, message, delayMs, typingMs, incomingText = '') {
   await markPeerAsRead(client, peer, message);
-  const readDwellMs = 1100 + Math.floor(Math.random() * 3200);
-  await sleep(readDwellMs);
-  const typeMs =
-    typingMs != null ? typingMs : Math.min(computeTypingMs(''), Math.max(0, delayMs));
-  await waitBeforeReply(client, peer, delayMs, typeMs);
+
+  const incoming =
+    incomingText ||
+    message?.message ||
+    message?.text ||
+    (typeof message === 'string' ? message : '') ||
+    '';
+  const readDwellMs = computeReadDwellMs(incoming);
+  const typeMs = Math.min(
+    typingMs != null ? typingMs : computeTypingMs(''),
+    Math.max(0, delayMs),
+  );
+  const silentBudget = Math.max(0, delayMs - typeMs);
+  // Чтение съедает часть «подумала», остаток — тишина перед typing.
+  const dwell = Math.min(readDwellMs, Math.max(380, silentBudget + 600));
+  await sleep(dwell);
+  const remainingSilent = Math.max(0, silentBudget - dwell);
+  await waitBeforeReply(client, peer, remainingSilent + typeMs, typeMs);
 }
 
 /**
@@ -2150,7 +2200,7 @@ function isTypoFixMessage(content) {
  */
 function userTextForMediaIntent(text) {
   const raw = String(text || '')
-    .replace(/\[(?:ответ на|Ответ на сообщение собеседника:)[^\]]*\]/gi, ' ')
+    .replace(/\[(?:ответ на|уточнение к|Ответ на сообщение собеседника:)[^\]]*\]:?/gi, ' ')
     .replace(/\[уточнение к[^\]]*\]/gi, ' ')
     .replace(/\[\s*\]/g, ' ')
     .trim();
@@ -2184,10 +2234,10 @@ function lastAssistantPromisedMedia(history) {
  */
 function userAskedViaQuoteOnly(text, history) {
   const raw = String(text || '');
-  const hasQuote = /\[(?:ответ на|Ответ на сообщение собеседника:)/i.test(raw);
+  const hasQuote = /\[(?:ответ на|уточнение к|Ответ на сообщение собеседника:)/i.test(raw);
   if (!hasQuote) return false;
   const body = raw
-    .replace(/\[(?:ответ на|Ответ на сообщение собеседника:)[^\]]*\]/gi, ' ')
+    .replace(/\[(?:ответ на|уточнение к|Ответ на сообщение собеседника:)[^\]]*\]:?/gi, ' ')
     .trim();
   if (body.split(/\s+/).filter(Boolean).length > 3) return false;
   return true;
@@ -3765,6 +3815,13 @@ async function handleIncomingMessage(accountId, event) {
       return;
     }
 
+    // Очищенный в кабинете чат: новое входящее снова открывает диалог.
+    try {
+      require('./leadScoring').unmarkPeerCleared(accountId, peerId).catch(() => {});
+    } catch (_) {
+      /* ignore */
+    }
+
     // Не ставим «прочитано» здесь: иначе при паузе «занята» / отключённом
     // автоответе собеседник видит галочки без ответа. Читаем в processBufferedMessages
     // только когда реально отвечаем.
@@ -4164,6 +4221,7 @@ async function fireReengage(accountId, peerId) {
         null,
         delayMs,
         Math.min(computeTypingMs(outText), delayMs),
+        text,
       );
     }
 
@@ -4394,16 +4452,12 @@ async function sendHumanText(client, sender, accountId, peerId, senderName, outT
     const replyTargets = await resolveReplyTargets(client, sender, parsed, incomingText);
     for (let i = 0; i < bubbles.length; i++) {
       if (i > 0) {
-        try {
-          await client.invoke(
-            new Api.messages.SetTyping({
-              peer: sender,
-              action: new Api.SendMessageTypingAction(),
-            }),
-          );
-        } catch (_) {}
-        // Между пузырями — дописала мысль: typing + 0.5–2.2с (не 6с)
-        await sleep(Math.min(2200, 450 + bubbles[i].length * 40 + Math.random() * 900));
+        // Между пузырями — дописывает мысль: typing по длине следующего куска.
+        const gapMs = Math.min(
+          3200,
+          Math.max(500, Math.round(computeTypingMs(bubbles[i]) * 0.55)),
+        );
+        await waitBeforeReply(client, sender, gapMs, gapMs);
       }
       const opts = { message: bubbles[i] };
       if (replyTargets[i]) opts.replyTo = replyTargets[i];
@@ -4608,7 +4662,15 @@ async function processBufferedMessages(
         ? String(repliedMessage.message || repliedMessage.text || '').trim()
         : '';
       if (repliedText) {
-        contextualText = `${text}\n[Ответ на сообщение собеседника: "${repliedText}"]`;
+        // out=true → он ответил на НАШУ фразу (уточнение смысла).
+        // out=false → ответил на своё же / чужое — цитата собеседника.
+        // Старый ярлык «Ответ на сообщение собеседника» путал модель:
+        // «Откуда?» на «скоро выпишут» читался как «где ты живёшь».
+        const quote = repliedText.slice(0, 180).replace(/\s+/g, ' ');
+        const isOurs = Boolean(repliedMessage.out);
+        contextualText = isOurs
+          ? `[уточнение к твоей фразе «${quote}»]: ${text}`
+          : `[ответ на его сообщение «${quote}»]: ${text}`;
       }
     } catch (error) {
       console.warn(
@@ -4778,7 +4840,14 @@ async function processBufferedMessages(
       console.log(
         `[Аккаунт ${accountId}] Пауза ${Math.round(delayMs / 1000)}с перед голосовым для ${senderName}.`,
       );
-      await humanPauseBeforeSend(client, sender, message, delayMs, Math.min(4500, delayMs));
+      await humanPauseBeforeSend(
+        client,
+        sender,
+        message,
+        delayMs,
+        Math.min(4200, Math.max(1600, delayMs * 0.55)),
+        text,
+      );
       try {
         await sendVoiceReply(client, sender, voice.filePath);
       } catch (err) {
@@ -4857,7 +4926,8 @@ async function processBufferedMessages(
         sender,
         message,
         textDelayMs,
-        computeTypingMs(fixedReply),
+        Math.min(computeTypingMs(fixedReply), textDelayMs),
+        text,
       );
       if (await cancelReplyIfDialogGone(client, accountId, sender, senderName, message, 'fixed')) {
         return;
@@ -5152,6 +5222,7 @@ async function processBufferedMessages(
         message,
         textDelayMs,
         Math.min(computeTypingMs(outText), textDelayMs),
+        contextualText || text,
       );
     }
 
@@ -5529,8 +5600,14 @@ async function scanUnansweredDialogs(accountId, minAgeSec = 90, options = {}) {
       if (await isPeerBlacklisted(accountId, peerId)) continue;
       // Доп. проверка архива (на случай если dialog.archived соврал).
       if (await isPeerArchived(client, sender)) continue;
+      // Очищенные в кабинете — не дочитываем старую историю (не возвращаем в предложку).
+      try {
+        if (await require('./leadScoring').isPeerCleared(accountId, peerId)) continue;
+      } catch (_) {
+        /* ignore */
+      }
 
-      // Если это сообщение сей��ас ��опит live-обработчик — не вмешиваемся.
+      // Если это сообщение сейчас копит live-обработчик — не вмешиваемся.
       if (messageBuffers.has(bufferKey(accountId, peerId))) continue;
       // Если по диалогу ��дёт «пауза занятости» — не отвечаем, ждём таймер.
       if (deferredDialogs.has(bufferKey(accountId, peerId))) continue;
@@ -6820,4 +6897,5 @@ module.exports = {
   getDialogAgeHours,
   conversationIsRussian,
   computeTypingMs,
+  computeReadDwellMs,
 };

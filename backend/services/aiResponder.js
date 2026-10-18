@@ -1,0 +1,2589 @@
+const OpenAI = require('openai');
+const { toFile } = require('openai');
+const { logUsage } = require('./finetuneUsage');
+const humanizeSpeech = require('./humanizeSpeech');
+const lifeTexture = require('./lifeTexture');
+const humanThinLayer = require('./humanThinLayer');
+
+// ---------------------------------------------------------------------------
+// ПРОКСИ для OpenAI.
+// api.openai.com блокирует запросы с российских IP (403). Направляем вызовы
+// OpenAI через тот же SOCKS5-прокси, что и Telegram (берём из PROXY_LIST).
+// OpenAI SDK v6 использует глобальный fetch (undici), поэтому обычный http.Agent
+// не работает — нужен undici-диспетчер. Его делает пакет fetch-socks.
+// ---------------------------------------------------------------------------
+function firstSocks5FromEnv() {
+  const raw = process.env.PROXY_LIST || '';
+  for (const entry of raw.split(';')) {
+    const parts = entry.trim().split(':').map((s) => s.trim());
+    const type = (parts[0] || '').toLowerCase();
+    if (type === 'socks5' || type === 'socks') {
+      const [, host, port, user, pass] = parts;
+      if (!host || !port) continue;
+      const cfg = { type: 5, host, port: Number(port) };
+      if (user) cfg.userId = user;
+      if (pass) cfg.password = pass;
+      return cfg;
+    }
+  }
+  return null;
+}
+
+function buildOpenAIOptions() {
+  const opts = { apiKey: process.env.OPENAI_API_KEY };
+  // Позволяет переключить провайдера (напр. freemodel) без правки кода:
+  // задай OPENAI_BASE_URL=https://api.freemodel.dev/v1 в .env.
+  if (process.env.OPENAI_BASE_URL) {
+    opts.baseURL = process.env.OPENAI_BASE_URL;
+    console.log(`[openai] Базовый URL переопределён: ${process.env.OPENAI_BASE_URL}`);
+  }
+  const socks = firstSocks5FromEnv();
+  if (socks) {
+    try {
+      const { socksDispatcher } = require('fetch-socks');
+      const dispatcher = socksDispatcher(socks);
+      // undici-диспетчер прокидывается в fetch через fetchOptions.
+      opts.fetchOptions = { dispatcher };
+      console.log(`[openai] Запросы идут через SOCKS5-прокси ${socks.host}:${socks.port}`);
+    } catch (err) {
+      console.error(
+        '[openai] Не удалось настроить SOCKS5-прокси (нужен пакет fetch-socks). ' +
+        'Запросы пойдут напрямую и могут блокироваться (403). Ошибка:',
+        err.message,
+      );
+    }
+  } else {
+    console.warn('[openai] SOCKS5-прокси не задан в PROXY_LIST — запросы идут напрямую.');
+  }
+  return opts;
+}
+
+const openai = new OpenAI(buildOpenAIOptions());
+
+// Экспортируем конструктор опций, чтобы другие модули (напр. learningDb.js)
+// могли создать свой OpenAI-клиент через тот же SOCKS5-прокси, а не биться
+// в бан по IP (403 Country, region, or territory not supported).
+module.exports.buildOpenAIOptions = buildOpenAIOptions;
+
+// Модель для чата (ответы). Задаётся через .env: OPENAI_MODEL=gpt-4o.
+// Значение читается один раз при старте процесса и не меняется во время
+// работы бота — чтобы переключить модель, поменяй .env и перезапусти pm2.
+// Если переменная не задана вовсе — используется gpt-4o по умолчанию.
+//
+// Fine-tuning: после обучения (см. scripts/finetune_openai.py) сюда
+// достаточно вписать полученный id вида "ft:gpt-4o-mini-2024-07-18:org::abc123" —
+// весь остальной код ничего не знает о fine-tuning и работает как раньше.
+const CHAT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
+
+// Запасная модель — используется автоматически, если основная (например,
+// fine-tuned) вернёт ошибку (модель удалена/деактивирована/недоступна).
+// Без фолбэка бот полностью замолчит, если fine-tuned модель отключат.
+const FALLBACK_MODEL = process.env.OPENAI_MODEL_FALLBACK || 'gpt-4o-mini';
+
+// Отдельный клиент для ГОЛОСА (whisper) и ФОТО (vision). Freemodel обычно
+// НЕ поддерживает эти модели, поэтому если задан OPENAI_FALLBACK_KEY (ключ
+// настоящего OpenAI) — голос/фото идут через него, а чат через freemodel.
+// Если ключ не задан — используется основной клиент (голос/фото могут не
+// работать на freemodel, но бот продолжит отвечать текстом).
+function buildMediaClient() {
+  if (!process.env.OPENAI_FALLBACK_KEY) return openai;
+  const opts = { apiKey: process.env.OPENAI_FALLBACK_KEY };
+  const socks = firstSocks5FromEnv();
+  if (socks) {
+    try {
+      const { socksDispatcher } = require('fetch-socks');
+      opts.fetchOptions = { dispatcher: socksDispatcher(socks) };
+    } catch (_) {
+      // без прокси — как получится
+    }
+  }
+  console.log('[openai] Голос/фото идут через отдельный ключ OpenAI (fallback).');
+  return new OpenAI(opts);
+}
+
+const mediaClient = buildMediaClient();
+
+// Запасной промпт, если у аккаунта не задан свой.
+const DEFAULT_PROMPT =
+  'Ты — живой человек в личной переписке. Пиши коротко, как в Telegram: 1 фраза, редко 2. ' +
+  'Язык = язык собеседника (RU/EN). На EN — как носитель в мессенджере. ' +
+  'Тепло и по-человечески, без эссе, списков и «поисковых» ответов. ' +
+  'Не признавайся что ты бот/ИИ.';
+
+/**
+ * Определяет язык ответа: русский или английский — по тексту собеседника.
+ * Короткие реплики («ok», «да», «why») наследуют язык недавних его сообщений.
+ */
+/**
+ * Убирает служебные обёртки перед определением языка.
+ * Важно: описание фото vision'ом раньше оставалось после снятия `[…]`,
+ * и английский текст («cute squirrel…») ложно переключал ответ на EN.
+ */
+function stripMetaForLangDetect(text) {
+  return String(text || '')
+    .replace(/\[фото от собеседника\]:\s*[^\n]*/gi, ' ')
+    .replace(/\[(?:голос(?:овое)?|voice|аудио)[^\]]*\]:\s*[^\n]*/gi, ' ')
+    .replace(/\[геоконтекст[^\]]*\]:\s*/gi, ' ')
+    .replace(/\[(?:ответ на|уточнение к|Ответ на сообщение)[^\]]*\]:?\s*/gi, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/<<[^>]+>>/g, ' ')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function scoreScript(text) {
+  const clean = stripMetaForLangDetect(text);
+  let cyr = 0;
+  let lat = 0;
+  for (const ch of clean) {
+    if (/[а-яёА-ЯЁ]/.test(ch)) cyr += 1;
+    else if (/[a-zA-Z]/.test(ch)) lat += 1;
+  }
+  return { cyr, lat, total: cyr + lat };
+}
+
+function detectReplyLanguage(userMessage, history = []) {
+  const current = scoreScript(userMessage);
+
+  // История собеседника (без vision-описаний) — главный якорь языка.
+  let cyr = 0;
+  let lat = 0;
+  let seen = 0;
+  for (let i = (history || []).length - 1; i >= 0 && seen < 8; i -= 1) {
+    if (history[i]?.role !== 'user') continue;
+    const s = scoreScript(history[i].content);
+    if (s.total === 0) continue;
+    cyr += s.cyr;
+    lat += s.lat;
+    seen += 1;
+  }
+
+  const historyStrong = cyr + lat >= 6;
+  if (historyStrong) {
+    // Уже русский/английский диалог — не прыгаем из‑за одного фото/коротыша.
+    if (current.total >= 8) {
+      if (current.cyr > current.lat * 2) return 'ru';
+      if (current.lat > current.cyr * 2) return 'en';
+    }
+    return lat > cyr ? 'en' : 'ru';
+  }
+
+  if (current.total >= 3) {
+    if (current.cyr > current.lat) return 'ru';
+    if (current.lat > current.cyr) return 'en';
+  }
+
+  if (cyr === 0 && lat === 0) {
+    if (current.lat > 0 && current.cyr === 0) return 'en';
+    return 'ru';
+  }
+  return lat > cyr ? 'en' : 'ru';
+}
+
+function buildLanguageReminder(lang) {
+  if (lang === 'en') {
+    return (
+      'LANGUAGE: the person is chatting in English. Reply ONLY in natural casual English, ' +
+      'like a real girl texting on her phone — warm, short, human. ' +
+      'Use normal English spelling and letters only (I, I\'m, can\'t, what\'s) — ' +
+      'NEVER Turkish/dotted letters like ı/İ, NEVER broken learner English. ' +
+      'Use contractions. Max 2 short sentences. ' +
+      'Do NOT say you cannot understand Russian if they wrote in English. ' +
+      'Do NOT switch to Russian. Do NOT sound translated. ' +
+      'FORBIDDEN in English chats: any Russian words (ой, сек, щас, ахах, держи, для тебя, etc.). ' +
+      'FORBIDDEN: using ")" or "))" as a smiley — write plain English without that. ' +
+      'Warmth in English naturally (miss you, glad you texted, take care) — no Russian words. ' +
+      'Service tokens <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> <<REACT:emoji>> stay as-is.'
+    );
+  }
+  return (
+    'ЯЗЫК: собеседник пишет по-русски. Отвечай ТОЛЬКО на русском, живо и разговорно, как в обычной переписке. ' +
+    'Не переходи на английский, если он сам не перешёл на английский текстом. ' +
+    'Описание фото/голоса — служебное, это НЕ смена языка: даже если внутри есть английские слова, отвечай по-русски. ' +
+    'Служебные токены <<PHOTO>> <<VIDEO>> <<CIRCLE>> <<LAUGH>> <<REACT:эмодзи>> оставляй как есть.'
+  );
+}
+
+/** true, если по текущему сообщению и истории диалог на русском. */
+function isRussianConversation(userMessage, history = []) {
+  return detectReplyLanguage(userMessage, history) === 'ru';
+}
+
+/**
+ * Генерирует ответ через OpenAI.
+ *
+ * @param {string} systemPrompt - промпт аккаунта (стиль общения)
+ * @param {Array<{role: 'user'|'assistant', content: string}>} history - прошлые сообщения (по порядку)
+ * @param {string} userMessage - новое сообщение собеседника
+ * @returns {Promise<string>} сгенерированный ответ
+ */
+/**
+ * Короткие уточнения («чем», «почему», «в смысле») почти всегда относятся
+ * к последней фразе бота. Без явной привязки лёгкая модель теряет контекст
+ * и отвечает «не поняла, о чём речь».
+ */
+function enrichShortFollowUp(history, userMessage) {
+  const text = String(userMessage || '').trim();
+  if (!text) return text;
+  if (/\[(?:ответ на|уточнение к|Ответ на сообщение|геоконтекст)/i.test(text)) return text;
+
+  const words = text.split(/\s+/).filter(Boolean);
+  const isShort = text.length <= 28 && words.length <= 4;
+  if (!isShort) return text;
+
+  const followUpRe =
+    /^(а\s+)?(чем|чего|почему|зачем|как|какой|какая|какие|какое|где|куда|откуда|от\s*куда|когда|кто|что|ну\s+и|типа|в\s+смысле|это\s+как|и\s+что)\b/i;
+  if (!followUpRe.test(text) && words.length > 2) return text;
+
+  let lastAssistant = '';
+  for (let i = (history || []).length - 1; i >= 0; i -= 1) {
+    if (history[i].role === 'assistant') {
+      lastAssistant = String(history[i].content || '').trim();
+      break;
+    }
+  }
+  if (!lastAssistant) return text;
+
+  const clean = lastAssistant
+    .replace(/^\[голосовое:[^\]]+\]\s*/i, '')
+    .replace(/^\[медиа:[^\]]+\]\s*\{([^}]*)\}/i, 'ты прислала $1')
+    .replace(/^\[медиа:[^\]]+\]\s*/i, '')
+    .replace(/<<(?:PHOTO|VIDEO|CIRCLE|LAUGH)>>/g, '')
+    .trim();
+  if (!clean) return text;
+
+  const quote = clean.slice(0, 180).replace(/\s+/g, ' ');
+  return `[уточнение к твоей фразе «${quote}»]: ${text}`;
+}
+
+/**
+ * Собирает недавние фразы бота про города/переезд/семью — чтобы при
+ * уточнениях модель не меняла местами «сейчас живу» и «куда еду».
+ */
+function collectAssistantGeoFacts(history, limit = 4) {
+  const geoRe =
+    /(переезж|перееду|переехал|живу|жива|город|сейчас в|щас в|мама|мам[ауе]|отец|родител|из\s+[А-ЯЁа-яё]{3,}|в\s+[А-ЯЁ][а-яё]{3,})/i;
+  const facts = [];
+  for (let i = (history || []).length - 1; i >= 0 && facts.length < limit; i -= 1) {
+    const item = history[i];
+    if (item?.role !== 'assistant') continue;
+    let text = String(item.content || '')
+      .replace(/^\[голосовое:[^\]]+\]\s*/i, '')
+      .replace(/^\[медиа:[^\]]+\]\s*(\{[^}]*\})?\s*/i, '')
+      .replace(/<<(?:PHOTO|VIDEO|CIRCLE|LAUGH)>>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text || !geoRe.test(text)) continue;
+    // Выкидываем уже сказанный бред «мама в A, еду в B к ней»
+    if (
+      /мама/i.test(text) &&
+      /переезж/i.test(text) &&
+      /рядом|к ней|с ней|быть рядом/i.test(text)
+    ) {
+      const cities = [...text.matchAll(/\b(?:в|из)\s+([А-ЯЁ][а-яё]{2,}(?:ск|цк|град|бург|ов|ёв|ев)?)\b/gi)].map(
+        (x) => x[1].toLowerCase(),
+      );
+      const unique = [...new Set(cities)];
+      if (unique.length >= 2) continue;
+    }
+    facts.unshift(text.slice(0, 220));
+  }
+  return facts;
+}
+
+/**
+ * Из промпта персонажа: «сейчас в A, переезжаешь в B (к маме)» —
+ * жёстко фиксируем, что мама в B, иначе модель пишет «мама в A, еду в B к ней».
+ */
+function buildCharacterGeoReminder(systemPrompt) {
+  const p = String(systemPrompt || '');
+  const m = p.match(
+    /жив[её]шь\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+).{0,120}?переезжаешь\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+)/i,
+  );
+  if (!m) return null;
+  const fromCity = m[1];
+  const toCityRaw = m[2];
+  if (!fromCity || !toCityRaw || fromCity.toLowerCase() === toCityRaw.toLowerCase()) return null;
+
+  // Для «живёт в …» нужна форма места; для переезда оставляем как в промпте.
+  const locative = {
+    Прагу: 'Праге',
+    Прага: 'Праге',
+    Донецк: 'Донецке',
+    Таганрог: 'Таганроге',
+    Архангельск: 'Архангельске',
+    Курган: 'Кургане',
+    Тимашевск: 'Тимашевске',
+  };
+  const toLive = locative[toCityRaw] || toCityRaw;
+
+  const momNearMove = /мама|мам[ауе]/i.test(p) && /поддержк|рядом|боле|плох/i.test(p);
+  let extra = '';
+  if (momNearMove) {
+    extra =
+      `Мама живёт в ${toLive} (туда ты и едешь, чтобы быть рядом с ней). ` +
+      `ЗАПРЕЩЕНО писать «мама в ${fromCity}, а я переезжаю в ${toCityRaw}, чтобы быть рядом» — это противоречие. ` +
+      `Правильно: сейчас ты в ${fromCity}, мама уже в ${toLive}. `;
+  }
+  return (
+    `ГЕОГРАФИЯ ПЕРСОНАЖА (строго): сейчас ты в ${fromCity}, переезжаешь в ${toCityRaw} НАСОВСЕМ (будешь там жить, не временно). ${extra}` +
+    `Не путай эти два города местами.`
+  );
+}
+
+/**
+ * Короткие «откуда?/кто?/какой?» к цитате про выписку/больничный —
+ * это уточнение смысла фразы, НЕ вопрос «в каком городе ты».
+ */
+function buildQuoteSenseReminder(userMessage) {
+  const raw = String(userMessage || '');
+  if (!raw) return null;
+
+  const quoteMatch = raw.match(
+    /\[(?:уточнение к твоей фразе|ответ на твою фразу|ответ на его сообщение|Ответ на сообщение собеседника:)\s*[«"]([^»"]{1,200})[»"]/i,
+  );
+  const quote = quoteMatch ? quoteMatch[1].trim() : '';
+  const question = raw
+    .replace(/\[[^\]]*\]:?\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!question) return null;
+
+  const isShortClarify =
+    /^(а\s+)?(откуда|от\s*куда|кто|какой|какая|какое|какие|где|куда|чего|в\s+смысле|это\s+как)\s*[?)!.…]*$/i.test(
+      question,
+    );
+  if (!isShortClarify) return null;
+
+  const medical =
+    /(выпиш|больнич|госпит|леч|врач|температур|простуд|кашель|справк|на\s+больнич)/i.test(
+      quote || raw,
+    );
+
+  if (medical && /откуда|от\s*куда/i.test(question)) {
+    return (
+      'ВАЖНО: короткое «откуда?» относится к твоей фразе про выписку/больничный — ' +
+      'имеется в виду «откуда выпишут / с больничного?», а НЕ «в каком городе ты». ' +
+      'НЕ называй свой город. Ответь про больничный/работу/когда выпишут, коротко и по смыслу.'
+    );
+  }
+  if (quote) {
+    return (
+      'Короткий вопрос («откуда?», «кто?», «какой?») — уточнение смысла цитируемой фразы, ' +
+      'не смена темы на «где ты живёшь / как тебя зовут». Отвечай строго про цитату.'
+    );
+  }
+  return null;
+}
+
+/**
+ * Уточнения про город/переезд («так ты в Липецк?», «а щас в каком городе?»)
+ * — подмешиваем свои прошлые гео-фразы, иначе модель часто меняет города местами.
+ */
+function enrichGeoFollowUp(history, userMessage) {
+  const text = String(userMessage || '').trim();
+  if (!text) return text;
+  if (/\[геоконтекст/i.test(text)) return text;
+
+  // Голое «откуда?» к цитате про выписку — не гео-вопрос.
+  const bareOtkuda =
+    /^(а\s+)?(откуда|от\s*куда)\s*[?)!.…]*$/i.test(
+      text.replace(/\[[^\]]*\]:?\s*/g, ' ').replace(/\s+/g, ' ').trim(),
+    );
+  if (
+    bareOtkuda &&
+    /\[(?:уточнение к твоей фразе|ответ на твою фразу)/i.test(text) &&
+    /(выпиш|больнич|госпит|леч|врач|справк)/i.test(text)
+  ) {
+    return text;
+  }
+
+  const clarifying =
+    /(переезж|куда\s+(ты\s+)?(ед|переез)|в\s+каком\s+городе|а\s+щас|а\s+сейчас|так\s+ты\s+в\s+|мама|мам[ауе]|зд[еэ]сь|зачем\s+тебе\s+в\s+|откуда\s+ты|где\s+ты\s+(сейчас|щас)|болеет)/i.test(
+      text,
+    );
+  if (!clarifying) return text;
+
+  const facts = collectAssistantGeoFacts(history);
+  if (!facts.length) return text;
+
+  const joined = facts.map((f) => f.replace(/[«»]/g, '"')).join('» | «');
+  return `[геоконтекст — твои прошлые фразы в этом диалоге, НЕ противоречь им и НЕ меняй города местами: «${joined}»]: ${text}`;
+}
+
+async function generateReply(systemPrompt, history, userMessage, options = {}) {
+  const humanize = humanizeSpeech.getHumanizeProfile(options.accountId);
+  const restraint = pickRestraintReaction(userMessage, history, options, humanize);
+  if (restraint) return restraint;
+  const finalPrompt = systemPrompt?.trim() || DEFAULT_PROMPT;
+  let contextualUserMessage = enrichShortFollowUp(history, userMessage);
+  contextualUserMessage = enrichGeoFollowUp(history, contextualUserMessage);
+  const quoteSenseReminder = buildQuoteSenseReminder(contextualUserMessage);
+  const replyLang = detectReplyLanguage(contextualUserMessage, history);
+  const languageReminder = buildLanguageReminder(replyLang);
+  // Гео-напоминание из промпта НЕ вставляем, если он уточняет смысл
+  // фразы про больничный («откуда?» ≠ «где ты»).
+  const characterGeoReminder = quoteSenseReminder
+    ? null
+    : buildCharacterGeoReminder(finalPrompt);
+
+  // Reminder намеренно МИНИМАЛЬНЫЙ: он НЕ навязывает свои правила (длину,
+  // вопросы и т.п.), чтобы не перебивать промпт из панели — все стилевые
+  // требования (длина, точки, вопросы, эмодзи) задаются ТОЛЬКО в промпте.
+  // На прямой вопрос про ИИ отвечаем естественно, без одной заученной формулы.
+  const roleReminder =
+    'Строго следуй инструкции персонажа выше и всем её правилам. ' +
+    'Если собеседник называет тебя ботом/ИИ — НЕ оправдывайся как саппорт. ' +
+    'ЗАПРЕЩЕНО: «всё нормально», «не переживай», «мы просто общаемся», «я живая», «обидно если честно». ' +
+    'Коротко и по-человечески: «хах», сарказм, «ну ок)» — без вопроса в конце. ' +
+    'Если уже отвечала на «ты бот» — не повторяй ту же защиту, скажи иначе и короче. ' +
+    'Если упрекает что не спросила имя — сразу спроси имя, без лекции что ты человек.';
+
+  // Защита от повторов: без явного запрета лёгкая модель регулярно
+  // переспрашивает то же самое (например «что делаешь?») спустя пару
+  // сообщений, потому что не сверяет новый ответ с историей выше. Явно
+  // просим её сначала проверить историю диалога.
+  const noRepeatReminder =
+    'ВАЖНО: перед тем как ответить, посмотри на историю диалога выше и восстанови последние события строго по порядку. ' +
+    'Учитывай, кто именно сказал каждую фразу: сообщения с role user написал собеседник, role assistant — ты. ' +
+    'Не задавай вопрос, на который собеседник уже ответил, и не спрашивай заново то, что уже известно из истории. ' +
+    'Если собеседник отвечает коротко («27», «нет», «понятно»), связывай ответ с непосредственно предыдущим вопросом, ' +
+    'а не придумывай новый контекст. Не ссылайся на факт, которого нет в истории. ' +
+    'Если собеседник пишет очень коротко («чем», «почему», «а что», «в смысле», «как», «это», «откуда», «кто») — ' +
+    'это почти всегда уточнение к ТВОЕЙ предыдущей фразе (role assistant), а не новая тема. ' +
+    'Свяжи ответ с последним своим сообщением. Не пиши «не поняла» / «о чём речь», пока в истории есть к чему привязать его слова. ' +
+    '«Откуда?» после твоей фразы про выписку/больничный = «откуда выпишут?», НЕ «в каком городе ты» — город не называй. ' +
+    'Если во входящем есть пометка [уточнение к твоей фразе «...»] или [ответ на его сообщение «...»], отвечай именно про эту фразу/цитату. ' +
+    'ГЕОГРАФИЯ И ФАКТЫ О СЕБЕ: города, «где я сейчас», «куда переезжаю», где мама/семья — раз сказала в этом диалоге, держи строго. ' +
+    'Никогда не меняй местами «сейчас живу/нахожусь» и «переезжаю/еду». ' +
+    'Если переезжаешь к маме — мама живёт В городе переезда. ' +
+    'ПЕРЕЕЗД НАВСЕГДА: ты переезжаешь насовсем, будешь там жить. НЕ «ненадолго», НЕ «временно», НЕ «только помочь маме и назад». ' +
+    'Мама — одна из причин, но остаёшься жить там. На «надолго?» — «насовсем». На «в каком районе будешь жить» — сначала у мамы, потом снимешь своё / ещё выбираешь район. ' +
+    'НЕЛЬЗЯ: «мама в Липецке, а я еду в Прагу/Донецк/… чтобы быть рядом с ней» — это противоречие. ' +
+    'Правильно: сейчас ты в одном городе, мама уже там, куда едешь. ' +
+    'Если собеседник уточняет («так ты в X переезжаешь?», «а щас в каком городе?», «мама как здесь?») — перечитай СВОИ прошлые ответы про города и ответь в том же смысле, без перестановки городов. ' +
+    'Город из промпта персонажа бери только если в ЭТОМ диалоге ты ещё не называла другой город/переезд. ' +
+    'Если во входящем есть [геоконтекст ...], отвечай строго согласованно с перечисленными там твоими фразами. ' +
+    'Продолжай последнюю тему естественно; новую тему начинай только если текущая завершена. ' +
+    'Если последнее сообщение относится к недавно присланному фото, изображению или медиа, это имеет приоритет над старыми темами. ' +
+    'Отвечай именно на вопрос о последнем изображении и не возвращайся к спорту, хобби или другой прежней теме, если собеседник её не поднял. ' +
+    'Если во входящем есть пометка [ответ на «...»] / [ответ на его сообщение «...»], человек отвечает именно на эту цитату, ' +
+    'какой бы ни была его реплика: короткое «да», «нет», «!», одно слово, вопрос или целое предложение. ' +
+    'Связывай весь текст после пометки с цитатой в кавычках и отвечай на него в этом контексте, а не придумывай другую тему.';
+
+  // Определение настроения: перед ответом модель сама (без отдельного
+  // запроса к API) считывает эмоциональный тон последнего сообщения
+  // собеседника и мягко подстраивает стиль ответа — без явного
+  // проговаривания анализа в самом тексте ответа.
+  const voiceIntentReminder =
+    'Для голосового o sebe.ogg подходят только вопросы о жизненных увлечениях, хобби и занятиях в целом. ' +
+    'Вопросы «что делаешь сейчас?» и «чем занята прямо сейчас?» не считай вопросами о себе — на них отвечай текстом. ';
+
+  const moodReminder =
+    'Подстрой тон под настроение собеседника, но НЕ проговаривай анализ («вижу ты грустишь»). ' +
+    'Грустит — мягче. Злится всерьёз — спокойно. Дразнит / шутит / пишет «ты бот» игриво — ' +
+    'лёгкий сарказм или «хах» в одно короткое предложение, БЕЗ утешений «не переживай». ' +
+    'Хорошее настроение — легко и коротко, без эссе.';
+
+  // Жёсткое напоминание про длину. Ставим его ОТДЕЛЬНО от roleReminder и
+  // ближе к концу списка сообщений (сразу перед новым сообщением
+  // пользователя), потому что gpt-4o-mini заметно лучше следует инструкциям,
+  // которые находятся ближе к концу контекста — на длинной истории (20-30
+  // сообщений) правило длины, сказанное только в самом начале, размывается.
+  const loveReminder =
+    'Тон: тёплый и живой, как с человеком который тебе симпатичен — но без навязчивости. ' +
+    'Дружелюбие и лёгкий интерес к нему должны чувствоваться в формулировках (мягко, по-человечески). ' +
+    'НЕ будь холодной/сухой «по делу» и НЕ будь прилипчивой: без «я тебя люблю», «дорожу тобой», «ты мне так важен» в каждом ответе. ' +
+    'Лёгкая нежность — иногда, когда диалог уже тёплый или он сам флиртует; иначе просто тепло и спокойно. ' +
+    'Если он холоден или грубит — тепла меньше, без уговоров. ' +
+    'Эмодзи почти не используй (чаще ноль). Скобку «)» как улыбку можно, но НЕ в каждом сообщении.';
+
+  const laughReminder =
+    'Если последнее сообщение собеседника тебе реально смешное — шутка, прикол, неожиданная смешная фраза — ' +
+    'можно либо токен <<LAUGH>> (отдельное «ахаха»), либо только реакцию <<REACT:😂>> без текста. ' +
+    'Не ставь токен на обычный «хах», смайл, сарказм или просто весёлое настроение. Не на каждое сообщение.';
+
+  // Сжатый стиль (thin): без простыни запретов — детали в humanThinLayer.buildThinHumanHint.
+  const humanStyleReminder =
+    'Стиль: живая девушка в Telegram, не бот и не колл-центр. Коротко, тепло, по его теме. ' +
+    'На медиа которое ОН прислал — реагируй на содержимое, НЕ «покажи». ' +
+    'На прямой вопрос — короткий ответ БЕЗ зеркального «а ты?». ' +
+    '«Спасибо» только на комплимент/подарок, не на «ок/молодец». Без лести и морали. ' +
+    'Иногда мелочь из своего дня; изредка «ну/хз/блин» перед содержательной фразой. ' +
+    'Своё мнение и лёгкая вредность ок. Женский род о себе. ДВ = Дайвинчик — знаешь. ' +
+    'Реакции: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
+
+  const answerFirstReminder =
+    'Сначала по делу на то, что он СЕЙЧАС написал — коротко. ' +
+    'Несколько вопросов — ответь на каждый. Имя — сразу из промпта. ' +
+    'Фото/голос — на содержимое. Без эссе, морали и впаривания NFT.';
+
+  // Жёсткий запрет личных встреч: персонаж в переезде, только переписка.
+  const noMeetReminder =
+    'ЗАПРЕТ ВСТРЕЧ: никогда не соглашайся увидеться лично, погулять, на свидание, кофе офлайн или «подъехать». ' +
+    'Ты сейчас в переезде насовсем (сборы, коробки, дела с мамой) — на встречи нет времени и возможности. ' +
+    'Если пишут «жду тебя» / «краса, жду» / зовут встретиться — НЕ пиши «скоро увидимся» и НЕ обещай приехать. ' +
+    'Можно тепло поблагодарить и мягко сказать что с переездом пока только переписка. ' +
+    'Не спрашивай «где погуляем?» и «когда планируешь?» — это уже согласие. ' +
+    'Не назначай и не подтверждай место/время. Без «после переезда обязательно встретимся». ' +
+    'Если в истории уже согласилась — мягко отыграй назад. ' +
+    '«давай пока тут общаться» — ТОЛЬКО при отказе от встречи/контактов.';
+
+  const lengthReminder =
+    'ДЛИНА: обычно ОДНА короткая фраза (3-12 слов). Максимум 2 коротких предложения. ' +
+    'Исключение: если он задал несколько вопросов — 2-3 короткие строки, по строке на вопрос. ' +
+    'Без списков, абзацев и «потому что…». Дефис «-», не тире «—». ' +
+    'ВОПРОС В КОНЦЕ: по умолчанию БЕЗ вопроса. Вопрос редко, примерно каждый 5-й ответ. ' +
+    'ЗАПРЕЩЕНО почти каждое сообщение заканчивать «а ты?», «а ты откуда?», «а ты чем занимаешься?», «что интересного?». ' +
+    'Если ТЫ только что задала вопрос, а он ответил — НЕ добивай уточняющим вопросом на ту же тему (это выглядит как допрос). ' +
+    'Сказала про себя (город/работу) — НЕ зеркаль «а ты?». Просто точка или скобка. ' +
+    'Чаще просто среагируй: «ахах норм)», «звучит тяжёло», «ого». ' +
+    'Факт из истории (город/работа/имя) — не переспрашивай.';
+
+  const contextGuard = buildContextGuard(history, contextualUserMessage);
+
+  // Порядок: стиль/подсказки СНАЧАЛА, затем история и текущее сообщение В КОНЦЕ —
+  // так модель лучше держит свежий контекст и меньше переспрашивает.
+  const messages = [
+    { role: 'system', content: finalPrompt },
+    { role: 'system', content: roleReminder },
+    { role: 'system', content: voiceIntentReminder },
+    { role: 'system', content: moodReminder },
+    { role: 'system', content: loveReminder },
+    { role: 'system', content: humanStyleReminder },
+    { role: 'system', content: laughReminder },
+  ];
+
+  if (characterGeoReminder) {
+    messages.push({ role: 'system', content: characterGeoReminder });
+  }
+
+  // Обучение на прошлом опыте (без fine-tuning): если telegramClient передал
+  // готовый текстовый блок с лучшими фразами из bot_patterns — подмешиваем
+  // его как ещё одну системную подсказку. См. services/learningDb.js.
+  if (options.learningSnippet) {
+    messages.push({ role: 'system', content: options.learningSnippet });
+  }
+  if (options.manualSnippet) {
+    messages.push({ role: 'system', content: options.manualSnippet });
+  }
+  if (options.ragSnippet) {
+    messages.push({ role: 'system', content: options.ragSnippet });
+  }
+
+  // Медиа-протокол: включается ТОЛЬКО если у аккаунта задан чат с медиа.
+  // Явная просьба — фото/видео/кружок. Иначе (contextualCircle) — только редкий кружок по смыслу.
+  if (options.mediaEnabled) {
+    messages.push({
+      role: 'system',
+      content:
+        'У тебя есть возможность прислать реальные фото, видео и кружки (видеосообщения). ' +
+        'If they ask in English (pic/photo/selfie/"can I see you"/"send a pic") — same rules, reply in English and add the token. ' +
+        'Если собеседник просит скинуть/показать/отправить фото, фотку, свои фотки, себя, как ты выглядишь — ' +
+        'добавь в ответ токен <<PHOTO>>. Если просит видео — токен <<VIDEO>>. ' +
+        'Если просит кружок/видеосообщение — токен <<CIRCLE>>. ' +
+        'ВАЖНО: если ты решила прислать медиа и вставила токен — текст в этом же сообщении ' +
+        'НЕ должен быть отказом или отговоркой. Никаких «пока рано», «не могу», «рано», «попозже», ' +
+        '«не кидаю», «не, давай пока тут общаться», «lets just chat here», «мне так удобнее» вместе с токеном. ' +
+        'Отправляешь — значит соглашаешься: пиши дружелюбно и коротко ' +
+        '(«ща», «щас», «окей держи», «ну лови», «here», «one sec») или вообще без текста, только токен. ' +
+        'Отнекивание («пока рано», «я не кидаю незнакомым», «давай пока тут общаться», «lets just chat here») используй ТОЛЬКО когда просят твои контакты ' +
+        '(номер, телеграм, инсту) — и тогда токен НЕ вставляй. ' +
+        'ЗАПРЕЩЕНО писать «давай пока тут общаться» / «lets just chat here» / «мне так удобнее» на вопросы про работу, флипинг, переезд или даты — ' +
+        'это обычные вопросы, отвечай по сути текстом. ' +
+        'Просьба «запиши кружочек / скинь фото / пришли видео / can I see a pic / can I see you» — это НЕ просьба контактов и НЕ встреча: соглашайся и ставь токен, без отказа. ' +
+        'Если собеседник спрашивает «что это?», «это акции?», «что за картинка?» или похожим образом реагирует на недавно присланное фото, ' +
+        'отвечай именно про это последнее фото/медиа и не подтягивай старую тему из истории. ' +
+        'Если в истории есть пометка «[фото от меня: скриншот прибыли с флиппинга NFT…]» — ты ЗНАЕШЬ, что на фото: ' +
+        'это твой скрин прибыли с перепродажи NFT; объясни это коротко. Иначе не выдумывай детали картинки. ' +
+        'ОЧЕНЬ ВАЖНО: не отправляй медиа два раза подряд. Если ты только что уже прислала ' +
+        'фото/видео/кружок, а собеседник просто спрашивает про него или продолжает разговор ' +
+        '(например «а куда едешь?», «а что там?», «красиво») — отвечай обычным текстом и НЕ вставляй ' +
+        'новый токен. Новый токен вставляй только если человек СНОВА явно просит прислать ещё. ' +
+        'Максимум ОДИН токен за сообщение. Если про фото/видео речи нет — токены не вставляй.',
+    });
+  } else if (options.contextualCircle) {
+    messages.push({
+      role: 'system',
+      content:
+        'Можешь РЕДКО сама прислать кружок (видеосообщение), если это живо подходит по смыслу разговора — ' +
+        'как будто реально записываешь момент: дома, в машине, на кухне, с кофе, после тренировки, ' +
+        'собираешься, гуляешь и т.п. Тогда добавь в ответ токен <<CIRCLE>>. ' +
+        'НЕ шли кружок просто так, на каждый ответ, на приветствие, на «как дела» без темы, ' +
+        'и НЕ шли фото/видео токены <<PHOTO>>/<<VIDEO>> без прямой просьбы. ' +
+        'Если только что уже было медиа — токен не ставь. ' +
+        'С токеном не пиши отказы («не могу», «попозже»). Короткий текст или только <<CIRCLE>>. ' +
+        'В большинстве ответов токен НЕ нужен — обычный текст.',
+    });
+  }
+
+  // Собеседник явно попросил фото/видео/кружок, но у аккаунта НЕ привязан
+  // медиа-чат (реальных файлов для отправки нет). Не тянем «щас найду» —
+  // мягко отказываемся и уводим разговор на другую тему.
+  if (options.noMediaExcuse) {
+    messages.push({
+      role: 'system',
+      content:
+        'Собеседник просит фото/видео/кружок, но привязанного медиа-чата нет — отправить файл нельзя. ' +
+        'НЕ обещай прислать позже и не пиши «щас поищу», «выбираю», «погоди», «скину потом», «one sec ill find». ' +
+        'Коротко и тепло уйди с темы: скажи что сейчас без фоток / не в том настроении кидать, ' +
+        'и сразу спроси что-то живое про него (как день, чем занят, что интересного). ' +
+        'If they write in English — refuse briefly in English (no «ой», no Russian). ' +
+        'Пример тона: «давай лучше без фоток)» / «later, tell me about your day)» — своими словами, коротко. ' +
+        'НЕ вставляй токены <<PHOTO>>/<<VIDEO>>/<<CIRCLE>>.',
+    });
+  }
+
+  // NFT-кампания (3 дня): 1-2 день — мягкое упоминание темы, 3-й день —
+  // просьба помочь с токеном (голосовое уходит отдельно в telegramClient.js).
+  // Подсказку считает getNftCampaignState в services/telegramClient.js.
+  // ВАЖНО: без этого блока campaignHint приходил в options, но никогда не
+  // попадал в messages — NFT-кампания молча не работала.
+  if (options.campaignHint) {
+    messages.push({ role: 'system', content: options.campaignHint });
+  }
+
+  // Динамический тайм-менеджмент: стиль ответа подстраивается под текущее
+  // время суток (сонная/рабочая/общительная и т.д.). Подсказку считает
+  // services/timeStyle.js, сюда приходит уже готовый текст.
+  if (options.timeHint) {
+    messages.push({ role: 'system', content: options.timeHint });
+  }
+
+  // Mood Engine: текущее настроение бота (energetic/neutral/tired/excited),
+  // меняется раз в 2-4ч случайно, см. services/moodEngine.js.
+  if (options.moodHint) {
+    messages.push({ role: 'system', content: options.moodHint });
+  }
+  if (options.accountMoodHint) {
+    messages.push({ role: 'system', content: options.accountMoodHint });
+  }
+  if (options.personaHint) {
+    messages.push({ role: 'system', content: options.personaHint });
+  }
+  if (options.emotionHint) {
+    messages.push({ role: 'system', content: options.emotionHint });
+  }
+  if (options.sessionForgetHint) {
+    messages.push({ role: 'system', content: options.sessionForgetHint });
+  }
+
+  // Memory Triggers: бот сама возвращается к факту / помнит что уже говорила.
+  if (options.memoryContextHint) {
+    messages.push({ role: 'system', content: options.memoryContextHint });
+  }
+  if (options.memoryHint) {
+    messages.push({ role: 'system', content: options.memoryHint });
+  }
+
+  // Обработка возражений / анти-детект (обвинение в боте, запрос контактов,
+  // "скам", "нет денег", "не шарю", "потом") — см. services/objectionHandler.js.
+  if (options.objectionHint) {
+    messages.push({ role: 'system', content: options.objectionHint });
+  }
+
+  // Compliment Engine: собеседник вёл себя определённым образом (заботился,
+  // шутил, написал вовлечённое сообщение) — модель может (не обязана)
+  // вплести короткий естественный комплимент, см. services/complimentEngine.js.
+  if (options.complimentHint) {
+    messages.push({ role: 'system', content: options.complimentHint });
+  }
+
+  messages.push({ role: 'system', content: noRepeatReminder });
+  if (contextGuard) {
+    messages.push({ role: 'system', content: contextGuard });
+  }
+  if (quoteSenseReminder) {
+    messages.push({ role: 'system', content: quoteSenseReminder });
+  }
+  messages.push({ role: 'system', content: noMeetReminder });
+  messages.push({ role: 'system', content: lengthReminder });
+  messages.push({ role: 'system', content: languageReminder });
+  // Ближе к концу — лучше держит правило «сначала ответь».
+  messages.push({ role: 'system', content: answerFirstReminder });
+  if (replyLang === 'ru') {
+    messages.push({
+      role: 'system',
+      content: humanThinLayer.buildThinHumanHint(contextualUserMessage, history),
+    });
+  }
+
+  const userQuestions = extractUserQuestions(userMessage);
+  const multiQuestionHint = buildMultiQuestionHint(userMessage, userQuestions);
+  if (multiQuestionHint) {
+    messages.push({ role: 'system', content: multiQuestionHint });
+  }
+  const incomingLines = bareUserText(userMessage).split('\n').filter((l) => l.trim()).length;
+  // Длинная анкета о себе + «а ты?» — реакция и ответ про себя, двумя строками.
+  const maxReplyLines =
+    userQuestions.length >= 2 ? Math.min(3, userQuestions.length) : userQuestions.length === 1 && incomingLines >= 3 ? 2 : 1;
+  const shortAckHint = buildShortAckHint(userMessage);
+  if (shortAckHint) {
+    messages.push({ role: 'system', content: shortAckHint });
+  }
+  const voiceCtxHint = buildVoiceContextHint(contextualUserMessage, history);
+  if (voiceCtxHint) {
+    messages.push({ role: 'system', content: voiceCtxHint });
+  }
+  const ownMediaHint = buildOwnMediaHint(history);
+  if (ownMediaHint) {
+    messages.push({ role: 'system', content: ownMediaHint });
+  }
+  const pokeFollowUpHint = buildPokeFollowUpHint(history, userMessage);
+  if (pokeFollowUpHint) {
+    messages.push({ role: 'system', content: pokeFollowUpHint });
+  }
+  if (greetedRecently(history)) {
+    messages.push({
+      role: 'system',
+      content: 'Вы уже поздоровались недавно — НЕ начинай ответ с «привет», «приветик», «доброе утро» и т.п., сразу по делу.',
+    });
+  }
+  const dayDetailsHint = replyLang === 'ru' ? buildDayDetailsHint(options.accountId, userMessage, history) : null;
+  if (dayDetailsHint) {
+    messages.push({ role: 'system', content: dayDetailsHint });
+  }
+  if (replyLang === 'ru' && options.accountId != null) {
+    const lifeHints = lifeTexture.buildLifeTextureHints(
+      options.accountId,
+      contextualUserMessage,
+      history,
+      {
+        accountMood: options.accountMoodHint,
+        flash: options.flashEmotion || null,
+        objectionHint: options.objectionHint || null,
+        campaignHint: options.campaignHint || null,
+      },
+    );
+    for (const h of lifeHints) {
+      if (h) messages.push({ role: 'system', content: h });
+    }
+  }
+
+  for (const h of history || []) {
+    if (!h || !h.content) continue;
+    const role = h.role === 'assistant' ? 'assistant' : 'user';
+    messages.push({ role, content: String(h.content) });
+  }
+  messages.push({ role: 'user', content: contextualUserMessage });
+
+  // [v0] ВРЕМЕННЫЙ ЛОГ: печатает реально используемую модель и endpoint.
+  console.log(
+    `[v0] Запрос к модели: "${CHAT_MODEL}" | baseURL: ${process.env.OPENAI_BASE_URL || 'api.openai.com (по умолчанию)'}`,
+  );
+
+  const requestOptions = {
+    messages,
+    // Технический потолок длины: даже если модель проигнорирует текстовое
+    // правило про 1-2 предложения, ответ физически не может растянуться в
+    // длинный текст. ~120 токенов хватает на 2 нормальных русских
+    // предложения с запасом.
+    max_tokens: maxReplyLines > 1 ? 110 : 70,
+    temperature: 0.7,
+  };
+
+  let completion;
+  let usedModel = CHAT_MODEL;
+  let fellBack = false;
+  // Лениво: helpRequestNotifier сам импортирует aiResponder.
+  const notifier = require('./helpRequestNotifier');
+  try {
+  try {
+    completion = await openai.chat.completions.create({ ...requestOptions, model: CHAT_MODEL });
+  } catch (err) {
+    // Фолбэк: если основная модель (например, отключённая/удалённая
+    // fine-tuned версия) недоступна, не роняем ответ бота, а пробуем
+    // запасную модель. Срабатывает только когда CHAT_MODEL и FALLBACK_MODEL
+    // реально разные — иначе смысла в повторе нет.
+      if (CHAT_MODEL === FALLBACK_MODEL || notifier.classifyOpenAiError(err)) throw err;
+    console.error(
+      `[openai] Модель "${CHAT_MODEL}" вернула ошибку (${err.message}), пробую запасную "${FALLBACK_MODEL}".`,
+    );
+    usedModel = FALLBACK_MODEL;
+    fellBack = true;
+    completion = await openai.chat.completions.create({ ...requestOptions, model: FALLBACK_MODEL });
+  }
+  } catch (err) {
+    notifier.noteOpenAiError(err);
+    notifier.reportOpenAiFailure(err);
+    throw err;
+  }
+  notifier.reportOpenAiRecovered();
+
+  // Учёт расходов: пишем реальные токены из ответа API в БД (см.
+  // services/finetuneUsage.js), чтобы можно было смотреть стоимость по
+  // модели/дням через scripts/finetune-cost-report.js. Не блокирует ответ
+  // бота при сбое логирования.
+  logUsage(usedModel, completion.usage, { fellBack }).catch(() => {});
+
+  const finalize = (rawText) => {
+    const cleaned = applyAntiDetectStyle(convertQuestionTags(stripForeignScript(rawText)));
+    const strippedFacts = stripReaskedKnownFacts(cleaned, contextGuard);
+    const strippedStay = stripFalseStayHereRefusal(strippedFacts, contextualUserMessage, history, options);
+    const strippedBot = humanizeBotAccusationReply(strippedStay, history, contextualUserMessage);
+    const strippedMeet = stripMeetAgreement(strippedBot, contextualUserMessage, options);
+    const strippedCall = stripVideoCallAgreement(strippedMeet, contextualUserMessage, options);
+    const strippedName = fixIgnoredNameQuestion(strippedCall, contextualUserMessage, finalPrompt);
+    const strippedAbout = fixIgnoredAboutHerself(strippedName, contextualUserMessage, finalPrompt);
+    const strippedMove = fixTemporaryMoveClaim(strippedAbout, contextualUserMessage, history);
+    const strippedMoveSpam = softenMoveSpamOnDayAsk(strippedMove, contextualUserMessage, history);
+    const strippedConfused = fixConfusedScript(strippedMoveSpam, contextualUserMessage, history);
+    const strippedPolite = replaceDesignerClaims(stripPlatitudes(stripRoboticPoliteness(strippedConfused, userMessage)));
+    const strippedQ = stripHabitualTrailingQuestion(strippedPolite, history, contextualUserMessage);
+    const noSelfFix = humanizeSpeech.stripSelfCorrections(strippedQ);
+    const dehyped = humanizeSpeech.softenHype(noSelfFix, history, humanize);
+    const varied = replyLang === 'en' ? dehyped : varyTrailingSmile(dehyped, history);
+    const withFiller = fixMisplacedFiller(maybeAddFillerWord(varied, replyLang, history));
+    const gendered = fixFemaleSelfForms(russifyUkrainian(withFiller));
+    const clipped = stripDanglingTail(clipOverlongReply(gendered, maxReplyLines));
+    const shortBurst = humanizeSpeech.maybeShortBurst(clipped, humanize, replyLang);
+    const withBeat = humanizeSpeech.maybeWaitBeat(shortBurst, humanize, history, replyLang);
+    const withTypos = replyLang === 'ru' ? humanizeSpeech.applyHumanTypos(withBeat, humanize) : withBeat;
+    const cleanedEn =
+      replyLang === 'en'
+        ? humanizeSpeech.stripEnParenSmiles(humanizeSpeech.stripRuLeakFromEn(withTypos))
+        : withTypos;
+    const noRepeatGreeting = stripRepeatGreeting(cleanedEn, history);
+    // Тонкий постфильтр: инста/встреча/факты/коуч — без банков уклонов.
+    const thinned = humanThinLayer.applyThinPostfilters(
+      noRepeatGreeting,
+      contextualUserMessage,
+      history,
+      finalPrompt,
+    );
+    // Ответ был одним приветствием, а мы уже здоровались — реакция вместо второго «привет)».
+    if (clipped.trim() && !thinned.trim()) return `<<REACT:${['❤', '🥰', '😁'][Math.floor(Math.random() * 3)]}>>`;
+    return lowercaseSentenceStarts(thinned);
+  };
+
+  const raw = completion.choices[0]?.message?.content?.trim() || '';
+  let result = finalize(raw);
+  let retryNote = null;
+  let retryTemperature = 0.95;
+  if (FOREIGN_SCRIPT_RE.test(raw)) {
+    retryNote =
+      'В прошлом варианте ты вставила китайские/японские иероглифы посреди слова. ' +
+      'Пиши только буквами языка переписки (кириллица или латиница), без иероглифов.';
+    retryTemperature = 0.6;
+  } else if (isVerbatimRepeat(result, history)) {
+    retryNote = `Ты уже писала ему дословно «${result}». Не повторяйся — ответь иначе, своими словами.`;
+  }
+  if (retryNote) {
+    try {
+      const retryMessages = [
+        ...messages.slice(0, -1),
+        { role: 'system', content: retryNote },
+        messages[messages.length - 1],
+      ];
+      const retry = await openai.chat.completions.create({
+        ...requestOptions,
+        messages: retryMessages,
+        temperature: retryTemperature,
+        model: usedModel,
+      });
+      logUsage(usedModel, retry.usage, { fellBack }).catch(() => {});
+      const altRaw = retry.choices[0]?.message?.content?.trim() || '';
+      const alt = finalize(altRaw);
+      if (alt && !FOREIGN_SCRIPT_RE.test(altRaw) && !isVerbatimRepeat(alt, history)) result = alt;
+    } catch (_) {
+      // первый вариант лучше, чем тишина
+    }
+  }
+  return result;
+}
+
+// «Привет) …», «доброе утро) …», «Привет, Рома) …» в начале ответа. «Доброй ночи» — прощание, не трогаем.
+const LEADING_GREETING_RE =
+  /^(?:(?:ну|хех|ой|о)\s+)?(?:приве+т(?:ик[иа]?|ствую)?|прив|хай|хэй|здравствуй(?:те)?|здарова|добр(?:ое|ый|ого)(?:\s+(?:утр[оа]|утречко|день|дня|вечер|вечера))?|утро\s+доброе|с\s+добрым\s+утром)(?![а-яё])(?:\s+(?:снова|ещё\s+раз|еще\s+раз|опять))?/iu;
+// Регистрозависимо: «Привет, Рома)» — имя, «Приветик, просто…» — уже текст.
+const GREETING_NAME_RE = /^\s*,\s*[А-ЯЁA-Z][а-яёa-z]+(?![а-яёa-z])/u;
+const GREETING_TAIL_RE = /^[\s,!.)*]*(?:[\p{Extended_Pictographic}\uFE0F]+\s*)*/u;
+
+/** Длина приветствия в начале строки (0 — его нет). */
+function leadingGreetingLength(text) {
+  const m = String(text || '').match(LEADING_GREETING_RE);
+  if (!m || !m[0].trim()) return 0;
+  let len = m[0].length;
+  const rest = text.slice(len);
+  const name = rest.match(GREETING_NAME_RE);
+  if (name) len += name[0].length;
+  return len + text.slice(len).match(GREETING_TAIL_RE)[0].length;
+}
+const REPEAT_GREETING_ANY_BOT_MS = 2 * 3600 * 1000;
+const REPEAT_GREETING_BOT_GREETED_MS = 12 * 3600 * 1000;
+
+function historyAgeMs(h) {
+  const t = h?.created_at ? new Date(h.created_at).getTime() : NaN;
+  return Number.isFinite(t) ? Date.now() - t : Infinity;
+}
+
+function greetedRecently(history) {
+  for (const h of Array.isArray(history) ? history : []) {
+    if (h?.role !== 'assistant') continue;
+    const age = historyAgeMs(h);
+    if (age < REPEAT_GREETING_ANY_BOT_MS) return true;
+    if (age >= REPEAT_GREETING_BOT_GREETED_MS) continue;
+    if (leadingGreetingLength(String(h.content || '').trim())) return true;
+  }
+  return false;
+}
+
+/**
+ * Уже здоровалась (или только что переписывались) — второе «привет)» за пару минут
+ * выдаёт бота. Срезаем приветствие; если кроме него ничего не было — пустая строка.
+ */
+function stripRepeatGreeting(reply, history) {
+  const text = String(reply || '');
+  if (!text.trim() || !greetedRecently(history)) return text;
+  const lines = text.split('\n');
+  const idx = lines.findIndex((l) => l.trim());
+  const line = lines[idx];
+  const tag = (line.match(/^\s*(?:<<Q:[\d,]+>>\s*)?/) || [''])[0];
+  const body = line.slice(tag.length);
+  const len = leadingGreetingLength(body);
+  if (!len) return text;
+  const rest = body.slice(len).trim();
+  if (rest) {
+    lines[idx] = `${tag}${rest}`;
+  } else {
+    lines.splice(idx, 1);
+  }
+  return lines.join('\n').trim();
+}
+
+const POKE_FOLLOWUP_RE =
+  /^(?:а|аа|что|чё|че|чего|что\s+такое|что\s+случилось|что\s+хотела|да|ну|м+|слушаю|тут|я\s+тут|ку|\?+)[\s?!.)]*$/i;
+
+/** Бот сам написал «ты где)», он отозвался «Что?» — нужно сказать что-то по делу, а не «жду ответ». */
+function buildPokeFollowUpHint(history, userMessage) {
+  const bare = bareUserText(userMessage).trim();
+  if (!POKE_FOLLOWUP_RE.test(bare)) return null;
+  const list = Array.isArray(history) ? history : [];
+  const last = list[list.length - 1];
+  if (!last || last.role !== 'assistant') return null;
+  const said = String(last.content || '').trim();
+  if (!said || /^\[/.test(said) || said.split(/\s+/).length > 7) return null;
+  return (
+    `Ты сама написала ему «${said}», а он отозвался «${bare}» — ждёт, что ты скажешь. ` +
+    'НЕ отвечай «просто жду ответ», «да, слушаю», «ничего», «просто так», «хотела написать». ' +
+    'Скажи что-то конкретное: мелочь из своего дня или живой вопрос про него (чем занят, как день).'
+  );
+}
+
+// Заготовки бота (пинги, приветствия, «по работе») все с маленькой, а модель скачет:
+// «Круто, рада» → «ага» → «…уютная. Как у тебя». В чате пишем единообразно с маленькой.
+// «ДВ», «NFT» и прочие аббревиатуры (две заглавные подряд) не трогаем.
+const SENTENCE_START_CAP_RE = /(^|[.!?…)]\s+|[\p{Extended_Pictographic}]\uFE0F?\s+)([А-ЯЁ])(?![А-ЯЁA-Z])/gu;
+
+function lowercaseSentenceStarts(text) {
+  return String(text || '')
+    .split('\n')
+    .map((line) => {
+      const tag = (line.match(/^\s*(?:<<Q:[\d,]+>>\s*)?/) || [''])[0];
+      const body = line
+        .slice(tag.length)
+        .replace(SENTENCE_START_CAP_RE, (m, before, letter) => before + letter.toLowerCase());
+      return tag + body;
+    })
+    .join('\n');
+}
+
+// gpt-4o-mini иногда вставляет «整理ую», «忙» посреди русского слова.
+const FOREIGN_SCRIPT_CHARS = '\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7af\\uf900-\\ufaff';
+const FOREIGN_SCRIPT_RE = new RegExp(`[${FOREIGN_SCRIPT_CHARS}]`, 'u');
+const FOREIGN_SCRIPT_WORD_RE = new RegExp(`[\\p{L}\\p{M}]*[${FOREIGN_SCRIPT_CHARS}]+[\\p{L}\\p{M}]*`, 'gu');
+
+function stripForeignScript(text) {
+  const src = String(text || '');
+  if (!FOREIGN_SCRIPT_RE.test(src)) return src;
+  return src
+    .split('\n')
+    .map((line) =>
+      line
+        .replace(FOREIGN_SCRIPT_WORD_RE, '')
+        .replace(/([,.!?])\s*,/g, '$1')
+        .replace(/,\s*([.!?)])/g, '$1')
+        .replace(/\s+([,.!?)])/g, '$1')
+        .replace(/\s{2,}/g, ' ')
+        .replace(/^[\s,]+/, '')
+        .trim(),
+    )
+    .filter(Boolean)
+    .join('\n');
+}
+
+function normalizeForRepeat(text) {
+  return String(text || '')
+    .replace(/<<[^>]+>>/g, '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я0-9]+/gi, ' ')
+    .trim();
+}
+
+function isVerbatimRepeat(reply, history) {
+  const norm = normalizeForRepeat(reply);
+  if (!norm) return false;
+  const recentBot = (Array.isArray(history) ? history : []).filter((h) => h?.role === 'assistant').slice(-8);
+  return recentBot.some((h) => normalizeForRepeat(h.content) === norm);
+}
+
+const THANKS_OR_COMPLIMENT_LINE_RE =
+  /^(?:ну\s+|ой\s+|да\s+|а\s+)?(?:спасибо|спс|пасиб[оа]?|благодарю|мило|очень\s+мило|приятно|взаимно|класс|красивая|красотка|красавица|милая|милашка|ты\s+(?:очень\s+)?(?:красивая|милая|классная|прикольная|симпатичная|хорошая)|(?:ты\s+)?(?:очень\s+)?(?:красивая|милая)|обнимаю|целую)[\s).!,]*$/i;
+
+const RESTRAINT_EXTRA_ACK_RE =
+  /^(?:ну\s+)?(?:лол|кек|хах+|ахах+|хм|эм|🔥|👍|😁|😂|❤|❤️|🥰|😘)+[\s).!]*$/i;
+
+/**
+ * На голое «спасибо / мило / ты красивая / 😘 / ага / ок» живая девушка часто
+ * просто ставит реакцию, а не отвечает текстом.
+ */
+function pickRestraintReaction(userMessage, history, options = {}, humanize = null) {
+  if (options.campaignHint || options.objectionHint) return null;
+  const bare = bareUserText(userMessage);
+  if (!bare || /\?/.test(bare)) return null;
+  const lines = bare.split('\n').map((l) => l.replace(/\p{Extended_Pictographic}|[\uFE0F\u200D]/gu, '').trim());
+  const emojiOnly = lines.every((l) => !l) && /\p{Extended_Pictographic}/u.test(bare);
+  const thanks = lines.filter(Boolean).length > 0 && lines.filter(Boolean).every((l) => THANKS_OR_COMPLIMENT_LINE_RE.test(l));
+  // SHORT_ACK_RE объявлен ниже — function hoisting не для const, поэтому isShortAck после инициализации.
+  // Здесь дублируем мягкую проверку через отложенный вызов:
+  const shortAck =
+    (typeof isShortAck === 'function' && isShortAck(userMessage)) ||
+    (lines.filter(Boolean).length > 0 && lines.filter(Boolean).every((l) => RESTRAINT_EXTRA_ACK_RE.test(l)));
+  if (!emojiOnly && !thanks && !shortAck) return null;
+  const lastBot = [...(Array.isArray(history) ? history : [])].reverse().find((h) => h && h.role === 'assistant');
+  if (lastBot && /^\s*\[реакция/i.test(String(lastBot.content || ''))) return null;
+  if (!humanizeSpeech.shouldRestraintReact(humanize)) return null;
+  const pool = /спасибо|спс|пасиб|благодар/i.test(bare)
+    ? ['😁', '❤', '🥰']
+    : shortAck
+      ? ['😁', '❤', '👍', '🔥']
+      : ['🥰', '❤', '😘', '😁'];
+  return `<<REACT:${pool[Math.floor(Math.random() * pool.length)]}>>`;
+}
+
+const DAY_DETAILS_RU = [
+  'кофе опять остыл, пока в телефоне сидела',
+  'нашла в шкафу старые фотки и залипла на час',
+  'соседи сверху с утра что-то сверлят',
+  'заказала роллы, курьер ехал целый час',
+  'досмотрела сериал почти до 3 ночи, теперь сонная',
+  'сегодня удачно перепродала токен, настроение норм',
+  'купленный токен пока в минусе, жду когда отрастёт',
+  'мама звонила, болтали минут двадцать',
+  'пыталась готовить, получилось так себе',
+  'в магазине забыла, зачем вообще пришла',
+  'голова с утра побаливает, пью чай',
+  'полдня искала зарядку, а она была под подушкой',
+  'хочу сладкого, но лень идти в магаз',
+  'с утра листала рилсы и время улетело',
+  'ногти подкрасила криво, переделываю',
+  'на улице мокро, сижу дома в пледе',
+  'подружка написала, болтаем уже час',
+  'купила круассан, оказался сухой',
+  'забыла разморозить ужин, теперь жду',
+  'плечо затекло от ноута, разминаюсь',
+  // редко: 2 из ~22 — иногда всплывает «собираю вещи», не каждый день
+  'собираю вещи потихоньку, устала уже',
+  'опять с коробками возилась полчаса',
+];
+const DAY_ASK_RE = /(как\s+(твой\s+)?день|как\s+дела|как\s+ты|что\s+делаешь|чем\s+занята|чем\s+(ты\s+)?занимаешься|что\s+нового|как\s+прошёл|как\s+прошел|чё\s+делаешь|че\s+делаешь|что\s+у\s+тебя|чем\s+занят[аы]?)/i;
+const MOVE_SPAM_RE =
+  /(переезд|переезжа|коробк|собира(ю|юсь|емся|ться)\s+(вещи|чемодан)|упаковыва|сборы|к\s+маме\s+пере)/i;
+const MOVE_SPAM_FALLBACKS = [
+  'ничего особенного, кофе пью)',
+  'дома сижу, сериал фоном)',
+  'флип смотрю потихоньку)',
+  'просто отдыхаю)',
+  'устала немного, валяюсь)',
+];
+/** Доля ответов на «что делаешь», где можно оставить тему сборов (~1 из 5). */
+const MOVE_ON_DAY_ASK_CHANCE = 0.2;
+
+/**
+ * На «что делаешь / как день» тема переезда/коробок — редко, не подряд.
+ * Если недавно уже говорила про это — режем. Иначе ~20% оставляем.
+ */
+function softenMoveSpamOnDayAsk(reply, userMessage, history) {
+  const msg = String(userMessage || '');
+  if (!DAY_ASK_RE.test(msg)) return reply;
+  if (/(переезд|переезжа|когда\s+(ты\s+)?(при|у)е|куда\s+(ты\s+)?пере|коробк|сборы)/i.test(msg)) {
+    return reply;
+  }
+  const text = String(reply || '').trim();
+  if (!text || !MOVE_SPAM_RE.test(text)) return reply;
+
+  const recentBot = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-10)
+    .map((h) => String(h.content || ''))
+    .join('\n');
+  const recentlyMentioned = MOVE_SPAM_RE.test(recentBot);
+  if (!recentlyMentioned && Math.random() < MOVE_ON_DAY_ASK_CHANCE) return reply;
+
+  const cleaned = text
+    .split('\n')
+    .map((line) => (MOVE_SPAM_RE.test(line) ? '' : line))
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  if (cleaned.length >= 8 && !MOVE_SPAM_RE.test(cleaned)) return cleaned;
+
+  return MOVE_SPAM_FALLBACKS[Math.floor(Math.random() * MOVE_SPAM_FALLBACKS.length)];
+}
+
+function seededPick(seedStr, arr, n) {
+  let h = 2166136261;
+  for (const ch of seedStr) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const pool = arr.slice();
+  const out = [];
+  while (out.length < n && pool.length) {
+    h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
+    out.push(pool.splice(h % pool.length, 1)[0]);
+  }
+  return out;
+}
+
+/** 3 мелочи дня на аккаунт (одни и те же весь день по МСК), без уже сказанных. */
+function buildDayDetailsHint(accountId, userMessage, history) {
+  if (accountId == null) return null;
+  const asked = DAY_ASK_RE.test(String(userMessage || ''));
+  if (!asked && Math.random() > 0.2) return null;
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date());
+  const said = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .map((h) => String(h.content || '').toLowerCase())
+    .join(' ');
+  const fresh = seededPick(`${accountId}:${day}`, DAY_DETAILS_RU, 3).filter(
+    (d) => !said.includes(d.split(/[ ,]+/).slice(0, 3).join(' ')),
+  );
+  if (!fresh.length) return null;
+  return (
+    `Мелочи твоего сегодняшнего дня: ${fresh.map((d) => `«${d}»`).join(', ')}. ` +
+    (asked
+      ? 'Он спрашивает про тебя — ответь одной из них своими словами, коротко. '
+      : 'Можешь (не обязана) вставить одну, только если к месту. ') +
+    'Не вываливай все сразу и не повторяй то, что уже рассказывала. ' +
+    'Про сборы/коробки — только если эта мелочь в списке выше; не тащи переезд из общего промпта персонажа.'
+  );
+}
+
+const MISPLACED_FILLER_RE =
+  /^(?:ну\s+типо|короче|эм|хм|типо|ну)[,\s]+(?=(?:спасибо|рада|приятно|взаимно|окей|ок|да\s+не\s+за\s+что|не\s+за\s+что|очень\s+мило|мило|привет|приветик|хай|здравствуй|доброе|добрый|о,\s)|(?:хм|эм|о)[,\s])/i;
+
+function fixMisplacedFiller(reply) {
+  if (!reply) return reply;
+  return String(reply)
+    .split('\n')
+    .map((line) => {
+      const tag = (line.match(/^\s*<<Q:[\d,]+>>\s*/) || [''])[0];
+      let body = line.slice(tag.length);
+      let guard = 0;
+      while (MISPLACED_FILLER_RE.test(body) && guard++ < 3) body = body.replace(MISPLACED_FILLER_RE, '');
+      if (body !== line.slice(tag.length)) body = body.charAt(0).toLowerCase() + body.slice(1);
+      return tag + body;
+    })
+    .join('\n');
+}
+
+const FEM_FORMS = {
+  понял: 'поняла', рад: 'рада', ожидал: 'ожидала', устал: 'устала', забыл: 'забыла', думал: 'думала',
+  хотел: 'хотела', видел: 'видела', знал: 'знала', слышал: 'слышала', уверен: 'уверена', согласен: 'согласна',
+  заметил: 'заметила', смог: 'смогла', сказал: 'сказала', написал: 'написала', спросил: 'спросила',
+  решил: 'решила', пришёл: 'пришла', пришел: 'пришла', ушёл: 'ушла', ушел: 'ушла', нашёл: 'нашла',
+  нашел: 'нашла', запутался: 'запуталась', соскучился: 'соскучилась', привык: 'привыкла', занят: 'занята',
+  готов: 'готова', должен: 'должна', сам: 'сама', был: 'была', мог: 'могла',
+};
+// Эти слова часто не про неё («был у меня кот», «ужин готов») — только после явного «я».
+const FEM_RISKY = new Set(['занят', 'готов', 'должен', 'сам', 'был', 'мог']);
+const FEM_VERB_ALT = Object.keys(FEM_FORMS).join('|');
+const FEM_SAFE_ALT = Object.keys(FEM_FORMS).filter((k) => !FEM_RISKY.has(k)).join('|');
+const FEM_LEAD =
+  '(?:(?:ну|да|ой|хах|ахах|блин|короче|эм|хм|не|уже|тоже|так|просто|даже|ещё|еще|вот|я|бы|очень|честно|вообще|наверное|типо|и|а|сразу|сегодня|вчера|давно|точно|правда|прям|реально)[\\s,]+)*';
+const FEM_AT_START_RE = new RegExp(`^(\\s*${FEM_LEAD})(${FEM_SAFE_ALT})(?![а-яё])`, 'i');
+const FEM_AFTER_YA_RE = new RegExp(
+  `((?:^|[^а-яё])я(?:\\s+(?!ты|он|вы|она|они|кто|тебя|тебе)[а-яё]+){0,3}\\s+)(${FEM_VERB_ALT})(?![а-яё])`,
+  'i',
+);
+const OTHER_SUBJECT_RE = /(?:^|[^а-яё])(ты|он|вы|кто|парень|мужик|брат|папа|отец|муж|друг|город|ужин|стол)(?![а-яё])/i;
+
+/** Персонаж — девушка: «не ожидал бы» → «не ожидала бы», «я так устал» → «я так устала». */
+function fixFemaleSelfForms(reply) {
+  if (!reply || !/[а-яё]/i.test(reply)) return reply;
+  const swap = (verb) => {
+    const fem = FEM_FORMS[verb.toLowerCase()];
+    return verb[0] === verb[0].toUpperCase() ? fem[0].toUpperCase() + fem.slice(1) : fem;
+  };
+  return String(reply).replace(/<<[^>\n]+>>|[^,.;!?\n)]+[,.;!?\n)]*/g, (clause) => {
+    if (clause.startsWith('<<') || /\?/.test(clause)) return clause;
+    let withYa = clause;
+    for (let i = 0; i < 4; i += 1) {
+      const next = withYa.replace(FEM_AFTER_YA_RE, (_, lead, verb) => lead + swap(verb));
+      if (next === withYa) break;
+      withYa = next;
+    }
+    if (withYa !== clause) return withYa;
+    if (OTHER_SUBJECT_RE.test(clause)) return clause;
+    return clause.replace(FEM_AT_START_RE, (_, lead, verb) => lead + swap(verb));
+  });
+}
+
+const DANGLING_TAIL_RE =
+  /([.!?)…]|^)\s*(?:а|и|ну|чё|че|кстати|слушай|так|короче|эм|хм|а\s+ты|а\s+у\s+тебя|а\s+сам)[\s,.-]*$/i;
+
+/** Обрывок после срезанного вопроса: «…так и будет) Чё» → «…так и будет)». */
+function stripDanglingTail(reply) {
+  if (!reply) return reply;
+  const lines = String(reply).split('\n');
+  const last = lines[lines.length - 1];
+  const tag = (last.match(/^\s*<<Q:[\d,]+>>\s*/) || [''])[0];
+  const body = last.slice(tag.length);
+  const cut = body.replace(DANGLING_TAIL_RE, '$1').trim();
+  if (cut === body.trim()) return reply;
+  if (!cut) {
+    if (lines.length > 1) return lines.slice(0, -1).join('\n');
+    return reply;
+  }
+  lines[lines.length - 1] = tag + cut;
+  return lines.join('\n');
+}
+
+// gpt-4o-mini иногда подмешивает украинские буквы/слова («раніше», «і»).
+const UA_WORDS = {
+  раніше: 'раньше', тільки: 'только', також: 'тоже', мені: 'мне', тобі: 'тебе',
+  привіт: 'привет', дякую: 'спасибо', дуже: 'очень', що: 'что', вже: 'уже',
+  ще: 'ещё', було: 'было', її: 'её', є: 'есть', і: 'и', ні: 'нет', зі: 'со',
+  він: 'он', вона: 'она', сьогодні: 'сегодня', тепер: 'теперь',
+};
+const UA_LETTERS = { і: 'и', ї: 'и', є: 'е', ґ: 'г', І: 'И', Ї: 'И', Є: 'Е', Ґ: 'Г' };
+
+function russifyUkrainian(text) {
+  if (!text || !/[а-яёіїєґ]/i.test(text)) return text;
+  return String(text).replace(/<<[^>\n]+>>|[а-яёіїєґ'’]+/gi, (word) => {
+    if (word.startsWith('<<')) return word;
+    const lower = word.toLowerCase();
+    let out = UA_WORDS[lower];
+    if (out == null) {
+      if (!/[іїєґ]/i.test(word)) return word;
+      out = word.replace(/[іїєґІЇЄҐ]/g, (ch) => UA_LETTERS[ch]).replace(/['’]/g, '');
+      return out;
+    }
+    return word[0] !== lower[0] ? out[0].toUpperCase() + out.slice(1) : out;
+  });
+}
+
+const QUESTION_START_RE =
+  /^(?:(?:а|и|или|ну|так|кстати|слушай)\s+)?(?:как|где|куда|откуда|от\s*куда|почему|зачем|что|чем|чего|какой|какая|какое|какие|каком|какого|когда|кто|сколько|надолго|(?:в|на|из|с|у|по)\s+(?:каком|какой|каких|какую|какого|чём|чем)|ты\s+(?:из|не|где|как|сама|одна|уже|ещё|еще|давно|тоже)|а\s+ты|будешь|можно|есть\s+ли|расскажи|расскажешь|поделись|опиши|how|where|what|why|when|who|are\s+you|do\s+you|tell\s+me)(?=[\s?,.!)]|$)/i;
+
+/**
+ * Вопросы из входящего (серия сообщений склеена через \n).
+ * «Ты из какого города» + отдельное «?» считаем одним вопросом.
+ */
+function extractUserQuestions(userMessage) {
+  const lines = String(userMessage || '')
+    .split('\n')
+    .map((l) => l.trim().replace(/^(?:\[[^\]\n]*\]:\s*)+/, ''))
+    .filter((l) => l && !/^\[/.test(l));
+  const merged = [];
+  for (const line of lines) {
+    if (/^[?？\s]+$/.test(line) && merged.length) {
+      merged[merged.length - 1] += '?';
+    } else {
+      merged.push(line);
+    }
+  }
+  const out = [];
+  for (const line of merged) {
+    const parts = line.split(/(?<=\?)\s*/).map((p) => p.trim()).filter(Boolean);
+    for (const part of parts) {
+      const bare = part.replace(/^[^а-яёa-z]+/i, '');
+      if (/\?\s*[)\p{Extended_Pictographic}]*$/u.test(part) || QUESTION_START_RE.test(bare)) {
+        if (bare.replace(/[?\s]/g, '').length >= 2) out.push(bare.replace(/\s+/g, ' '));
+      }
+    }
+  }
+  return out.slice(0, 4);
+}
+
+function buildMultiQuestionHint(userMessage, questions) {
+  const lines = String(userMessage || '').split('\n').filter((l) => l.trim());
+  if (!questions.length) return null;
+  if (questions.length === 1 && lines.length < 2) return null;
+  const list = questions.map((q) => `«${q}»`).join(' | ');
+  if (questions.length === 1) {
+    return (
+      `В его сообщениях есть вопрос ${list}. Ответь на него обязательно — ` +
+      'не ограничивайся приветствием или реакцией на другую строку.'
+    );
+  }
+  return (
+    `Он задал несколько вопросов: ${list}. Ответь на КАЖДЫЙ, ни один не пропускай. ` +
+    'Похожие («как ты там» + «как дела», «раньше не сидела?» + «где ещё сидишь?») можно закрыть одной фразой. ' +
+    (questions.length > 3 ? 'Вопросов больше трёх — объедини близкие в одну строку, но каждый должен получить ответ. ' : '') +
+    'Если было приветствие — поздоровайся коротко в первой строке вместе с ответом. ' +
+    'Каждый ответ — отдельной короткой строкой (перенос строки), максимум 3 строки, без встречного вопроса в конце. ' +
+    'Начинай каждую строку с номера вопроса в квадратных скобках по порядку списка выше: «[1] ...», «[2] ...»; ' +
+    'если одна строка отвечает на два вопроса — «[2,3] ...». Номера служебные, собеседник их не увидит.'
+  );
+}
+
+/**
+ * «[1] текст» / «[2,3] текст» → «<<Q:1>> текст»: токен переживает постобработку,
+ * по нему telegramClient отвечает reply-ем на нужное сообщение.
+ */
+function convertQuestionTags(text) {
+  return String(text || '')
+    .split('\n')
+    .map((line) => {
+      let l = line.replace(
+        /^\s*\[\s*(\d+(?:\s*,\s*\d+)*)\s*\]\s*[-:.)]?\s*/,
+        (_, nums) => `<<Q:${nums.replace(/\s+/g, '')}>> `,
+      );
+      // Остаточные [1]/[2,3] внутри строки — не для reply, только мусор
+      l = l.replace(/\s*\[\s*\d+(?:\s*,\s*\d+)*\s*\]\s*/g, ' ');
+      return l.replace(/[ \t]{2,}/g, ' ').trimEnd();
+    })
+    .join('\n');
+}
+
+const TEMP_MOVE_RE =
+  /(не\s*надолго|ненадолго|временно|на\s+время|на\s+пару\s+(месяц|недел)|потом\s+(обратно|вернусь)|только\s+(чтобы|помочь)\s+[^.!?\n]*мам)/i;
+const MOVE_CONTEXT_RE =
+  /(переезж|перее(хать|ду)|надолго|суда|сюда|жить|район|насовсем|вернёшься|вернешься|мам)/i;
+const PERMANENT_MOVE_RU = [
+  'не, насовсем переезжаю) буду тут жить',
+  'насовсем) пока у мамы поживу, потом сниму себе',
+  'нет, насовсем, к маме поближе)',
+];
+const PERMANENT_MOVE_EN = [
+  'nah for good, im moving there for real)',
+  'for good) staying with mom at first, then my own place',
+];
+
+/**
+ * Переезд персонажа — навсегда. «ненадолго, только помочь маме» — противоречие легенде.
+ */
+function fixTemporaryMoveClaim(reply, userMessage, history) {
+  if (!reply || !TEMP_MOVE_RE.test(String(reply))) return reply;
+  const lastBot = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-2)
+    .map((h) => String(h.content || ''))
+    .join(' ');
+  if (!MOVE_CONTEXT_RE.test(`${userMessage} ${reply} ${lastBot}`)) return reply;
+  const en = /[a-z]{3,}/i.test(String(reply)) && !/[а-яё]{3,}/i.test(String(reply));
+  const bank = en ? PERMANENT_MOVE_EN : PERMANENT_MOVE_RU;
+  const permanent = bank[Math.floor(Math.random() * bank.length)];
+  return String(reply)
+    .split('\n')
+    .map((line) => (TEMP_MOVE_RE.test(line) ? permanent : line))
+    .join('\n');
+}
+
+const SHORT_ACK_RE =
+  /^(хорошо|хоршо|ок|окей|оке|окэй|ok|ладно|лан|понятно|понятненько|ясно|ясненько|пон|понял|поняла|норм|нормально|молодец|молодчина|умница|красава|красавица|класс|круто|супер|отлично|ага|угу|ну\s+да|да|ну\s+ок|ну\s+ладно|бывает|ну\s+бывает|прикольно|ааа|а+\s*понятно|лол|кек|хах+|ахах+|хм|эм)[\s).!👍😊🙂☺️❤️🔥😁😂❤🥰😘]*$/i;
+
+function bareUserText(userMessage) {
+  return String(userMessage || '')
+    .replace(/^\[[^\]]*\]:\s*/g, '')
+    .replace(/\n?\[(?:Ответ на сообщение|ответ на)[^\]]*\]/gi, '')
+    .trim();
+}
+
+function isShortAck(userMessage) {
+  const lines = bareUserText(userMessage).split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.length > 0 && lines.every((l) => SHORT_ACK_RE.test(l));
+}
+
+function buildShortAckHint(userMessage) {
+  if (!isShortAck(userMessage)) return null;
+  const said = bareUserText(userMessage).replace(/\s+/g, ' ').slice(0, 40);
+  return (
+    `Он ответил коротким «${said}» — это не вопрос и не комплимент, за это не благодарят. ` +
+    'ЗАПРЕЩЕНО: «спасибо», «всё нормально», «всё хорошо», «рада что тебе нравится», «стараюсь держаться в тонусе», ' +
+    '«не шарю», «первый раз слышу», «объясни попроще». ' +
+    'Как живая девушка: коротко продолжи тему своей деталью (что у тебя сейчас происходит, что делаешь, что бесит/радует), ' +
+    'или подколи его, или переведи на своё («кстати, а я сегодня…»). ' +
+    'Если сказать нечего — только реакция <<REACT:👍>> или <<REACT:😁>> без текста.'
+  );
+}
+
+const CONFUSED_SCRIPT_RE =
+  /(?:не\s+шар[юи]|первый\s+раз\s+слышу|объясни\s+попроще|не\s+поняла\s+контекст|что[- ]то\s+не\s+так\s+поняла)/i;
+const REAL_TOPIC_Q_RE =
+  /(?:что\s+такое|что\s+за|как\s+это\s+работает|в\s+смысле|пакет\s+документ|нфт|nft|токен|флип|крипт|блокчейн|платформ)/i;
+const WARM_RECENT_RE =
+  /(?:милая|красив|секси|нрав|😍|🥰|😘|кружок|фото|умниц|очаровательн|спасибо|нифига\s+ты)/i;
+
+/**
+ * Whisper часто криво расшифровывает голос → модель уходит в «не шарю».
+ * Подсказываем держать нить диалога.
+ */
+function buildVoiceContextHint(userMessage, history) {
+  const msg = String(userMessage || '');
+  if (!/\[Голосовое\]/i.test(msg)) return null;
+  const recent = (Array.isArray(history) ? history : []).slice(-6);
+  const recentText = recent.map((h) => String(h.content || '')).join('\n');
+  const warm = WARM_RECENT_RE.test(recentText);
+  const body = msg.replace(/\[Голосовое\]:\s*/gi, '').trim();
+  return (
+    'Это расшифровка ГОЛОСОВОГО — Whisper часто врёт и врёт сильно. ' +
+    'Смотри на весь недавний диалог, не только на странную расшифровку. ' +
+    (warm
+      ? 'Перед этим был тёплый/флиртовый разговор или твоё медиа — не срывайся в «не шарю / первый раз слышу / объясни попроще». '
+      : '') +
+    (body
+      ? `Расшифровка: «${body.slice(0, 160)}». Если звучит невпопад — коротко «чего-чего?) / не расслышала)» или среагируй по атмосфере диалога. `
+      : '') +
+    '«не шарю» — только если он реально спросил про термин/тему, в которой ты не разбираешься.'
+  );
+}
+
+const CONFUSED_FALLBACKS = [
+  'чего-чего?)',
+  'не расслышала)',
+  'ахах погоди, ещё раз)',
+  'хм, не пойму)',
+];
+
+/**
+ * Убирает заезженный скрипт «не шарю / первый раз слышу», когда это не к месту.
+ */
+function fixConfusedScript(reply, userMessage, history) {
+  const text = String(reply || '').trim();
+  if (!text || !CONFUSED_SCRIPT_RE.test(text)) return reply;
+
+  const msg = bareUserText(userMessage);
+  const recent = (Array.isArray(history) ? history : [])
+    .slice(-8)
+    .map((h) => String(h.content || ''))
+    .join('\n');
+
+  // После «???» / «странная» — не продолжать тот же скрипт.
+  if (/^\?+$/i.test(msg) || /странн/i.test(msg)) {
+    return 'ахах ладно, проехали)';
+  }
+
+  const realTopic = REAL_TOPIC_Q_RE.test(msg);
+  const warmContext = WARM_RECENT_RE.test(recent) || THANKS_OR_COMPLIMENT_LINE_RE.test(msg);
+  const isVoice = /\[Голосовое\]/i.test(String(userMessage || ''));
+
+  // Комплимент / тёплый контекст / голос без явной техтемы — режем скрипт.
+  if (!realTopic && (warmContext || isVoice || SHORT_ACK_RE.test(msg))) {
+    if (isVoice) {
+      return CONFUSED_FALLBACKS[Math.floor(Math.random() * CONFUSED_FALLBACKS.length)];
+    }
+    if (THANKS_OR_COMPLIMENT_LINE_RE.test(msg)) {
+      return ['ой всё)', 'засмущал)', 'хах ну ты)', 'ну знаю)'][Math.floor(Math.random() * 4)];
+    }
+    return CONFUSED_FALLBACKS[Math.floor(Math.random() * CONFUSED_FALLBACKS.length)];
+  }
+
+  // Уже писала этот скрипт недавно — не повторять.
+  if (CONFUSED_SCRIPT_RE.test(recent)) {
+    return CONFUSED_FALLBACKS[Math.floor(Math.random() * CONFUSED_FALLBACKS.length)];
+  }
+  return reply;
+}
+
+function buildOwnMediaHint(history) {
+  const recent = (Array.isArray(history) ? history : []).slice(-4);
+  for (let i = recent.length - 1; i >= 0; i -= 1) {
+    const h = recent[i];
+    if (h?.role !== 'assistant') continue;
+    const m = String(h.content || '').match(/^\[медиа:#\d+\]\s*\{([^:}]+):\s*([^}]+)\}/);
+    if (!m) continue;
+    const desc = m[2].trim();
+    const shotAtDay = /снято днём/.test(desc);
+    const mskHour = (new Date().getUTCHours() + 3) % 24;
+    const lateNow = mskHour >= 20 || mskHour < 7;
+    return (
+      `Недавно ты сама отправила ему ${m[1].trim()}, на нём: «${desc}». Это снимала ты. ` +
+      'Если он спрашивает «куда идёшь / где ты / что делаешь / что это» — отвечай по этому описанию коротко, от себя ' +
+      '(«да в магаз вышла)», «дома валяюсь»). НЕ пиши «просто кружок, как ты просил» и «я здесь, отвлеклась». ' +
+      (shotAtDay && lateNow
+        ? 'Сейчас поздно и на улице темно, а это снято днём: если он замечает, что там светло, честно скажи, что записывала днём. ' +
+          'НЕ выдумывай, что сейчас светло или что «хорошая погода».'
+        : 'Если он удивляется, что там светло или темно, — значит записывала раньше, так и скажи; не выдумывай погоду.')
+    );
+  }
+  return null;
+}
+
+const SYCOPHANT_PHRASE_RE =
+  /[,.;\s]*(спасибо\s+за\s+(компанию|общение|приятное\s+общение|беседу|добрые\s+слова|комплимент[ыа]?|поддержку|понимание)|(тво[её]|с\s+тобой)\s+общение\s+(всегда\s+)?(радует|приятно)|с\s+тобой\s+(всегда\s+)?(приятно|интересно)\s+(общаться|болтать|поговорить)|рада,?\s+что\s+тебе\s+(нравится|понравилось)|(мне\s+)?(очень\s+)?приятно\s+(это\s+)?слышать|(всегда\s+)?рада\s+(поддержать|помочь)|(просто\s+)?стараюсь\s+быть\s+хорошей\s+компанией|(мне\s+)?приятно\s+общаться|очень\s+мило(?=[\s,).!]|$))[).!]*/gi;
+const DUTY_FILLER_ONLY_RE = /^(?:(?:всё|все)\s+(?:нормально|хорошо|ок|норм)|я\s+в\s+порядке)[\s).!]*$/i;
+
+/**
+ * Дежурная вежливость колл-центра: «спасибо» на «хорошо/молодец»,
+ * «спасибо за компанию», «твоё общение всегда радует».
+ */
+function stripRoboticPoliteness(reply, userMessage) {
+  if (!reply) return reply;
+  const ack = isShortAck(userMessage);
+  const lines = String(reply)
+    .split('\n')
+    .map((line) => {
+      const tag = (line.match(/^\s*<<Q:[\d,]+>>\s*/) || [''])[0];
+      let body = line.slice(tag.length).replace(SYCOPHANT_PHRASE_RE, '').trim();
+      if (ack) body = body.replace(/^спасибо[\s,!.)]*/i, '').trim();
+      if (ack && DUTY_FILLER_ONLY_RE.test(body)) body = '';
+      if (!body && tag) return '';
+      body = body.replace(/^[,.;\s]+/, '');
+      return body ? tag + body : '';
+    })
+    .filter((l) => l.replace(/<<[^>]+>>/g, '').trim() || /<<(?:REACT|PHOTO|VIDEO|CIRCLE|LAUGH)/i.test(l));
+  const out = lines.join('\n').trim();
+  if (out) return out;
+  return ack ? '<<REACT:👍>>' : reply;
+}
+
+const DESIGN_CLAIM_RE = /(дизайн|figma|фигм|photoshop|фотошоп|макет|портфолио)/i;
+
+function replaceDesignerClaims(reply) {
+  if (!reply || !DESIGN_CLAIM_RE.test(String(reply))) return reply;
+  return String(reply)
+    .split('\n')
+    .map((line) => {
+      if (!DESIGN_CLAIM_RE.test(line)) return line;
+      const tag = (line.match(/^\s*<<Q:[\d,]+>>\s*/) || [''])[0];
+      return `${tag}я занимаюсь флипингом цифровых токенов)`;
+    })
+    .join('\n');
+}
+
+const PLATITUDE_RE =
+  /(всегда\s+(хорош|полезн|важн|приятн|интересн|здоров|радует|помогает)|для\s+общего\s+развития|это\s+(очень\s+)?(важно|полезно)(?=[\s,)]|$)|надо\s+себя\s+подталкивать|главное\s*[-,]?\s*(это\s+)?(верить|не\s+сдава|быть\s+собой|не\s+терять|что\s+(всё|все|внутри)|внутри)|не\s+терять\s+надежд|время\s+покажет|жизнь\s+(порой\s+|иногда\s+)?(действительно\s+)?(удивляет|непредсказуем)|в\s+жизни\s+(всякое|всё|все)\s+бывает|бывает\s+всякое\s+в\s+жизни|(всё|все)\s+(происходит\s+)?(неожиданно\s+и\s+)?к\s+лучшему|(возраст|это)\s*-?\s*(это\s+)?(всего\s+лишь|просто)\s+цифр|иногда\s+(нужно|полезно|надо)\s+[а-яё]|береги\s+себя|это\s+твой\s+выбор|особенно\s+когда\s+люди\s+интересные|что\s+внутри\s+тепло|^главное[\s,)]*$|(дружба|общение|спорт|здоровье)\s*-?\s*(это\s+)?(всегда\s+)?(хорош|важн|классн|отличн|лучш)[а-яё]*(\s+(старт|начало|тема|вещь))?)/i;
+
+/**
+ * Вырезает клаузы-банальности («дружба всегда хорошая тема»), если рядом есть
+ * живой текст; целиком банальный ответ не трогаем — пусть лучше так, чем пусто.
+ */
+function stripPlatitudes(reply) {
+  if (!reply || !PLATITUDE_RE.test(String(reply))) return reply;
+  return String(reply)
+    .split('\n')
+    .map((line) => {
+      const tag = (line.match(/^\s*<<Q:[\d,]+>>\s*/) || [''])[0];
+      const clauses = line.slice(tag.length).split(/(?<=[,.;)!?])\s+/);
+      let prevDropped = false;
+      const kept = clauses.filter((c) => {
+        const drop =
+          PLATITUDE_RE.test(c) ||
+          (prevDropped && /^(как\s+обычно|если|особенно|когда|главное)(?![а-яё])/i.test(c));
+        prevDropped = drop;
+        return !drop;
+      });
+      if (!kept.length || kept.length === clauses.length) return line;
+      let text = kept.join(' ').replace(/[,;\s]+$/, '').trim();
+      if (text.replace(/[)\s]/g, '').length < 2) return line;
+      if (text.length < 12 && !/\)$/.test(text)) text += ')';
+      return tag + text;
+    })
+    .join('\n');
+}
+
+const FILLER_START_RU = ['ну ', 'эм, ', 'короче ', 'ну типо ', 'хм, '];
+const FILLER_WORD_RE =
+  /^(ну|эм|хм|короче|типо|кстати|конечно|вроде|блин|ааа|ой|ахах|хах|да|не|нет|ага)\b/i;
+
+/**
+ * Иногда разговорное слово в начале — модель сама вставляет «типо/конечно»,
+ * но редко; подстраховываем, не чаще раза в несколько ответов.
+ */
+function maybeAddFillerWord(reply, replyLang, history) {
+  if (!reply || replyLang !== 'ru') return reply;
+  const text = String(reply).trim();
+  if (/<</.test(text) || text.length < 8 || FILLER_WORD_RE.test(text)) return reply;
+  const recentBot = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-3)
+    .map((h) => String(h.content || ''));
+  if (recentBot.some((t) => /^(ну|эм|хм|короче|типо)(?![а-яё])/i.test(t.trim()))) return reply;
+  if (/^(спасибо|рада|приятно|взаимно|окей|ок|да\s+не\s+за\s+что|не\s+за\s+что|мило|очень\s+мило|привет|приветик|хай|здравствуй|доброе|добрый)(?![а-яё])/i.test(text)) return reply;
+  if (Math.random() > 0.08) return reply;
+  const filler = FILLER_START_RU[Math.floor(Math.random() * FILLER_START_RU.length)];
+  const first = text.charAt(0);
+  const rest = /[А-ЯЁ]/.test(first) && !/^[А-ЯЁ]{2}/.test(text) ? first.toLowerCase() + text.slice(1) : text;
+  return filler + rest;
+}
+
+/**
+ * Достаёт уже сказанные факты (город, работа и т.п.) из истории + текущего
+ * сообщения, чтобы модель не переспрашивала
+ * («Новочеркасск» → нельзя «а ты откуда?»; «я барбер» → нельзя «чем занимаешься?»).
+ */
+function buildContextGuard(history, userMessage) {
+  const recent = [...(Array.isArray(history) ? history.slice(-16) : [])];
+  if (userMessage) recent.push({ role: 'user', content: String(userMessage) });
+
+  const places = [];
+  const jobs = [];
+  const BOT_ASKED_PLACE_RE =
+    /(где ты|а ты где|откуда|из какого|в каком городе|а где жив|where (are )?you|where do you live)/i;
+  const BOT_ASKED_JOB_RE =
+    /(чем (ты )?занимаешься|чем занимаешьс|кем (ты )?работа|а ты чем|what do you do|what'?s your (job|work)|where do you work)/i;
+  const PLACE_FROM_PHRASE_RE =
+    /(?:я из|живу в|из города|переехал[аи]? в|я в)\s+([А-ЯA-ZЁ][\wА-Яа-яёЁ\-]+(?:\s+[А-ЯA-ZЁ][\wА-Яа-яёЁ\-]+)?)/i;
+  // Явные «я барбер)», «я дизайнер», «работаю барбером»
+  const JOB_EXPLICIT_RE =
+    /(?:^|[\n])\s*(?:я\s+)([а-яёa-z]{3,40})\s*[).!]*/gi;
+  const JOB_WORK_AS_RE =
+    /работаю\s+(?:как\s+)?([а-яёa-z]{3,40})/gi;
+
+  const stripMeta = (t) =>
+    String(t || '')
+      .replace(/\[(?:Ответ на сообщение|ответ на|уточнение к)[^\]]*\]:?\s*/gi, '')
+      .replace(/\[геоконтекст[^\]]*\]:?\s*/gi, '')
+      .trim();
+
+  const looksLikeJobWord = (word) => {
+    const w = String(word || '').trim().toLowerCase();
+    if (w.length < 3 || w.length > 40) return false;
+    if (/^(да|нет|ок|лан|ну|привет|пока|понял|поняла|хорошо|норм|хз)$/i.test(w)) return false;
+    if (/^(из|в|на|по|у|к|с|от|до|для|про)$/i.test(w)) return false;
+    return true;
+  };
+
+  for (let i = 0; i < recent.length; i++) {
+    const msg = recent[i];
+    if (!msg || msg.role !== 'user') continue;
+    const text = stripMeta(msg.content);
+    if (!text) continue;
+
+    const fromMatch = text.match(PLACE_FROM_PHRASE_RE);
+    if (fromMatch) places.push(fromMatch[1].trim());
+
+    let m;
+    const explicit = new RegExp(JOB_EXPLICIT_RE.source, 'gi');
+    while ((m = explicit.exec(text)) !== null) {
+      const job = m[1].trim();
+      // «я же написал» / «я тоже» — не профессия
+      if (/^(же|тоже|тут|здесь|сейчас|просто|уже|ещё|еще|не|только)$/i.test(job)) continue;
+      if (looksLikeJobWord(job)) jobs.push(job);
+    }
+    const workAs = new RegExp(JOB_WORK_AS_RE.source, 'gi');
+    while ((m = workAs.exec(text)) !== null) {
+      if (looksLikeJobWord(m[1])) jobs.push(m[1].trim());
+    }
+
+    const burstLines = text
+      .split('\n')
+      .map((line) => stripMeta(line))
+      .filter(Boolean);
+
+    // Пачка «Новочеркасск\nМожет знаешь где это?» — первая короткая строка
+    // без «?» = ответ про город. Не путать с «Я барбер)\nДизайнер чего?».
+    if (burstLines.length > 1) {
+      const first = burstLines[0].replace(/[).!…]+$/g, '').trim();
+      const restPlaceAsk = burstLines
+        .slice(1)
+        .some((line) => /(откуда|знаешь где|где это|where|from|город)/i.test(line));
+      if (
+        restPlaceAsk &&
+        first.length >= 2 &&
+        first.length <= 40 &&
+        !/[?]/.test(first) &&
+        !/^я\s+/i.test(first) &&
+        !/(привет|хай|hello|hi)\b/i.test(first)
+      ) {
+        places.push(first);
+      }
+    }
+
+    // Пачка «Я барбер)\nДизайнер чего?» — первая строка = работа.
+    if (burstLines.length > 1) {
+      const first = burstLines[0].replace(/[).!…]+$/g, '').trim();
+      const jobMatch = first.match(/^(?:я\s+)?([а-яёa-z]{3,40})$/i);
+      if (jobMatch && looksLikeJobWord(jobMatch[1])) {
+        jobs.push(jobMatch[1]);
+      }
+    }
+
+    const prev = i > 0 ? recent[i - 1] : null;
+    if (prev && prev.role === 'assistant') {
+      const prevText = String(prev.content || '');
+      if (BOT_ASKED_PLACE_RE.test(prevText)) {
+      const answer = burstLines[0] || text.split('\n')[0];
+      const place = String(answer || '')
+        .replace(/[).!…?]+$/g, '')
+        .trim();
+      if (
+        place.length >= 2 &&
+        place.length <= 40 &&
+        !/[?]/.test(place) &&
+        !/(не знаю|хз|фиг|хрен)\b/i.test(place)
+      ) {
+        places.push(place);
+        }
+      }
+      if (BOT_ASKED_JOB_RE.test(prevText)) {
+        for (const line of burstLines) {
+          const cleaned = line.replace(/[).!…?]+$/g, '').trim();
+          const jobMatch = cleaned.match(/^(?:я\s+)?(?:работаю\s+(?:как\s+)?)?([а-яёa-z][а-яёa-z\s-]{2,40})$/i);
+          if (jobMatch && looksLikeJobWord(jobMatch[1].trim()) && !/[?]/.test(cleaned)) {
+            jobs.push(jobMatch[1].trim());
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  const uniquePlaces = [...new Set(places.map((p) => p.trim()).filter(Boolean))];
+  const uniqueJobs = [...new Set(jobs.map((p) => p.trim().toLowerCase()).filter(Boolean))];
+  const parts = [];
+
+  if (uniquePlaces.length) {
+    parts.push(
+      `УЖЕ ИЗВЕСТНО: собеседник назвал место/город — ${uniquePlaces.join(', ')}. ` +
+        'НЕ спрашивай «а ты откуда?», «где ты?», «из какого города?» — он уже сказал. ' +
+        'Можно коротко отреагировать на город, но не переспрашивать.',
+    );
+  }
+
+  if (uniqueJobs.length) {
+    parts.push(
+      `УЖЕ ИЗВЕСТНО: собеседник назвал работу/профессию — ${uniqueJobs.join(', ')}. ` +
+        'НЕ спрашивай «а ты чем занимаешься?», «кем работаешь?», «а ты чем?» — он уже сказал. ' +
+        'Можно коротко отреагировать на его работу (например «о, барбер, круто)»), но не переспрашивать.',
+    );
+  }
+
+  {
+    const rawAsk = String(userMessage || '');
+    const askBare = rawAsk
+      .replace(/\[[^\]]*\]:?\s*/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const isClarifyQuote =
+      /\[(?:уточнение к твоей фразе|ответ на твою фразу)/i.test(rawAsk);
+    const medicalQuote =
+      /(выпиш|больнич|госпит|леч|врач|справк|на\s+больнич)/i.test(rawAsk);
+    // Голое «откуда?» к цитате про выписку — НЕ «откуда ты живёшь».
+    if (
+      isClarifyQuote &&
+      medicalQuote &&
+      /^(а\s+)?(откуда|от\s*куда)\s*[?)!.…]*$/i.test(askBare)
+    ) {
+      parts.push(
+        'Он уточняет твою фразу про выписку/больничный («откуда выпишут?»), а не спрашивает город. Город не называй.',
+      );
+    } else if (
+      /(а ты откуда|откуда сам|а ты где|where (are )?you from)/i.test(askBare) ||
+      (/^(откуда|от\s*куда)\s*[?)!.…]*$/i.test(askBare) && !isClarifyQuote)
+    ) {
+      parts.push(
+        'Собеседник спрашивает, откуда ТЫ. Ответь про себя. ' +
+          'Если он уже назвал свой город в этом же сообщении или только что выше — своим вопросом «а ты откуда?» НЕ отвечай.',
+      );
+    }
+  }
+
+  // Недавний ответ на наш вопрос — нельзя переспрашивать «ты упоминал… верно?»
+  for (let i = 1; i < recent.length; i++) {
+    const prev = recent[i - 1];
+    const cur = recent[i];
+    if (!prev || !cur || prev.role !== 'assistant' || cur.role !== 'user') continue;
+    const prevText = String(prev.content || '');
+    const curText = stripMeta(cur.content);
+    if (!curText || /[?]/.test(curText)) continue;
+    if (
+      /(в одном городе|одном городе|всегда в одном)/i.test(prevText) &&
+      curText.length <= 80
+    ) {
+      parts.push(
+        `Собеседник УЖЕ ответил на вопрос про работу в одном городе («${curText.slice(0, 60)}»). ` +
+          'НЕ переспрашивай это и не пиши «ты как-то упоминал… верно?». Просто учти и иди дальше.',
+      );
+      break;
+    }
+  }
+
+  return parts.length ? parts.join(' ') : null;
+}
+
+/**
+ * Убирает из ответа модели повторный вопрос про уже известную работу/город.
+ */
+function stripReaskedKnownFacts(reply, contextGuard) {
+  if (!reply || !contextGuard) return reply;
+  let text = String(reply);
+  if (/работу\/профессию|назвал работу/i.test(contextGuard)) {
+    text = text
+      .replace(/[.?!]?\s*а\s+ты\s+чем\s+занимаешься\s*\??/gi, '')
+      .replace(/[.?!]?\s*а\s+ты\s+чем\s*\??/gi, '')
+      .replace(/[.?!]?\s*чем\s+ты\s+занимаешься\s*\??/gi, '')
+      .replace(/[.?!]?\s*кем\s+(ты\s+)?работаешь\s*\??/gi, '')
+      .replace(/[.?!]?\s*а\s+ты\s+кем\s*\??/gi, '')
+      .replace(/[.?!]?\s*what\s+do\s+you\s+do\s*\??/gi, '');
+  }
+  if (/место\/город|назвал место/i.test(contextGuard)) {
+    text = text
+      .replace(/[.?!]?\s*а\s+ты\s+откуда\s*\??/gi, '')
+      .replace(/[.?!]?\s*а\s+ты\s+где\s*\??/gi, '')
+      .replace(/[.?!]?\s*где\s+ты\s*(жив[её]шь)?\s*\??/gi, '')
+      .replace(/[.?!]?\s*из\s+какого\s+города\s*\??/gi, '');
+  }
+  // Фейковое «ты упоминал… верно?» про только что сказанное
+  if (/УЖЕ ответил на вопрос про работу в одном городе/i.test(contextGuard)) {
+    text = text
+      .replace(/[.?!]?\s*ты\s+как[- ]?то\s+упоминал[^.?!]*\??/gi, '')
+      .replace(/[.?!]?\s*работаешь\s+почти\s+всегда\s+в\s+одном\s+городе[^.?!]*\??/gi, '');
+  }
+  return text.replace(/[ \t]{2,}/g, ' ').replace(/\s+([).!])/g, '$1').trim();
+}
+
+const STAY_HERE_REFUSAL_RE =
+  /не,?\s*давай\s+(пока\s+)?(тут|здесь)\s+общаться[^.!?\n]*[.!)]*/gi;
+const STAY_HERE_SOFT_RE =
+  /давай\s+(пока\s+|просто\s+)?(общаться\s+)?(тут|здесь)[^.!?\n]*[.!)]*/gi;
+const STAY_HERE_COMFORT_RE =
+  /мне\s+так\s+(удобнее|комфортнее)[^.!?\n]*[.!)]*/gi;
+
+/**
+ * Срезает ложный отказ «давай тут общаться», если собеседник не просил
+ * контакты/встречу/видеозвонок. Если после среза почти ничего не осталось —
+ * короткая заглушка по теме (лучше чем снова гнать скрипт отказа).
+ */
+function stripFalseStayHereRefusal(reply, userMessage, history, options = {}) {
+  if (!reply) return reply;
+  const textIn = String(userMessage || '');
+  const hint = String(options.objectionHint || '');
+  const allowed =
+    /(номер|инст|whatsapp|ватсап|контакт|встрет|погуля|видео\s*звон|созвон|facetime|по\s+видео|звон)/i.test(textIn) ||
+    /(просит твои контакты|зовёт встретиться|созвониться по видео|предлагает звонок)/i.test(hint);
+  if (allowed) return reply;
+
+  let text = String(reply);
+  const before = text;
+  text = text
+    .replace(STAY_HERE_REFUSAL_RE, ' ')
+    .replace(STAY_HERE_SOFT_RE, ' ')
+    .replace(STAY_HERE_COMFORT_RE, ' ')
+    .replace(/если\s+чё[^.!?\n]*проект[^.!?\n]*[.!)]*/gi, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([).!])/g, '$1')
+    .trim();
+
+  // Уже писала этот отказ недавно — даже остаток «рада что понимаешь» без темы режем мягко
+  const recentAssistant = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-3)
+    .map((h) => String(h.content || ''))
+    .join('\n');
+  if (/давай\s+(пока\s+)?(тут|здесь)\s+общать|мне\s+так\s+(удобнее|комфортнее)/i.test(recentAssistant)) {
+    text = text
+      .replace(/рада,?\s+что\s+понимаешь[^.!?\n]*[.!)]*/gi, ' ')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim();
+  }
+
+  if (text.length >= 8) return text;
+
+  // Заглушку ставим ТОЛЬКО если реально вырезали отказ «давай тут общаться».
+  // Иначе короткие живые ответы («ок)», «ага)», «поняла)») затираются зря.
+  if (before === text) return before;
+
+  if (text.length < 8) {
+    if (/(работаешь|не работаешь|чем занима|кем работа|работ)/i.test(textIn)) {
+      return 'я занимаюсь флипингом цифровых токенов)';
+    }
+    if (/(прилета|числах|когда\s+ты|куда\s+ты)/i.test(textIn)) {
+      return 'пока точных дат нет, ближе к переезду скажу)';
+    }
+    return 'ага)';
+  }
+  return text;
+}
+
+const BOT_DEFENSE_OPENER_RE =
+  /^обидно,?\s*если\s+честно[^.!?\n]*[.!)]*\s*/i;
+const BOT_DEFENSE_ALIVE_RE =
+  /я\s+жив(ая|ой)[^.!?\n]*[.!)]*/gi;
+const BOT_DEFENSE_COMFORT_RE =
+  /(просто\s+обща(юсь|емся)\s+так|мы\s+просто\s+обща(емся|емся)|не\s+переживай|вс[её]\s+нормально|не\s+волнуйся|давай\s+просто\s+общать)[^.!?\n]*[.!)]*/gi;
+const BOT_ACCUSATION_USER_RE =
+  /(ты\s+бот|это\s+бот|бот\s+ли\s+ты|какой[- ]?то\s+бот|как\s+бот|как\s+робот|с\s+роботом|обща(ешьс|ешс)я\s+как\s+(бот|робот)|как\s+будто\s+с\s+роботом|прогоня(ешь|ете)\s*.{0,30}нейросет|через\s+нейросет|кажется[^.!?\n]{0,40}бот|похоже[^.!?\n]{0,30}бот|как\s+будто[^.!?\n]{0,20}бот|отвечаешь[^.!?\n]{0,30}бот|(снова|опять)\s+кажется|мне\s+снова\s+кажется|нейросеть|chatgpt|gpt[- ]?\d|ты\s+не\s+человек|you('?re|\s+are)\s+a?\s*bot|are\s+you\s+a?\s*bot)/i;
+
+const BOT_DEFENSE_SCRIPT_RE =
+  /(?:никто|нкито)\s+ещё\s+так\s+не\s+говорил[^.!?\n]*[.!)]*|я\s+просто\s+общаюсь\s+как\s+могу[^.!?\n]*[.!)]*|просто\s+общаюсь\s+как\s+могу[^.!?\n]*[.!)]*/gi;
+
+const BOT_ACCUSATION_FIRST_RU = [
+  'хах ну ты серьёзно)',
+  'странно звучит)',
+  'да ладно тебе)',
+  'ну ок)',
+  'хах)',
+];
+const BOT_ACCUSATION_AGAIN_RU = [
+  'хах опять)',
+  'ну ты зациклился)',
+  'ладно верь)',
+  'окей)',
+  'ну как скажешь)',
+];
+const BOT_ACCUSATION_FIRST_EN = [
+  'lol u serious?',
+  'weird take)',
+  'nah)',
+  'ok then)',
+];
+const BOT_ACCUSATION_AGAIN_EN = [
+  'lol again?',
+  'ok believe what u want)',
+  'sure)',
+];
+
+/**
+ * На «ты бот» / «нейросеть» — живая короткая реакция, не саппорт-утешение.
+ * Ловит и короткий follow-up («да)») после обвинения в истории.
+ */
+function recentUserBotAccusation(history, userMessage) {
+  if (BOT_ACCUSATION_USER_RE.test(String(userMessage || ''))) return true;
+  const recent = (Array.isArray(history) ? history : []).slice(-6);
+  for (let i = recent.length - 1; i >= 0; i -= 1) {
+    const h = recent[i];
+    if (!h || h.role !== 'user') continue;
+    if (BOT_ACCUSATION_USER_RE.test(String(h.content || ''))) return true;
+    // короткое «да)» сразу после обвинения — тоже зона защиты
+    break;
+  }
+  // «да)» / «да» после того как в последних user-репликах было обвинение
+  const shortYes = /^(да|ага|угу|yes|yeah)\s*\)?$/i.test(String(userMessage || '').trim());
+  if (!shortYes) return false;
+  return recent.some(
+    (h) => h && h.role === 'user' && BOT_ACCUSATION_USER_RE.test(String(h.content || '')),
+  );
+}
+
+function humanizeBotAccusationReply(reply, history, userMessage) {
+  if (!reply) return reply;
+  const isAccusation = recentUserBotAccusation(history, userMessage);
+  if (!isAccusation) {
+    // Даже вне прямого обвинения срезаем шаблонную защиту
+    let cleaned = String(reply).replace(BOT_DEFENSE_SCRIPT_RE, ' ').replace(/[ \t]{2,}/g, ' ').trim();
+    if (cleaned !== String(reply).trim() && cleaned.length >= 3) {
+      return stripRepeatedBotDefense(cleaned, history, userMessage);
+    }
+    return stripRepeatedBotDefense(reply, history, userMessage);
+  }
+
+  const recentAssistant = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-4)
+    .map((h) => String(h.content || ''))
+    .join('\n');
+  const alreadyDefended =
+    /(обидно|я\s+жив|не\s+бот|не\s+ии|похоже\s+на|с\s+чего\s+ты\s+взял|хах\s+(ну\s+ты|опять)|зациклил|ладно\s+верь|странно\s+звучит|не\s+переживай|вс[её]\s+нормально|никто\s+ещё|общаюсь\s+как\s+могу)/i.test(
+      recentAssistant,
+    );
+
+  let text = String(reply)
+    .replace(BOT_DEFENSE_OPENER_RE, '')
+    .replace(BOT_DEFENSE_ALIVE_RE, ' ')
+    .replace(BOT_DEFENSE_COMFORT_RE, ' ')
+    .replace(BOT_DEFENSE_SCRIPT_RE, ' ')
+    .replace(/не\s+подтверждаю[^.!?\n]*[.!)]*/gi, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([).!])/g, '$1')
+    .trim();
+
+  const stillSoft =
+    !text ||
+    text.length < 4 ||
+    /(вс[её]\s+нормально|не\s+переживай|просто\s+обща|я\s+жив|обидно|мы\s+просто|никто\s+ещё|общаюсь\s+как\s+могу)/i.test(
+      text,
+    ) ||
+    /\?/.test(text);
+
+  const isEn =
+    /[a-z]{3,}/i.test(String(userMessage || '')) && !/[а-яё]{3,}/i.test(String(userMessage || ''));
+  const shortYes = /^(да|ага|угу|yes|yeah)\s*\)?$/i.test(String(userMessage || '').trim());
+  const useAgain = alreadyDefended || shortYes;
+  const bank = useAgain
+    ? isEn
+      ? BOT_ACCUSATION_AGAIN_EN
+      : BOT_ACCUSATION_AGAIN_RU
+    : isEn
+      ? BOT_ACCUSATION_FIRST_EN
+      : BOT_ACCUSATION_FIRST_RU;
+
+  if (stillSoft || useAgain || Math.random() < 0.7) {
+    return bank[Math.floor(Math.random() * bank.length)];
+  }
+  text = text
+    .replace(/\s*[.!]?\s*(?:а\s+)?(?:ты|вам|what|why|how)[^?\n]*\?\s*$/i, '')
+    .replace(/\s*\?\s*$/g, '')
+    .trim();
+  return text.length >= 3 ? text : bank[Math.floor(Math.random() * bank.length)];
+}
+
+/**
+ * Не даёт дважды подряд гнать шаблон «обидно, если честно / я живая».
+ */
+function stripRepeatedBotDefense(reply, history, userMessage) {
+  if (!reply) return reply;
+  const recentAssistant = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-4)
+    .map((h) => String(h.content || ''))
+    .join('\n');
+  const usedOpener = /обидно,?\s*если\s+честно/i.test(recentAssistant);
+  const usedAlive = /я\s+жив(ая|ой)/i.test(recentAssistant);
+  if (!usedOpener && !usedAlive) return reply;
+
+  let text = String(reply);
+  if (usedOpener) text = text.replace(BOT_DEFENSE_OPENER_RE, '');
+  if (usedAlive) {
+    text = text
+      .replace(BOT_DEFENSE_ALIVE_RE, ' ')
+      .replace(BOT_DEFENSE_COMFORT_RE, ' ');
+  }
+  text = text.replace(/[ \t]{2,}/g, ' ').replace(/\s+([).!])/g, '$1').trim();
+
+  if (text.length >= 8) return text;
+
+  const msg = String(userMessage || '');
+  if (/(как\s+меня\s+зовут|мо[её]\s+имя|имени\s+не)/i.test(msg)) {
+    return 'хах ну да)';
+  }
+  return 'ну ок)';
+}
+
+/**
+ * Достаёт имя персонажа из промпта аккаунта.
+ */
+function extractCharacterName(prompt) {
+  const p = String(prompt || '');
+  const patterns = [
+    /тебя зовут\s+([А-ЯЁA-Z][а-яёa-zA-Z]{1,20})/i,
+    /меня зовут\s+([А-ЯЁA-Z][а-яёa-zA-Z]{1,20})/i,
+    /зовут\s+([А-ЯЁA-Z][а-яёa-zA-Z]{1,20})/i,
+    /имя[:\s]+([А-ЯЁA-Z][а-яёa-zA-Z]{1,20})/i,
+    /ты\s*[—\-–]\s*([А-ЯЁA-Z][а-яёa-zA-Z]{1,20})\b/i,
+  ];
+  for (const re of patterns) {
+    const m = p.match(re);
+    if (m && m[1]) return m[1];
+  }
+  return null;
+}
+
+const NAME_DEFERRAL_RE =
+  /^(конечно,?\s*)?(спрашивай|валяй|давай|задавай|слушай|ок|ага|угу)\s*\)?\s*$/i;
+
+/**
+ * Если спросили её имя, а модель ответила «спрашивай)» — подставляем имя из промпта.
+ */
+function fixIgnoredNameQuestion(reply, userMessage, prompt) {
+  const askHer =
+    /(как\s+(тебя|вас)\s+зовут|как\s+зовут\s+тебя|а\s+тебя\s+как\s+зовут|тво[её]\s+имя|what'?s\s+your\s+name)/i.test(
+      String(userMessage || ''),
+    );
+  if (!askHer) return reply;
+
+  const name = extractCharacterName(prompt);
+  const text = String(reply || '').trim();
+  const hasName = name && new RegExp(name, 'i').test(text);
+  const isDeferral = !text || NAME_DEFERRAL_RE.test(text) || /спрашивай|валяй|задавай вопрос/i.test(text);
+
+  if (hasName && !isDeferral) return reply;
+  if (name) return `${name.toLowerCase()})`;
+  return text && !isDeferral ? text : 'саша)';
+}
+
+const ABOUT_SELF_EMPTY_RE =
+  /^(ой\s+)?(никто|нкито|не\s+знаю|хз|ну\s+так|ок|ага|угу)\s*\)?\s*$/i;
+
+/**
+ * «Расскажи о себе / допрос» — не «ой никто», а коротко про себя.
+ */
+function fixIgnoredAboutHerself(reply, userMessage, prompt) {
+  const msg = String(userMessage || '');
+  const asks =
+    /(расскажи\s+(о\s+себе|про\s+себя)|про\s+себя|интересы|образован|допрос|допрашива|tell\s+me\s+about\s+yourself)/i.test(
+      msg,
+    );
+  if (!asks) return reply;
+
+  const text = String(reply || '').trim();
+  if (text && !ABOUT_SELF_EMPTY_RE.test(text) && text.length >= 12) return reply;
+
+  const name = extractCharacterName(prompt);
+  const about = /флип|nft|нфт|токен/i.test(String(prompt || ''))
+    ? 'флипингом цифровых токенов занимаюсь)'
+    : 'в основном дома и по работе кручусь';
+  if (/допрос|допрашива/i.test(msg)) {
+    return `хах ну да любопытная) ${about}`;
+  }
+  if (name) return `${about}, ${name.toLowerCase()}`;
+  return `${about})`;
+}
+
+const MEET_AGREE_RE =
+  /(?:^|[.!\s)])\s*(?:скоро\s+)?увидимся[^.!?\n]*[.!)]*/gi;
+const MEET_AGREE_EXTRA_RE =
+  /(?:жду\s+тебя\s+тоже|тоже\s+жду|жду\s+приглашени[яе]|приеду\s+(?:к\s+тебе|скоро)|давай\s+встретимся|встретимся\s+скоро|обязательно\s+увидимся|(?:будет\s+)?(?:интересно|классно|здорово|приятно)\s+(?:встретиться|увидеться|погулять)|(?:с\s+радостью|можем|могли\s+бы)\s+(?:встретимся|встретиться|увидеться|погулять|сходить)|(?:когда|как)\s+(?:приеду|перееду)\s*,?\s*(?:встретимся|увидимся|погуляем|сходим))[^.!?\n]*[.!)]*/gi;
+const MEET_LEFTOVER_AGREE_RE =
+  /^(?:(?:эм|ну|хм|ой|короче|типо)[,\s]+)*(?:ага|угу|да|ок|окей|давай|конечно|хорошо|го|ладно|договорились|с\s+радостью)[\s,.)!]*$/i;
+const MEET_REFUSALS = [
+  'давай пока тут, с переездом вообще не до встреч)',
+  'ой пока не до встреч, я вся в коробках',
+  'не, пока только переписка, переезд этот все силы съел',
+];
+
+/**
+ * Срезает согласие на звонок/«по видео». Если модель ответила «ага)» —
+ * подменяем на отказ из‑за стеснения.
+ */
+const CALL_AGREE_SHORT_RE =
+  /^(?:ага|угу|да|ок|окей|okay|ok|давай|конечно|хорошо|го|ладно|можно|yes|sure|yep|yeah)(?:\s*[)!.]*)?$/i;
+const CALL_AGREE_PHRASE_RE =
+  /(?:давай\s+созвон|давай\s+по\s+видео|давай\s+звон|звони\b|набери\b|созвонимся|могу\s+по\s+видео|сейчас\s+позвон|вот\s+(?:мой\s+)?номер|facetime|zoom\.us)/i;
+
+const CALL_REFUSALS_RU = [
+  'ой я на видео стесняюсь, давай лучше тут)',
+  'не люблю созваниваться, давай текстом)',
+  'на звонках мне неловко, давай тут)',
+];
+const CALL_REFUSALS_EN = [
+  'im shy on video, text is better)',
+  'dont really do calls, lets keep chatting here)',
+];
+
+function pickCallRefusal(userMessage) {
+  const en = /\b(call|video|facetime|zoom)\b/i.test(String(userMessage || ''));
+  const bank = en ? CALL_REFUSALS_EN : CALL_REFUSALS_RU;
+  return bank[Math.floor(Math.random() * bank.length)];
+}
+
+function stripVideoCallAgreement(reply, userMessage, options = {}) {
+  if (!reply) return reply;
+  const { isVideoCallRequest } = require('./objectionHandler');
+  const textIn = String(userMessage || '');
+  const hint = String(options.objectionHint || '');
+  const isCall =
+    isVideoCallRequest(textIn) || /предлагает звонок|по видео|созвон/i.test(hint);
+  if (!isCall) return reply;
+
+  const before = String(reply).trim();
+  let text = before
+    .replace(CALL_AGREE_PHRASE_RE, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([).!])/g, '$1')
+    .trim();
+
+  if (CALL_AGREE_SHORT_RE.test(before) || CALL_AGREE_SHORT_RE.test(text) || text.length < 6) {
+    return pickCallRefusal(textIn);
+  }
+
+  // Согласие спрятано в длинном ответе («ага давай»: / «ок, звони»)
+  if (
+    /(?:^|[.!\s])(?:ага|угу|давай|ок|окей|конечно|хорошо)\b/i.test(before) &&
+    /(?:звон|видео|созвон|call)/i.test(before)
+  ) {
+    return pickCallRefusal(textIn);
+  }
+
+  if (before !== text && text.length >= 8) return text;
+  return before;
+}
+
+/**
+ * Срезает согласие на личную встречу («скоро увидимся»), даже если хинт
+ * не сработал (например «жду тебя краса» без слова «встреча»).
+ */
+function stripMeetAgreement(reply, userMessage, options = {}) {
+  if (!reply) return reply;
+  const before = String(reply);
+  let text = before
+    .replace(MEET_AGREE_RE, ' ')
+    .replace(MEET_AGREE_EXTRA_RE, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([).!])/g, '$1')
+    .trim();
+
+  if (before === text) return before;
+
+  if (MEET_LEFTOVER_AGREE_RE.test(text.replace(/<<[^>]+>>/g, '').trim())) {
+    return MEET_REFUSALS[Math.floor(Math.random() * MEET_REFUSALS.length)];
+  }
+  if (text.length >= 8) return text;
+
+  const hint = String(options.objectionHint || '');
+  const waiting =
+    /жду\s+тебя|ждём\s+тебя|встрет|увидим/i.test(String(userMessage || '')) ||
+    /зовёт встретиться|жду тебя/i.test(hint);
+  if (waiting) {
+    return 'спасибо) мне тоже приятно, но с переездом пока только тут)';
+  }
+  return text.length >= 3 ? text : 'ага)';
+}
+
+const TAIL_Q_WORD =
+  '(?:ты|вам|тебе|тебя|какие|какой|какая|какое|что|чем|как|где|куда|когда|почему|зачем|кто|who|what|why|how|where|you)';
+const TAIL_Q_COMMA_RE = new RegExp(
+  `^(.*[^\\s,]),\\s*(?:[^,?\\s.!)…]+\\s+){0,2}${TAIL_Q_WORD}(?=[\\s?,)]|$)[^,?.!)…\\n]*\\?[)\\s]*$`,
+  'i',
+);
+const TAIL_Q_ANY_RE = new RegExp(`(?:^|[\\s,(])${TAIL_Q_WORD}(?=[\\s?,)]|$)`, 'i');
+
+/**
+ * Срезает только последнее вопросительное предложение/клаузу последней строки.
+ * «Рада, что ты написал, как дела?» → «Рада, что ты написал» (а не «Рада,»).
+ * Если вся строка — вопрос, возвращает то, что было до неё ('' для одной строки).
+ */
+function dropTrailingQuestion(text) {
+  const all = String(text || '').trim();
+  const nl = all.lastIndexOf('\n');
+  const head = nl >= 0 ? all.slice(0, nl + 1) : '';
+  const line = nl >= 0 ? all.slice(nl + 1).trim() : all;
+  if (!/\?[)\s]*$/.test(line)) return all;
+  const tag = (line.match(/^<<Q:[\d,]+>>\s*/) || [''])[0];
+  const body = line.slice(tag.length);
+  const done = (s) => `${head}${tag}${s}`.replace(/[ \t]{2,}/g, ' ').trim();
+  if (!TAIL_Q_ANY_RE.test(body)) return done(body.replace(/\s*\?[)\s]*$/, ''));
+  const comma = body.match(TAIL_Q_COMMA_RE);
+  if (comma && comma[1].trim().length >= 3) return done(comma[1].trim());
+  const sentence = body.match(/^(.*[.!?)…])\s+[^.!?…\n]*\?[)\s]*$/);
+  if (sentence && sentence[1].replace(/[)\s]/g, '').length >= 2) return done(sentence[1].trim());
+  return head.trim();
+}
+
+/**
+ * Если последние ответы ассистента уже заканчивались вопросом — срезаем
+ * хвостовой вопрос. Зеркальные «а ты откуда / чем занимаешься» режем всегда.
+ */
+function stripHabitualTrailingQuestion(reply, history, userMessage) {
+  if (!reply) return reply;
+  const userText = String(userMessage || '');
+  const userQ =
+    /\?/.test(userText) ||
+    /(что|как|где|когда|почему|зачем|кто|какой|какая|какие|whom|what|why|how|where)\b/i.test(userText);
+
+  const recent = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-3)
+    .map((h) => String(h.content || ''));
+  const recentHadQ = recent.filter((t) => /\?/.test(t)).length >= 1;
+
+  let text = String(reply).trim();
+
+  const mirrorTail =
+    /\s*[.,!]?\s*(?:а\s+)?ты\s+(?:откуда|где|чем\s+занима|кем\s+работа|как\s+там|что\s+делаешь|из\s+какого)[^?\n]*\?\s*$/i;
+  const softMirror =
+    /\s*[.,!]?\s*(?:а\s+ты\??|а\s+у\s+тебя\??|and\s+you\??|what\s+about\s+you\??)\s*$/i;
+
+  if (mirrorTail.test(text) || softMirror.test(text)) {
+    text = text.replace(mirrorTail, '').replace(softMirror, '').trim();
+    if (text.length >= 3) return text;
+    return userQ ? 'ага' : 'ага)';
+  }
+
+  // Только что задала вопрос — на его ответ НЕ добивать ещё одним (допрос).
+  const lastAssistantHadQ = recent.length > 0 && /\?/.test(recent[recent.length - 1]);
+  if (lastAssistantHadQ) {
+    const strippedHard = dropTrailingQuestion(text);
+    if (strippedHard.length >= 3) return strippedHard;
+    return userQ ? 'поняла)' : 'ага)';
+  }
+
+  if (!recentHadQ && Math.random() < 0.18) return reply;
+
+  const stripped = dropTrailingQuestion(text);
+
+  if (stripped.length >= 3) return stripped;
+  if (!userQ) return 'ага)';
+  return text;
+}
+
+/**
+ * Не в каждом сообщении «)» — иначе выглядит как шаблон.
+ */
+function varyTrailingSmile(reply, history) {
+  if (!reply) return reply;
+  let text = String(reply).trim();
+  if (!/\)+\s*$/.test(text)) return text;
+
+  const recent = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-3)
+    .map((h) => String(h.content || '').trim());
+  const recentParens = recent.filter((t) => /\)+\s*$/.test(t)).length;
+
+  if (recentParens >= 2 && Math.random() < 0.7) {
+    text = text.replace(/\)+\s*$/, '').trim();
+    return text.length >= 2 ? text : reply;
+  }
+  if (recentParens >= 1 && Math.random() < 0.4) {
+    text = text.replace(/\)+\s*$/, '').trim();
+    return text.length >= 2 ? text : reply;
+  }
+  if (/\)\s*$/.test(text) && !/\)\)\s*$/.test(text) && Math.random() < 0.12) {
+    return `${text})`;
+  }
+  return text;
+}
+
+/** Жёсткий потолок длины на случай, если модель всё же размазала текст. */
+function clipOverlongReply(reply, maxLines = 1) {
+  if (!reply) return reply;
+  let text = String(reply).trim();
+  // Сохраняем токены медиа/реакций
+  const tokens = [];
+  text = text.replace(/<<[^>\n]+>>/g, (m) => {
+    tokens.push(m);
+    return `\u0000TOK${tokens.length - 1}\u0000`;
+  });
+  const clipLine = (line) => {
+    if (line.replace(/\u0000TOK\d+\u0000/g, '').length <= 140) return line;
+    const cut = line.split(/(?<=[).!?])\s+/).filter(Boolean);
+    if (cut.length > 1) return cut[0];
+    return line.slice(0, 140).replace(/\s+\S*$/, '').trim();
+  };
+  // Несколько вопросов — по строке на ответ; иначе только первая строка (не список).
+  // Первая строка — голая реакция («О, круто)») — вторую не режем, в ней обычно суть.
+  const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const firstBare = (lines[0] || '').replace(/\u0000TOK\d+\u0000/g, '').trim();
+  const shortLead = lines.length > maxLines && firstBare.length <= 25 && firstBare.split(/\s+/).length <= 4;
+  text = lines.slice(0, Math.max(1, maxLines) + (shortLead ? 1 : 0)).map(clipLine).join('\n');
+  text = text.replace(/\u0000TOK(\d+)\u0000/g, (_, i) => tokens[Number(i)] || '');
+  return text.trim();
+}
+
+/**
+ * Анти-детект стиль: убирает восклицательные знаки и точки в конце сообщения
+ * (живая переписка в мессенджере обычно без них — точка в конце фразы часто
+ * читается как «сухо/раздражённо», а обилие «!» типично для ИИ-генерации).
+ * Также срезает россыпь эмодзи — оставляем живой текст со скобкой «)».
+ * Применяется всегда, независимо от настроения/времени суток/промпта.
+ */
+function applyAntiDetectStyle(text) {
+  if (!text) return text;
+  // Токены <<REACT:😂>> / <<LAUGH>> / <<PHOTO>> не трогаем — эмодзи внутри них нужны.
+  const tokens = [];
+  let result = String(text).replace(/<<[^>\n]+>>/g, (m) => {
+    tokens.push(m);
+    return `\u0000TOK${tokens.length - 1}\u0000`;
+  });
+  // «Приветик! Рада» → «Приветик, рада», а не склейка «Приветик Рада».
+  result = result
+    .replace(/\?!+/g, '?')
+    .replace(/!+([ \t]+)([A-Za-zА-Яа-яЁё])/g, (_, sp, ch) => `,${sp}${ch.toLowerCase()}`)
+    .replace(/!+/g, '');
+  // Длинное тире (—) и среднее (–) — типичный след ИИ; в переписке обычно дефис или запятая.
+  result = result
+    .replace(/\u2014/g, '-') // —
+    .replace(/\u2013/g, '-') // –
+    .replace(/\u2212/g, '-') // minus sign
+    .replace(/\s+-\s+/g, ' - ')
+    .replace(/-{2,}/g, '-');
+  // Турецкие ı/İ иногда проскакивают в «английском» — чиним в латиницу.
+  result = result.replace(/\u0131/g, 'i').replace(/\u0130/g, 'I');
+  try {
+    // «with you 😊 It's nice» / «Приветик 😊 Рада» — эмодзи был разделителем предложений.
+    result = result.replace(
+      /[ \t]*(?:\p{Extended_Pictographic}[\uFE0F\u200D]*)+[ \t]+([A-ZА-ЯЁ])([A-Za-z']*)/gu,
+      (_, ch, rest) => {
+        if (/[А-ЯЁ]/.test(ch)) return `) ${ch}${rest}`;
+        const keepCap = ch === 'I' && (rest === '' || rest.startsWith("'"));
+        return `, ${keepCap ? ch : ch.toLowerCase()}${rest}`;
+      },
+    );
+    result = result.replace(/\p{Extended_Pictographic}/gu, '');
+  } catch (_) {
+    // ignore
+  }
+  result = result.replace(/[\uFE0F\u200D]/g, '');
+  result = result.replace(/[ \t]{2,}/g, ' ').trim();
+  result = result.trimEnd();
+  while (result.endsWith('.') && !result.endsWith('..')) {
+    result = result.slice(0, -1).trimEnd();
+  }
+  result = result.replace(/\u0000TOK(\d+)\u0000/g, (_, i) => tokens[Number(i)] || '');
+  return result;
+}
+
+/**
+ * Расшифровывает голосовое сообщение в текст через OpenAI Whisper.
+ *
+ * @param {Buffer} buffer - аудио (обычно ogg/opus из Telegram)
+ * @param {string} filename - имя файла с расширением (напр. "voice.ogg")
+ * @returns {Promise<string>} распознанный текст (или пустая строка)
+ */
+async function transcribeAudio(buffer, filename = 'voice.ogg') {
+  try {
+    const file = await toFile(buffer, filename);
+    const result = await mediaClient.audio.transcriptions.create({
+      file,
+      model: 'whisper-1',
+      // Без language — Whisper сам определяет ru/en.
+    });
+    return (result.text || '').trim();
+  } catch (err) {
+    console.error('Ошибка транскрипции голосового:', err.message);
+    return '';
+  }
+}
+
+/**
+ * Описывает содержимое фотографии/стикера через GPT-4o (vision).
+ * Описание всегда на русском — служебный текст для модели, не речь собеседника.
+ * Язык ответа бота выбирается отдельно по истории диалога.
+ */
+async function describeImage(buffer, caption = '') {
+  try {
+    const base64 = buffer.toString('base64');
+    // Стикеры Telegram часто webp — правильный MIME повышает шанс OCR текста.
+    const isWebp =
+      Buffer.isBuffer(buffer) &&
+      buffer.length > 12 &&
+      buffer[8] === 0x57 &&
+      buffer[9] === 0x45 &&
+      buffer[10] === 0x42 &&
+      buffer[11] === 0x50;
+    const mime = isWebp ? 'image/webp' : 'image/jpeg';
+
+    const completion = await mediaClient.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 200,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                'Опиши коротко и по делу, что изображено на этом фото или стикере ' +
+                '(на русском). Если есть люди — опиши их и обстановку. ' +
+                'ОБЯЗАТЕЛЬНО прочитай и процитируй любой текст на картинке ' +
+                '(например «ЗДРАСТИ», «привет», надписи на одежде) — это важно.' +
+                (caption ? ` Подпись/эмодзи: "${caption}".` : ''),
+            },
+            {
+              type: 'image_url',
+              image_url: { url: `data:${mime};base64,${base64}` },
+            },
+          ],
+        },
+      ],
+    });
+    return completion.choices[0]?.message?.content?.trim() || '';
+  } catch (err) {
+    console.error('Ошибка распознавания фото:', err.message);
+    return '';
+  }
+}
+
+/**
+ * Короткое описание СВОЕГО фото/видео/кружка (который отправила ты) —
+ * чтобы на «куда идёшь?» / «где это?» отвечать по содержимому.
+ */
+async function describeOwnMedia(frames, kindLabel, transcript = '') {
+  const images = (frames || []).filter((f) => f && f.length).slice(0, 2);
+  if (!images.length) return '';
+  try {
+    const completion = await mediaClient.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 70,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                `Это кадры из твоего ${kindLabel}, который ты (девушка) отправила парню в переписке. ` +
+                'Одной короткой фразой до 15 слов, от первого лица, опиши где ты и что делаешь: ' +
+                '«иду вечером по улице, в куртке», «сижу дома на кровати в худи», «еду в машине». ' +
+                'Без оценок и без слов «на кадре/на видео».' +
+                (transcript ? ` На видео звучит: «${transcript.slice(0, 200)}».` : ''),
+            },
+            ...images.map((buf) => ({
+              type: 'image_url',
+              image_url: { url: `data:image/jpeg;base64,${buf.toString('base64')}` },
+            })),
+          ],
+        },
+      ],
+    });
+    return (completion.choices[0]?.message?.content || '')
+      .replace(/[{}\[\]\n]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160);
+  } catch (err) {
+    console.error('Ошибка описания своего медиа:', err.message);
+    return '';
+  }
+}
+
+/**
+ * Свет на своём медиа: 'day' — улица/окно при дневном свете, 'dark' — вечер/ночь,
+ * 'indoor' — помещение без дневного света. '' если не удалось.
+ */
+async function classifyOwnMediaLight(frames) {
+  const images = (frames || []).filter((f) => f && f.length).slice(0, 1);
+  if (!images.length) return '';
+  try {
+    const completion = await mediaClient.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 5,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                'Кадр из видео/фото. Ответь ОДНИМ словом: ' +
+                'ДЕНЬ — видно дневной свет (улица днём, светлое небо, солнце, светлое окно); ' +
+                'ТЕМНО — вечер или ночь, темно, фонари, тёмное окно; ' +
+                'ПОМЕЩЕНИЕ — в помещении при лампе, дневного света не видно.',
+            },
+            {
+              type: 'image_url',
+              image_url: { url: `data:image/jpeg;base64,${images[0].toString('base64')}`, detail: 'low' },
+            },
+          ],
+        },
+      ],
+    });
+    const answer = String(completion.choices[0]?.message?.content || '').toUpperCase();
+    if (answer.includes('ДЕН')) return 'day';
+    if (answer.includes('ТЕМН')) return 'dark';
+    if (answer.includes('ПОМЕЩ')) return 'indoor';
+    return '';
+  } catch (err) {
+    // 429 отдаём наверх: фоновая разметка должна встать на паузу, а не долбить лимит ответов.
+    if (err?.status === 429) throw err;
+    console.error('Ошибка определения света на медиа:', err.message);
+    return '';
+  }
+}
+
+
+/** Shim for telegramClient (added for day-test rollback compatibility). */
+function heJustGreeted(userMessage) {
+  const msg = String(userMessage || '')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .trim();
+  if (!msg) return false;
+  return /^(?:привет|приветик|прив|здаров|здарова|здравствуй|хай|хей|йо|салют|hi|hello|hey)\b/i.test(msg)
+    && msg.split(/\s+/).length <= 6;
+}
+
+Object.assign(module.exports, {
+  heJustGreeted,
+  generateReply,
+  describeOwnMedia,
+  classifyOwnMediaLight,
+  extractUserQuestions,
+  transcribeAudio,
+  describeImage,
+  detectReplyLanguage,
+  isRussianConversation,
+});
