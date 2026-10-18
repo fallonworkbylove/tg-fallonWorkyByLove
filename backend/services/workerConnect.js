@@ -11,7 +11,10 @@ const {
   confirmPassword,
   activateAccount,
   deactivateAccount,
+  isActive,
+  accountLabel,
 } = require('./telegramClient');
+const { purgeAccount } = require('./accountCleanup');
 const operatorAccess = require('./operatorAccess');
 
 const WIZARD_TTL_MS = 10 * 60 * 1000;
@@ -87,9 +90,157 @@ function codeHint(isCodeViaApp) {
 }
 
 function doneKeyboard(isAdmin) {
-  const rows = [[{ text: '📲 Ещё номер', callback_data: 'wrk:connect' }]];
+  const rows = [
+    [{ text: '📲 Ещё номер', callback_data: 'wrk:connect' }],
+    [{ text: '🗑 Мои номера', callback_data: 'wrk:my' }],
+  ];
   if (isAdmin) rows.push([{ text: '« Меню', callback_data: 'adm:menu' }]);
+  else rows.push([{ text: '« Меню', callback_data: 'wrk:menu' }]);
   return { inline_keyboard: rows };
+}
+
+function workerMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '📲 Подключить аккаунт', callback_data: 'wrk:connect' }],
+      [{ text: '🗑 Мои номера', callback_data: 'wrk:my' }],
+    ],
+  };
+}
+
+async function listOwnedAccounts(userId) {
+  const [rows] = await db.execute(
+    `SELECT id, phone, status, is_autoreply_enabled
+     FROM accounts
+     WHERE user_id = ?
+     ORDER BY id DESC`,
+    [userId],
+  );
+  return rows;
+}
+
+function formatAccountLine(row) {
+  let name = '';
+  try {
+    const label = String(accountLabel(row.id) || '');
+    const parts = label.split(' — ');
+    if (parts.length > 1) name = parts.slice(1).join(' — ');
+  } catch (_) {}
+  const online = isActive(row.id) ? '🟢' : '🔴';
+  const ai = Number(row.is_autoreply_enabled) ? 'ИИ вкл' : 'ИИ выкл';
+  return (
+    `${online} <code>${esc(row.phone)}</code>` +
+    (name ? ` — ${esc(name)}` : '') +
+    `\n    id ${row.id} · ${ai}`
+  );
+}
+
+async function buildMyAccountsView(userId) {
+  const rows = await listOwnedAccounts(userId);
+  if (!rows.length) {
+    return {
+      text:
+        '<b>🗑 Мои номера</b>\n\n' +
+        'Пока нет привязанных аккаунтов.\n' +
+        'Подключи через «Подключить аккаунт».',
+      keyboard: {
+        inline_keyboard: [
+          [{ text: '📲 Подключить', callback_data: 'wrk:connect' }],
+          [{ text: '« Меню', callback_data: 'wrk:menu' }],
+        ],
+      },
+    };
+  }
+
+  const lines = rows.map(formatAccountLine);
+  const buttons = rows.map((row) => [
+    {
+      text: `🗑 Удалить ${row.id}`,
+      callback_data: `wrk:del:${row.id}`,
+    },
+  ]);
+  buttons.push([{ text: '🔄 Обновить', callback_data: 'wrk:my' }]);
+  buttons.push([{ text: '« Меню', callback_data: 'wrk:menu' }]);
+
+  return {
+    text:
+      `<b>🗑 Мои номера</b> · ${rows.length}\n\n` +
+      `${lines.join('\n\n')}\n\n` +
+      '<i>id в базе 1…N без дыр: после удаления следующие сдвигаются. Сессия снимается с сервера; из Telegram аккаунт не выходит.</i>',
+    keyboard: { inline_keyboard: buttons },
+  };
+}
+
+async function sendWorkerMenu(api, chatId) {
+  await apiSend(
+    api,
+    chatId,
+    '<b>Меню воркера</b>\n\nПодключи номер или удали свой аккаунт из бота.',
+    workerMenuKeyboard(),
+  );
+}
+
+async function showMyAccounts(api, chatId, from, { editMessageId } = {}) {
+  if (!(await canConnectAccounts(chatId, from?.username))) {
+    const text = 'Нет доступа.';
+    if (editMessageId) await apiEdit(api, chatId, editMessageId, text);
+    else await apiSend(api, chatId, text);
+    return;
+  }
+  const user = await ensureDbUser(chatId, from);
+  const view = await buildMyAccountsView(user.id);
+  // Админам кнопка «Меню» ведёт в adm:menu
+  if (operatorAccess.isAdminSync(chatId, from?.username)) {
+    view.keyboard.inline_keyboard = view.keyboard.inline_keyboard.map((row) =>
+      row.map((btn) =>
+        btn.callback_data === 'wrk:menu'
+          ? { ...btn, callback_data: 'adm:menu' }
+          : btn,
+      ),
+    );
+  }
+  if (editMessageId) {
+    await apiEdit(api, chatId, editMessageId, view.text, view.keyboard);
+  } else {
+    await apiSend(api, chatId, view.text, view.keyboard);
+  }
+}
+
+async function deleteOwnedAccount(api, chatId, from, accountId, { editMessageId } = {}) {
+  const user = await ensureDbUser(chatId, from);
+  const id = Number(accountId);
+  const [[row]] = await db.execute(
+    'SELECT id, phone FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
+    [id, user.id],
+  );
+  if (!row) {
+    const text = 'Номер не найден или это не твой аккаунт.';
+    if (editMessageId) await apiEdit(api, chatId, editMessageId, text);
+    else await apiSend(api, chatId, text);
+    return;
+  }
+
+  try {
+    await deactivateAccount(id);
+  } catch (_) {}
+  const removed = await purgeAccount(id, user.id);
+  const text = removed
+    ? `<b>✅ Удалено</b>\n\nНомер <code>${esc(row.phone)}</code> снят с бота.`
+    : 'Не удалось удалить из базы.';
+  const isAdmin = operatorAccess.isAdminSync(chatId, from?.username);
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '🗑 Мои номера', callback_data: 'wrk:my' }],
+      [
+        {
+          text: '« Меню',
+          callback_data: isAdmin ? 'adm:menu' : 'wrk:menu',
+        },
+      ],
+    ],
+  };
+  if (editMessageId) await apiEdit(api, chatId, editMessageId, text, keyboard);
+  else await apiSend(api, chatId, text, keyboard);
 }
 
 /** Воркер = тестер или админ (есть доступ к продукту). */
@@ -378,6 +529,83 @@ async function handleCallback(api, query) {
     return true;
   }
 
+  if (data === 'wrk:menu') {
+    if (!(await canConnectAccounts(chatId, from?.username))) {
+      await apiEdit(api, chatId, query.message.message_id, 'Нет доступа.');
+      return true;
+    }
+    if (operatorAccess.isAdminSync(chatId, from?.username)) {
+      const adminMenu = require('./adminMenu');
+      await adminMenu.sendMenu(api, chatId);
+      return true;
+    }
+    await apiEdit(
+      api,
+      chatId,
+      query.message.message_id,
+      '<b>Меню воркера</b>\n\nПодключи номер или удали свой аккаунт из бота.',
+      workerMenuKeyboard(),
+    );
+    return true;
+  }
+
+  if (data === 'wrk:my') {
+    await showMyAccounts(api, chatId, from, {
+      editMessageId: query.message.message_id,
+    });
+    return true;
+  }
+
+  const delAsk = data.match(/^wrk:del:(\d+)$/);
+  if (delAsk) {
+    const id = delAsk[1];
+    const user = await ensureDbUser(chatId, from);
+    const [[row]] = await db.execute(
+      'SELECT id, phone FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
+      [id, user.id],
+    );
+    if (!row) {
+      await apiEdit(
+        api,
+        chatId,
+        query.message.message_id,
+        'Номер не найден или это не твой аккаунт.',
+      );
+      return true;
+    }
+    const isAdmin = operatorAccess.isAdminSync(chatId, from?.username);
+    await apiEdit(
+      api,
+      chatId,
+      query.message.message_id,
+      `<b>Удалить номер?</b>\n\n<code>${esc(row.phone)}</code>\n\n` +
+        'Сессия снимется с сервера, история в боте очистится.',
+      {
+        inline_keyboard: [
+          [
+            { text: '✅ Да, удалить', callback_data: `wrk:delc:${id}` },
+            { text: 'Отмена', callback_data: 'wrk:my' },
+          ],
+          [
+            {
+              text: '« Меню',
+              callback_data: isAdmin ? 'adm:menu' : 'wrk:menu',
+            },
+          ],
+        ],
+      },
+    );
+    return true;
+  }
+
+  const delConfirm = data.match(/^wrk:delc:(\d+)$/);
+  if (delConfirm) {
+    await deleteOwnedAccount(api, chatId, from, delConfirm[1], {
+      editMessageId: query.message.message_id,
+    });
+    return true;
+  }
+
   if (data === 'wrk:sms') {
     const w = wizards.get(String(chatId));
     if (!w || w.step !== 'code' || !w.phone) {
@@ -447,4 +675,6 @@ module.exports = {
   isWizardActive,
   clearWizard,
   cancelKeyboard,
+  sendWorkerMenu,
+  showMyAccounts,
 };

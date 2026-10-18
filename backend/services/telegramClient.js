@@ -152,9 +152,16 @@ const apiHash = process.env.TELEGRAM_API_HASH;
 // Формат PROXY_LIST: записи через точку с запятой ";", поля внутри — через ":"
 //   mtproxy:  mtproxy:IP:PORT:SECRET
 //   socks5:   socks5:IP:PORT            или   socks5:IP:PORT:USER:PASS
+//   URL:      socks5://USER:PASS@IP:PORT
 //
 // Пример:
-//   PROXY_LIST=mtproxy:1.2.3.4:443:ee00aa...;mtproxy:5.6.7.8:443:ee11bb...;socks5:9.9.9.9:1080:user:pass
+//   PROXY_LIST=mtproxy:1.2.3.4:443:ee00aa...;socks5:9.9.9.9:1080:user:pass
+//
+// Два пула:
+//   PROXY_LIST / PROXY_FILE           — повседневная работа аккаунтов (DC)
+//   PROXY_LIST_LOGIN / PROXY_FILE_LOGIN / config/proxies-login.txt
+//                                    — только sendCode / логин (резидентские)
+// Если login-пул пуст — логин берёт обычный PROXY_LIST (как раньше).
 //
 // (Старый формат PROXY_TYPE/PROXY_IP/... тоже поддерживается как одна запись.)
 // ---------------------------------------------------------------------------
@@ -188,7 +195,22 @@ function normalizeMtSecret(rawSecret, label) {
 }
 
 function parseProxyEntry(raw) {
-  const parts = raw.split(':').map((s) => s.trim());
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+
+  // socks5://user:pass@host:port  или  socks://user:pass@host:port
+  const urlMatch = trimmed.match(
+    /^(socks5?|SOCKS5?):\/\/(?:([^:@/?#]+):([^@/?#]*)@)?([^:/?#]+):(\d+)\/?$/i,
+  );
+  if (urlMatch) {
+    const [, , user, pass, ip, port] = urlMatch;
+    const proxy = { ip, port: Number(port), socksType: 5, timeout: 15 };
+    if (user) proxy.username = decodeURIComponent(user);
+    if (pass) proxy.password = decodeURIComponent(pass);
+    return proxy;
+  }
+
+  const parts = trimmed.split(':').map((s) => s.trim());
   const type = (parts[0] || '').toLowerCase();
 
   if (type === 'mtproxy') {
@@ -225,19 +247,16 @@ function parseProxyEntry(raw) {
 //   socks5:9.9.9.9:1080:user:pass
 // Строки, начинающиеся с "#", и пустые строки игнорируются (можно комментировать).
 const DEFAULT_PROXY_FILE = path.join(__dirname, '..', 'config', 'proxies.txt');
+const DEFAULT_LOGIN_PROXY_FILE = path.join(__dirname, '..', 'config', 'proxies-login.txt');
 
-function readProxyFile() {
-  const filePath = process.env.PROXY_FILE
-    ? path.resolve(process.env.PROXY_FILE)
-    : DEFAULT_PROXY_FILE;
-
-  if (!fs.existsSync(filePath)) return [];
+function readProxyFile(filePath, label = 'proxy') {
+  if (!filePath || !fs.existsSync(filePath)) return [];
 
   let raw;
   try {
     raw = fs.readFileSync(filePath, 'utf8');
   } catch (err) {
-    console.warn(`[proxy] Не удалось прочитать файл прокси ${filePath}: ${err.message}`);
+    console.warn(`[proxy] Не удалось прочитать файл ${label} ${filePath}: ${err.message}`);
     return [];
   }
 
@@ -246,16 +265,17 @@ function readProxyFile() {
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith('#'));
 
-  console.log(`[proxy] Файл ${filePath}: найдено ${entries.length} записей.`);
+  if (entries.length) {
+    console.log(`[proxy] Файл ${filePath}: найдено ${entries.length} записей.`);
+  }
   return entries;
 }
 
-function buildProxyPool() {
+function buildProxyPoolFromList(listRaw, fileEntries = [], { includeLegacy = false } = {}) {
   const pool = [];
 
-  // Новый формат: список в .env
-  if (process.env.PROXY_LIST) {
-    for (const raw of process.env.PROXY_LIST.split(';')) {
+  if (listRaw) {
+    for (const raw of String(listRaw).split(/[;\n\r]+/)) {
       const entry = raw.trim();
       if (!entry) continue;
       const parsed = parseProxyEntry(entry);
@@ -263,55 +283,95 @@ function buildProxyPool() {
     }
   }
 
-  // Файловый способ — записи из PROXY_FILE (или config/proxies.txt по умолчанию).
-  for (const entry of readProxyFile()) {
+  for (const entry of fileEntries) {
     const parsed = parseProxyEntry(entry);
     if (parsed) pool.push(parsed);
   }
 
-  // Старый формат: одиночный прокси (для обратной совместимости)
-  const legacyType = (process.env.PROXY_TYPE || '').toLowerCase().trim();
-  if (legacyType && process.env.PROXY_IP && process.env.PROXY_PORT) {
-    const fields = [
-      legacyType,
-      process.env.PROXY_IP,
-      process.env.PROXY_PORT,
-      legacyType === 'mtproxy' ? process.env.PROXY_SECRET : process.env.PROXY_USER,
-      legacyType === 'mtproxy' ? undefined : process.env.PROXY_PASS,
-    ].filter((v) => v !== undefined && v !== '');
-    const parsed = parseProxyEntry(fields.join(':'));
-    if (parsed) pool.push(parsed);
+  if (includeLegacy) {
+    const legacyType = (process.env.PROXY_TYPE || '').toLowerCase().trim();
+    if (legacyType && process.env.PROXY_IP && process.env.PROXY_PORT) {
+      const fields = [
+        legacyType,
+        process.env.PROXY_IP,
+        process.env.PROXY_PORT,
+        legacyType === 'mtproxy' ? process.env.PROXY_SECRET : process.env.PROXY_USER,
+        legacyType === 'mtproxy' ? undefined : process.env.PROXY_PASS,
+      ].filter((v) => v !== undefined && v !== '');
+      const parsed = parseProxyEntry(fields.join(':'));
+      if (parsed) pool.push(parsed);
+    }
   }
 
   return pool;
 }
 
-const PROXY_POOL = buildProxyPool();
+const workProxyFile = process.env.PROXY_FILE
+  ? path.resolve(process.env.PROXY_FILE)
+  : DEFAULT_PROXY_FILE;
+const loginProxyFile = process.env.PROXY_FILE_LOGIN
+  ? path.resolve(process.env.PROXY_FILE_LOGIN)
+  : DEFAULT_LOGIN_PROXY_FILE;
 
-// Индекс текущего рабочег������������������ прокси. Начинаем с найденного при старте.
+// Повседневная работа аккаунтов (DC).
+const PROXY_POOL = buildProxyPoolFromList(process.env.PROXY_LIST, readProxyFile(workProxyFile, 'work'), {
+  includeLegacy: true,
+});
+
+// Только логин / sendCode (резидентские). Пустой = fallback на PROXY_POOL.
+const LOGIN_PROXY_POOL = buildProxyPoolFromList(
+  process.env.PROXY_LIST_LOGIN,
+  readProxyFile(loginProxyFile, 'login'),
+);
+
+// Индекс текущего рабочего прокси (только для PROXY_POOL / аккаунтов).
 let currentProxyIndex = 0;
 
 function proxyLabel(p) {
   return `${p.MTProxy ? 'mtproxy' : 'socks5'} ${p.ip}:${p.port}`;
 }
 
-// Список опций подключения для перебора: [без прокси] если пул пуст,
-// иначе — по одной записи на каждый прокси (начиная с текущего рабочего).
-function connectionCandidates(extra = {}) {
+function poolCandidates(pool, startIndex, extra = {}) {
   const base = { connectionRetries: 2, ...extra };
-  if (PROXY_POOL.length === 0) return [base];
+  if (!pool.length) return [base];
 
-  // Ставим текущий рабочий прокси первым, затем остальные по кругу.
-  // Через прокси подключаемся по порту 443 (порт 80 часто заблокирован).
   const ordered = [];
-  for (let i = 0; i < PROXY_POOL.length; i++) {
-    const idx = (currentProxyIndex + i) % PROXY_POOL.length;
+  const start = ((Number(startIndex) || 0) % pool.length + pool.length) % pool.length;
+  for (let i = 0; i < pool.length; i++) {
+    const idx = (start + i) % pool.length;
     ordered.push({
-      opts: { ...base, proxy: PROXY_POOL[idx], connection: ConnectionTCPFull443 },
+      opts: { ...base, proxy: pool[idx], connection: ConnectionTCPFull443 },
       index: idx,
+      pool,
     });
   }
   return ordered;
+}
+
+// Work/DC only. Все activeClients (и их downloadMedia/sendFile ГС/фото/видео)
+// поднимаются через этот пул. LOGIN_PROXY_POOL сюда НЕ подмешивать.
+function connectionCandidates(extra = {}) {
+  return poolCandidates(PROXY_POOL, currentProxyIndex, extra);
+}
+
+/**
+ * Только startLogin / sendCode.
+ * Не вызывать из activateAccount и медиа-путей — иначе residential сожрёт ГБ на фото.
+ */
+function loginConnectionCandidates(extra = {}) {
+  const pool = LOGIN_PROXY_POOL.length ? LOGIN_PROXY_POOL : PROXY_POOL;
+  const candidates = poolCandidates(
+    pool,
+    Math.floor(Math.random() * Math.max(pool.length, 1)),
+    extra,
+  );
+  for (let i = candidates.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = candidates[i];
+    candidates[i] = candidates[j];
+    candidates[j] = tmp;
+  }
+  return candidates;
 }
 
 // Одиночный набор опций (для интерактивного входа — берём текущий прокси).
@@ -326,9 +386,19 @@ function clientOptions(extra = {}) {
 }
 
 if (PROXY_POOL.length > 0) {
-  console.log(`[proxy] Загружено прокси в пуле: ${PROXY_POOL.length} — ${PROXY_POOL.map(proxyLabel).join(', ')}`);
+  console.log(
+    `[proxy] Work (DC) пул: ${PROXY_POOL.length} — ${PROXY_POOL.map(proxyLabel).join(', ')}`,
+  );
 } else {
-  console.log('[proxy] ��рокси не заданы — прямое подключение к Telegram.');
+  console.log('[proxy] Work-прокси не заданы — прямое подключение к Telegram.');
+}
+
+if (LOGIN_PROXY_POOL.length > 0) {
+  console.log(
+    `[proxy] Login (residential) пул: ${LOGIN_PROXY_POOL.length} — ${LOGIN_PROXY_POOL.map(proxyLabel).join(', ')}`,
+  );
+} else {
+  console.log('[proxy] Login-пул пуст — sendCode идёт через work/DC пул.');
 }
 
 // Клиенты ���������������� процессе входа. Ключ: `${userId}:${phone}`
@@ -535,15 +605,21 @@ async function startLogin(userId, phone) {
     pendingLogins.delete(key);
   }
 
-  console.log(`[login] запрос кода для ${phone}, прокси в пуле: ${PROXY_POOL.length}`);
+  const loginPool = LOGIN_PROXY_POOL.length ? LOGIN_PROXY_POOL : PROXY_POOL;
+  const loginPoolKind = LOGIN_PROXY_POOL.length ? 'residential' : 'work/DC-fallback';
+  console.log(
+    `[login] запрос кода для ${phone}, api_id=${apiId}, пул=${loginPoolKind} (${loginPool.length})`,
+  );
 
-  // Перебираем прокси (как activateAccount): один мёртвый SOCKS не рвёт весь вход.
-  const candidates = connectionCandidates({ connectionRetries: 1, timeout: 12 });
+  // Логин: отдельный residential-пул (если задан), иначе DC. Перемешан, без
+  // сдвига currentProxyIndex — рабочие аккаунты остаются на своих DC IP.
+  const candidates = loginConnectionCandidates({ connectionRetries: 1, timeout: 12 });
   let lastErr = null;
 
   for (const candidate of candidates) {
     const opts = candidate.opts || candidate;
     const index = candidate.index;
+    const pool = candidate.pool || loginPool;
     let client;
     try {
       client = new TelegramClient(new StringSession(''), apiId, apiHash, opts);
@@ -553,22 +629,24 @@ async function startLogin(userId, phone) {
       const sent = await client.sendCode({ apiId, apiHash }, phone, false);
       const phoneCodeHash = sent.phoneCodeHash;
       const isCodeViaApp = !!sent.isCodeViaApp;
-
-      if (index !== undefined && index !== currentProxyIndex) {
-        currentProxyIndex = index;
-        console.log(`[proxy] Login: рабочий прокси ${proxyLabel(PROXY_POOL[index])}`);
-      }
+      const typeName = sent.type?.className || sent.type?.constructor?.name || '';
+      const nextName =
+        sent.nextType?.className || sent.nextType?.constructor?.name || '';
 
       pendingLogins.set(key, { client, phoneCodeHash, phone });
       console.log(
         `[login] код запрошен для ${phone}` +
-          (index !== undefined ? ` через ${proxyLabel(PROXY_POOL[index])}` : '') +
-          ` — доставка: ${isCodeViaApp ? 'приложение Telegram' : 'SMS/звонок'}`,
+          (index !== undefined && pool[index] ? ` через ${proxyLabel(pool[index])}` : '') +
+          ` [${loginPoolKind}]` +
+          ` — доставка: ${isCodeViaApp ? 'приложение Telegram' : 'SMS/звонок'}` +
+          (typeName ? ` type=${typeName}` : '') +
+          (nextName ? ` next=${nextName}` : ''),
       );
-      return { sent: true, isCodeViaApp };
+      return { sent: true, isCodeViaApp, type: typeName, nextType: nextName };
     } catch (err) {
       lastErr = err;
-      const via = index !== undefined ? ` через ${proxyLabel(PROXY_POOL[index])}` : '';
+      const via =
+        index !== undefined && pool[index] ? ` через ${proxyLabel(pool[index])}` : '';
       console.error(
         `[login] sendCode не удался${via}:`,
         err.errorMessage || err.message,
@@ -697,13 +775,20 @@ async function activateAccount(accountId, sessionString) {
   // Если уже активен — ничего не делаем
   if (activeClients.has(accountId)) return true;
 
-  // Перебираем прокси из пула (или единственный вариант «без прокси»).
+  // Строго work/DC: медиа (ГС/фото/видео) пойдёт через этот клиент весь день.
+  // Residential/login-пул здесь запрещён.
   const candidates = connectionCandidates();
 
   for (const candidate of candidates) {
     // candidate может быть либо {opts, index} (когда есть пул), либо plain opts.
     const opts = candidate.opts || candidate;
     const index = candidate.index;
+    if (candidate.pool && candidate.pool !== PROXY_POOL) {
+      console.error(
+        `[proxy] BUG: activateAccount получил не work-пул — пропуск (защита residential)`,
+      );
+      continue;
+    }
 
     let client;
     try {
@@ -734,10 +819,10 @@ async function activateAccount(accountId, sessionString) {
       }
       await cacheAccountLabel(client, accountId);
 
-      // Успех. Если использовали прокси — зап������минаем его как текущий рабочий.
+      // Успех. Если использовали прокси — запоминаем его как текущий рабочий.
       if (index !== undefined && index !== currentProxyIndex) {
         currentProxyIndex = index;
-        console.log(`[proxy] Переключился на раб��чи�� прокси: ${proxyLabel(PROXY_POOL[index])}`);
+        console.log(`[proxy] Work: переключился на ${proxyLabel(PROXY_POOL[index])}`);
       }
 
       activeClients.set(accountId, client);
@@ -1597,13 +1682,38 @@ async function maybeSendWorkAside(client, sender, accountId, peerId, senderName,
   }
 }
 
-function shouldSuppressNftForTurn(text, { flipPhotoQuestion = false, explicitMediaRequest = false } = {}) {
+function shouldSuppressNftForTurn(
+  text,
+  { flipPhotoQuestion = false, explicitMediaRequest = false, history = null } = {},
+) {
   if (flipPhotoQuestion || explicitMediaRequest) return true;
   if (objectionHandler.isAskingHerName(text)) return true;
   if (objectionHandler.isDirectQuestion(text)) return true;
   if (objectionHandler.isAboutHerJobQuestion(text)) return true;
   if (objectionHandler.isContactOrMeetRelated(text)) return true;
+  // Ответ на «сколько на дв» / «какой?» после ДВ — NFT питч запрещён.
+  if (history && isAnswerToHowLong(history)) return true;
+  if (history && typeof objectionHandler.getDvClarifyHint === 'function') {
+    if (objectionHandler.getDvClarifyHint(text, history)) return true;
+  }
   return false;
+}
+
+/** Если модель всё же ушла в NFT при ДВ-контексте — жёсткий безопасный ответ. */
+function sanitizeReplyAgainstNftLeak(reply, objectionHint) {
+  const hint = String(objectionHint || '');
+  if (!hint) return reply;
+  const dvGuard =
+    /только про дв|про ДВ|НА дв|ЗАПРЕЩЕНО: NFT|ЗАПРЕЩЕНО: «ты уже в теме|КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: NFT/i.test(
+      hint,
+    );
+  if (!dvGuard) return reply;
+  const text = String(reply || '');
+  if (!/нфт|\bnft\b|токен|флип|коллекц|платформ|крипт|whitelist|вайтлист/i.test(text)) {
+    return reply;
+  }
+  if (/уточняет|какой\s*\//i.test(hint)) return 'ну про дв)';
+  return 'поняла)';
 }
 
 function pickWorkMentionAt(scheduledAt) {
@@ -4003,6 +4113,7 @@ async function fireReengage(accountId, peerId) {
     const suppressNft = shouldSuppressNftForTurn(text, {
       flipPhotoQuestion: false,
       explicitMediaRequest,
+      history,
     });
     if (suppressNft) {
       nft.hint = null;
@@ -4043,6 +4154,8 @@ async function fireReengage(accountId, peerId) {
     let objectionHint = objectionHandler.detectHint(text, replyHistory);
     if (flipPhotoQuestion) {
       objectionHint = objectionHandler.getFlipPhotoQuestionHint();
+    } else if (!objectionHint && isAnswerToHowLong(replyHistory)) {
+      objectionHint = objectionHandler.getHowLongAckHint();
     }
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, text);
     // На прямой вопрос memory follow-up часто уводит в «философию» вместо ответа.
@@ -4113,6 +4226,7 @@ async function fireReengage(accountId, peerId) {
         `[${accountLabel(accountId)}] Пустой AI-ответ для ${senderName} — мягкий fallback.`,
       );
     }
+    rawReply = sanitizeReplyAgainstNftLeak(rawReply, objectionHint);
     if (dueMemory && useMemoryHint && !sessionForgetHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
@@ -4988,6 +5102,7 @@ async function processBufferedMessages(
     const suppressNft = shouldSuppressNftForTurn(text, {
       flipPhotoQuestion,
       explicitMediaRequest,
+      history,
     });
     if (suppressNft) {
       nft.hint = null;
@@ -5021,6 +5136,8 @@ async function processBufferedMessages(
     });
     if (flipPhotoQuestion) {
       objectionHint = objectionHandler.getFlipPhotoQuestionHint();
+    } else if (!objectionHint && isAnswerToHowLong(history)) {
+      objectionHint = objectionHandler.getHowLongAckHint();
     }
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, contextualText);
     const useMemoryHint =
@@ -5091,6 +5208,7 @@ async function processBufferedMessages(
         `[${accountLabel(accountId)}] Пустой AI-ответ для ${senderName} — мягкий fallback.`,
       );
     }
+    rawReply = sanitizeReplyAgainstNftLeak(rawReply, objectionHint);
     if (dueMemory && useMemoryHint && !sessionForgetHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     // Отделяем текст от запрошенного типа медиа (токен вырезаем из текста).
