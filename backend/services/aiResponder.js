@@ -460,6 +460,9 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Если переезжаешь к маме — мама живёт В городе переезда. ' +
     'ПЕРЕЕЗД НАВСЕГДА: ты переезжаешь насовсем, будешь там жить. НЕ «ненадолго», НЕ «временно», НЕ «только помочь маме и назад». ' +
     'Мама — одна из причин, но остаёшься жить там. На «надолго?» — «насовсем». На «в каком районе будешь жить» — сначала у мамы, потом снимешь своё / ещё выбираешь район. ' +
+    'ПОЧЕМУ ПЕРЕЕЗЖАЕШЬ: мама / ближе к семье / жильё поудобнее. ' +
+    'КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: «нашла работу», «устроилась», «новая работа в городе», «работа там» как причина переезда — ' +
+    'твоя работа (флипинг токенов / онлайн) удалённая, город для неё не нужен, из любого места. ' +
     'НЕЛЬЗЯ: «мама в Липецке, а я еду в Прагу/Донецк/… чтобы быть рядом с ней» — это противоречие. ' +
     'Правильно: сейчас ты в одном городе, мама уже там, куда едешь. ' +
     'Если собеседник уточняет («так ты в X переезжаешь?», «а щас в каком городе?», «мама как здесь?») — перечитай СВОИ прошлые ответы про города и ответь в том же смысле, без перестановки городов. ' +
@@ -827,7 +830,13 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     const strippedName = fixIgnoredNameQuestion(strippedCall, contextualUserMessage, finalPrompt);
     const strippedAbout = fixIgnoredAboutHerself(strippedName, contextualUserMessage, finalPrompt);
     const strippedMove = fixTemporaryMoveClaim(strippedAbout, contextualUserMessage, history);
-    const strippedMoveSpam = softenMoveSpamOnDayAsk(strippedMove, contextualUserMessage, history);
+    const strippedJobMove = fixInventedJobAsMoveReason(
+      strippedMove,
+      contextualUserMessage,
+      history,
+      finalPrompt,
+    );
+    const strippedMoveSpam = softenMoveSpamOnDayAsk(strippedJobMove, contextualUserMessage, history);
     const strippedConfused = fixConfusedScript(strippedMoveSpam, contextualUserMessage, history);
     const strippedPolite = replaceDesignerClaims(stripPlatitudes(stripRoboticPoliteness(strippedConfused, userMessage)));
     const strippedQ = stripHabitualTrailingQuestion(strippedPolite, history, contextualUserMessage);
@@ -1378,6 +1387,42 @@ function fixTemporaryMoveClaim(reply, userMessage, history) {
   return String(reply)
     .split('\n')
     .map((line) => (TEMP_MOVE_RE.test(line) ? permanent : line))
+    .join('\n');
+}
+
+const JOB_AS_MOVE_REASON_RE =
+  /(?:нашла|нашлась|устроил[ао]сь|получила)\s+(?:новую\s+)?работ|новая\s+работа|работа\s+(?:там|в\s+этом\s+город)|из[- ]?за\s+работ/i;
+
+const JOB_MOVE_FALLBACKS_RU = [
+  'просто к маме поближе, да и жильё поудобнее)',
+  'мама там живёт, хочу рядом, жильё нормальное нашла)',
+  'к семье ближе) да и место спокойнее',
+];
+
+/**
+ * «Нашла работу» как причина переезда противоречит удалённому флипингу.
+ */
+function fixInventedJobAsMoveReason(reply, userMessage, history, prompt) {
+  const text = String(reply || '');
+  if (!text || !JOB_AS_MOVE_REASON_RE.test(text)) return reply;
+  const promptStr = String(prompt || '');
+  const flipPersona = /флип|токен|nft|нфт|удал[её]н|онлайн/i.test(promptStr);
+  if (!flipPersona) return reply;
+  const lastBot = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-2)
+    .map((h) => String(h.content || ''))
+    .join(' ');
+  const ctx = `${userMessage} ${text} ${lastBot}`;
+  const aboutMove =
+    MOVE_CONTEXT_RE.test(ctx) ||
+    /почему|зачем|отчего/i.test(String(userMessage || ''));
+  if (!aboutMove) return reply;
+  const fallback =
+    JOB_MOVE_FALLBACKS_RU[Math.floor(Math.random() * JOB_MOVE_FALLBACKS_RU.length)];
+  return text
+    .split('\n')
+    .map((line) => (JOB_AS_MOVE_REASON_RE.test(line) ? fallback : line))
     .join('\n');
 }
 
