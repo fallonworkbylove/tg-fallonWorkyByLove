@@ -10,6 +10,7 @@ const db = require('../db');
 const datingAdmin = require('./datingAdmin');
 const opsAdmin = require('./opsAdmin');
 const operatorAccess = require('./operatorAccess');
+const { ensureAccountSeqSchema } = require('./accountCleanup');
 
 const ADMIN_CHAT_ID = String(process.env.ADMIN_ALERT_CHAT_ID || '8588744561');
 const PING_MODEL = 'gpt-4o-mini';
@@ -23,10 +24,10 @@ const MENU_TEXT = '<b>Админ-меню</b>\n\nВыбери раздел:';
 function menuKeyboard(chatId) {
   const rows = [
     [{ text: '📲 Подключить аккаунт', callback_data: 'wrk:connect' }],
+    [{ text: '🗑 Мои номера', callback_data: 'wrk:my' }],
     [{ text: '📱 Аккаунты в боте', callback_data: 'adm:accounts' }],
     [{ text: '📊 Статистика', callback_data: 'adm:stats' }],
     [{ text: '💳 Баланс и статус OpenAI', callback_data: 'adm:openai' }],
-    [{ text: '💘 Сайты знакомств', callback_data: 'adm:dt' }],
   ];
   if (operatorAccess.isSuperAdmin(chatId)) {
     rows.push([{ text: '👥 Доступ (тестеры / админы)', callback_data: 'adm:ops' }]);
@@ -113,18 +114,41 @@ function accountOnline(accountId) {
   }
 }
 
+/**
+ * Начало календарных суток по Москве (UTC+3) в UTC-времени MySQL.
+ * daysAgo=0 → сегодня 00:00 МСК; daysAgo=6 → начало окна «7 календарных дней».
+ * Сервер в UTC: в 00:00 МСК счётчики «сегодня» обнуляются.
+ */
+function sqlMskDayStart(daysAgo = 0) {
+  const d = Math.max(0, Number(daysAgo) || 0);
+  return (
+    `DATE_ADD(DATE_ADD(DATE(DATE_ADD(UTC_TIMESTAMP(), INTERVAL 3 HOUR)), ` +
+    `INTERVAL -${d} DAY), INTERVAL -3 HOUR)`
+  );
+}
+
 async function buildAccountsText() {
+  try {
+    await ensureAccountSeqSchema();
+  } catch (_) {}
+  const dayStart = sqlMskDayStart(0);
   const [rows] = await db.execute(
-    `SELECT a.id, a.phone, a.is_autoreply_enabled AS ai,
+    `SELECT a.id, a.seq, a.phone, a.is_autoreply_enabled AS ai,
             u.username, u.first_name, u.telegram_user_id,
             (SELECT COUNT(*) FROM conversation_messages m
               WHERE m.account_id = a.id AND m.role = 'assistant'
-                AND m.created_at > NOW() - INTERVAL 24 HOUR) AS sent_24h
+                AND m.created_at >= ${dayStart}) AS sent_today
      FROM accounts a
      LEFT JOIN users u ON u.id = a.user_id
-     ORDER BY u.username, a.id`,
+     WHERE COALESCE(u.is_blocked, 0) = 0
+     ORDER BY u.username, COALESCE(a.seq, a.id), a.id`,
   );
-  if (!rows.length) return '<b>📱 Аккаунты в боте</b>\n\nНи одного подключённого номера.';
+  if (!rows.length) {
+    return (
+      '<b>📱 Аккаунты в боте</b>\n\nНи одного подключённого номера.\n\n' +
+      '<i>Счётчик сообщений — с 00:00 МСК. Заблокированные воркеры скрыты (см. Чёрный список).</i>'
+    );
+  }
 
   const owners = new Map();
   for (const r of rows) {
@@ -139,9 +163,10 @@ async function buildAccountsText() {
     const lines = accounts.map((a) => {
       const name = accountDisplayName(a.id);
       const status = accountOnline(a.id) ? '🟢 онлайн' : '🔴 не в сети';
+      const n = Number(a.seq) || '?';
       return (
-        `• <code>${esc(a.phone)}</code>${name ? ` — ${esc(name)}` : ''}\n` +
-        `    ${status} · ИИ ${Number(a.ai) ? 'вкл' : 'выкл'} · ${num(a.sent_24h)} сообщ. за сутки`
+        `• <b>${n}.</b> <code>${esc(a.phone)}</code>${name ? ` — ${esc(name)}` : ''}\n` +
+        `    ${status} · ИИ ${Number(a.ai) ? 'вкл' : 'выкл'} · ${num(a.sent_today)} сообщ. сегодня`
       );
     });
     blocks.push(`<b>${esc(owner)}</b> — ${accounts.length}\n${lines.join('\n')}`);
@@ -149,12 +174,13 @@ async function buildAccountsText() {
 
   return (
     `<b>📱 Аккаунты в боте</b>\n` +
-    `Номеров: <b>${rows.length}</b>, воркеров: <b>${owners.size}</b>\n\n` +
+    `Номеров: <b>${rows.length}</b>, воркеров: <b>${owners.size}</b>\n` +
+    `<i>Сообщения — с 00:00 МСК (кнопка «Обновить» пересчитывает сейчас).</i>\n\n` +
     blocks.join('\n\n')
   );
 }
 
-async function periodStats(hours) {
+async function periodStatsSince(dayStartSql) {
   const [[m]] = await db.execute(
     `SELECT
        SUM(role = 'assistant') AS sent,
@@ -162,30 +188,26 @@ async function periodStats(hours) {
        SUM(role = 'user') AS incoming,
        COUNT(DISTINCT CASE WHEN role = 'assistant' THEN CONCAT(account_id, ':', peer_id) END) AS chats
      FROM conversation_messages
-     WHERE created_at > NOW() - INTERVAL ? HOUR`,
-    [hours],
+     WHERE created_at >= ${dayStartSql}`,
   );
   const [[fresh]] = await db.execute(
     `SELECT COUNT(*) AS c FROM (
        SELECT MIN(created_at) AS first_at FROM conversation_messages
        GROUP BY account_id, peer_id
-       HAVING first_at > NOW() - INTERVAL ? HOUR
+       HAVING first_at >= ${dayStartSql}
      ) t`,
-    [hours],
   );
   let voices = { sent: 0, agreed: 0 };
   let dvArchived = 0;
   try {
     const [[v]] = await db.execute(
       `SELECT COUNT(*) AS sent, SUM(status = 'agreed') AS agreed FROM help_requests
-       WHERE created_at > NOW() - INTERVAL ? HOUR`,
-      [hours],
+       WHERE created_at >= ${dayStartSql}`,
     );
     voices = v;
     const [[d]] = await db.execute(
       `SELECT COUNT(*) AS c FROM autoreply_disabled_peers
-       WHERE reason = 'long_on_platform' AND created_at > NOW() - INTERVAL ? HOUR`,
-      [hours],
+       WHERE reason = 'long_on_platform' AND created_at >= ${dayStartSql}`,
     );
     dvArchived = d.c;
   } catch (_) {
@@ -207,14 +229,22 @@ function formatPeriod(title, s) {
 }
 
 async function buildStatsText() {
-  const [day, week] = await Promise.all([periodStats(24), periodStats(24 * 7)]);
+  const todaySql = sqlMskDayStart(0);
+  const weekSql = sqlMskDayStart(6);
+  const [day, week] = await Promise.all([
+    periodStatsSince(todaySql),
+    periodStatsSince(weekSql),
+  ]);
   const [perAccount] = await db.execute(
     `SELECT m.account_id, a.phone,
-            SUM(m.created_at > NOW() - INTERVAL 24 HOUR) AS day,
-            COUNT(*) AS week
+            SUM(m.created_at >= ${todaySql}) AS day,
+            SUM(m.created_at >= ${weekSql}) AS week
      FROM conversation_messages m
      JOIN accounts a ON a.id = m.account_id
-     WHERE m.role = 'assistant' AND m.created_at > NOW() - INTERVAL 7 DAY
+     LEFT JOIN users u ON u.id = a.user_id
+     WHERE m.role = 'assistant'
+       AND m.created_at >= ${weekSql}
+       AND COALESCE(u.is_blocked, 0) = 0
      GROUP BY m.account_id, a.phone
      ORDER BY week DESC`,
   );
@@ -223,10 +253,11 @@ async function buildStatsText() {
     return `• ${esc(name)} — ${num(r.day)} / ${num(r.week)}`;
   });
   return (
-    '<b>📊 Статистика</b>\n\n' +
-    `${formatPeriod('За сутки', day)}\n\n` +
-    `${formatPeriod('За неделю', week)}\n\n` +
-    '<b>По аккаунтам</b> (сутки / неделя):\n' +
+    '<b>📊 Статистика</b>\n' +
+    '<i>Сброс «сегодня» — каждый день в 00:00 МСК. «Обновить» = пересчёт прямо сейчас.</i>\n\n' +
+    `${formatPeriod('Сегодня (с 00:00 МСК)', day)}\n\n` +
+    `${formatPeriod('7 календарных дней', week)}\n\n` +
+    '<b>По аккаунтам</b> (сегодня / 7 дней):\n' +
     (lines.length ? lines.join('\n') : 'нет отправленных сообщений')
   );
 }
@@ -263,15 +294,15 @@ async function buildOpenAiText() {
     pingOpenAi(),
     db.execute(
       `SELECT
-         SUM(CASE WHEN created_at > NOW() - INTERVAL 24 HOUR THEN estimated_cost_usd ELSE 0 END) AS c1,
-         SUM(CASE WHEN created_at > NOW() - INTERVAL 24 HOUR THEN 1 ELSE 0 END) AS n1,
-         SUM(CASE WHEN created_at > NOW() - INTERVAL 24 HOUR THEN total_tokens ELSE 0 END) AS t1,
-         SUM(CASE WHEN created_at > NOW() - INTERVAL 7 DAY THEN estimated_cost_usd ELSE 0 END) AS c7,
-         SUM(CASE WHEN created_at > NOW() - INTERVAL 7 DAY THEN 1 ELSE 0 END) AS n7,
+         SUM(CASE WHEN created_at >= ${sqlMskDayStart(0)} THEN estimated_cost_usd ELSE 0 END) AS c1,
+         SUM(CASE WHEN created_at >= ${sqlMskDayStart(0)} THEN 1 ELSE 0 END) AS n1,
+         SUM(CASE WHEN created_at >= ${sqlMskDayStart(0)} THEN total_tokens ELSE 0 END) AS t1,
+         SUM(CASE WHEN created_at >= ${sqlMskDayStart(6)} THEN estimated_cost_usd ELSE 0 END) AS c7,
+         SUM(CASE WHEN created_at >= ${sqlMskDayStart(6)} THEN 1 ELSE 0 END) AS n7,
          SUM(estimated_cost_usd) AS c30,
          COUNT(*) AS n30
        FROM openai_usage_log
-       WHERE created_at > NOW() - INTERVAL 30 DAY`,
+       WHERE created_at >= ${sqlMskDayStart(29)}`,
     ),
   ]);
 
@@ -307,8 +338,8 @@ async function buildOpenAiText() {
 
   const perReply = Number(spend.n1) ? Number(spend.c1) / Number(spend.n1) : 0;
   const spendText =
-    '<b>Расходы на ответы в чатах</b> (по токенам):\n' +
-    `    за сутки — <b>${usd(spend.c1)}</b> (${num(spend.n1)} запросов, ${num(spend.t1)} токенов)\n` +
+    '<b>Расходы на ответы в чатах</b> (по токенам, с 00:00 МСК):\n' +
+    `    сегодня — <b>${usd(spend.c1)}</b> (${num(spend.n1)} запросов, ${num(spend.t1)} токенов)\n` +
     `    за 7 дней — <b>${usd(spend.c7)}</b> (${num(spend.n7)} запросов)\n` +
     `    за 30 дней — <b>${usd(spend.c30)}</b> (${num(spend.n30)} запросов)\n` +
     (perReply ? `    1000 ответов обходятся примерно в ${usd(perReply * 1000)}\n` : '') +
@@ -575,14 +606,17 @@ async function buildBlacklistView(notice = '') {
   );
   const lines = rows.map(
     (u) => `• ${esc(userTitle(u))} — <code>${esc(u.telegram_user_id)}</code>` +
-      (Number(u.accounts) ? `, номеров: ${u.accounts} (отключены)` : ''),
+      (Number(u.accounts)
+        ? `, номеров в БД: ${u.accounts} (отключены, не в общем списке)`
+        : ', номеров в БД: 0'),
   );
   const text =
     (notice ? `${notice}\n\n` : '') +
     '<b>🚫 Чёрный список</b>\n\n' +
     (lines.length ? lines.join('\n') : 'Пусто — никто не заблокирован.') +
-    '\n\n<i>Заблокированный не может открыть мини-апп, подключать номера, пользоваться анкетами ' +
-    'и получать уведомления. Номера, которые у него были, другие воркеры подключить могут.</i>' +
+    '\n\n<i>Блокировка не удаляет человека из списка сама — только кнопка «Разблокировать». ' +
+    'Номера при блоке отключаются, но строки в БД остаются (их можно отдать другому воркеру). ' +
+    'В «Аккаунты в боте» заблокированные не показываются.</i>' +
     (lines.length ? '\n\nЧтобы разблокировать — нажми на человека ниже.' : '');
 
   const keyboard = rows.slice(0, 30).map((u) => [
@@ -870,19 +904,18 @@ async function handleCallback(api, query) {
     }
     return;
   }
-  if (datingAdmin.isDatingCallback(query.data)) {
-    try {
-      await datingAdmin.handleCallback(api, query.data, target, tg);
-    } catch (err) {
-      console.error(`[adminMenu] ${query.data}:`, err.message);
-      await tg(api, 'editMessageText', {
-        ...target,
-        text: `❌ Ошибка сайтов: <code>${esc(err.message)}</code>`,
-        reply_markup: {
-          inline_keyboard: [[{ text: '« Сайты', callback_data: 'adm:dt' }]],
-        },
-      });
-    }
+  if (datingAdmin.isDatingCallback(query.data) || query.data === 'adm:dt' || query.data === 'adm:dating') {
+    datingAdmin.clearWizard();
+    await tg(api, 'editMessageText', {
+      ...target,
+      text:
+        '<b>💘 Сайты знакомств</b>\n\n' +
+        'Раздел отключён: Tagged убран из проекта.\n' +
+        'Управление только через Telegram-аккаунты бота.',
+      reply_markup: {
+        inline_keyboard: [[{ text: '« Меню', callback_data: 'adm:menu' }]],
+      },
+    });
     return;
   }
   if (query.data.startsWith('adm:bl') || query.data.startsWith('adm:unb:')) {
@@ -932,6 +965,7 @@ async function registerCommands(api) {
     { command: 'connect', description: 'Подключить аккаунт' },
   ];
   const workerCmds = [
+    { command: 'menu', description: 'Меню (номера)' },
     { command: 'connect', description: 'Подключить аккаунт' },
     { command: 'start', description: 'Старт / уведомления' },
   ];

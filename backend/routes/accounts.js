@@ -271,7 +271,9 @@ router.post('/', async (req, res) => {
     );
     try {
       await renumberAccountSeq(userId);
-    } catch (_) {}
+    } catch (err) {
+      console.error('[accounts] Не удалось пересчитать seq после CREATE:', err.message);
+    }
 
     const [[account]] = await db.execute(
       `SELECT id, seq, phone, prompt, status, is_autoreply_enabled, created_at, updated_at
@@ -678,7 +680,9 @@ async function saveSession(userId, phone, sessionString, prompt = '') {
   );
   try {
     await renumberAccountSeq(userId);
-  } catch (_) {}
+  } catch (err) {
+    console.error('[accounts] Не удалось пересчитать seq после session INSERT:', err.message);
+  }
   return result.insertId;
 }
 

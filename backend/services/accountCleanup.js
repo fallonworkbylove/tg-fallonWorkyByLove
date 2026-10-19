@@ -27,7 +27,7 @@ const CHILD_TABLES = [
 
 let seqReady = false;
 let seqBootstrapped = false;
-/** Очередь: не гоняем renumber параллельно на одних и тех же строках. */
+/** Очередь: renumber и purge не гоняем параллельно (иначе FK/lock гонки). */
 let seqChain = Promise.resolve();
 
 async function deleteFrom(table, accountId) {
@@ -80,21 +80,30 @@ async function renumberAccountSeqUnlocked(userId) {
   );
 }
 
-function renumberAccountSeq(userId) {
-  const run = seqChain.then(() => renumberAccountSeqUnlocked(userId));
+function enqueueSeq(task) {
+  const run = seqChain.then(task);
   seqChain = run.catch(() => {});
   return run;
+}
+
+function renumberAccountSeq(userId) {
+  return enqueueSeq(() => renumberAccountSeqUnlocked(userId));
 }
 
 /** Старт сервера: колонка + однократное первичное заполнение seq. */
 async function ensureAccountSeqSchema() {
   await ensureSeqColumn();
   if (seqBootstrapped) return;
-  seqBootstrapped = true;
-  await renumberAccountSeq();
+  try {
+    await renumberAccountSeq();
+    seqBootstrapped = true;
+  } catch (err) {
+    console.error('[accountCleanup] Первичный пересчёт seq не удался:', err.message);
+    throw err;
+  }
 }
 
-async function purgeAccount(accountId, userId) {
+async function purgeAccountUnlocked(accountId, userId) {
   const id = Number(accountId);
   if (!Number.isFinite(id)) return false;
 
@@ -135,12 +144,16 @@ async function purgeAccount(accountId, userId) {
   if (result.affectedRows <= 0) return false;
 
   try {
-    if (ownerUserId != null) await renumberAccountSeq(ownerUserId);
-    else await renumberAccountSeq();
+    if (ownerUserId != null) await renumberAccountSeqUnlocked(ownerUserId);
+    else await renumberAccountSeqUnlocked();
   } catch (err) {
     console.error('[accountCleanup] Не удалось пересчитать seq после удаления:', err.message);
   }
   return true;
+}
+
+function purgeAccount(accountId, userId) {
+  return enqueueSeq(() => purgeAccountUnlocked(accountId, userId));
 }
 
 module.exports = {

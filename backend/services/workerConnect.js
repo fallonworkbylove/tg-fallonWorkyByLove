@@ -355,7 +355,9 @@ async function saveSession(userId, phone, sessionString) {
   );
   try {
     await renumberAccountSeq(userId);
-  } catch (_) {}
+  } catch (err) {
+    console.error('[workerConnect] Не удалось пересчитать seq после INSERT:', err.message);
+  }
   return result.insertId;
 }
 

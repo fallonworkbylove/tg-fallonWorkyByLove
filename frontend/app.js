@@ -2182,7 +2182,7 @@ async function handleBulkAiToggle(enabled, ids = null) {
 async function handleSelectedBulkAi(enabled) {
   const ids = [...state.selectedAccountIds];
   if (!ids.length) {
-    notify('Сначала выбери аккаунты в таблице');
+    notify('Сначала выбери аккаунты в списке');
     return;
   }
   await handleBulkAiToggle(enabled, ids);
@@ -2977,7 +2977,7 @@ function bindEvents() {
     const rowCheck = event.target.closest('[data-action="select-account"]');
     if (rowCheck) {
       setAccountSelected(rowCheck.dataset.id, !!rowCheck.checked);
-      const row = rowCheck.closest('tr');
+      const row = rowCheck.closest('.account-card, [data-account-row], tr');
       if (row) row.classList.toggle('is-selected', !!rowCheck.checked);
       const allBox = document.querySelector('[data-action="select-all-accounts"]');
       if (allBox) {
