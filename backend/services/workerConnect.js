@@ -16,7 +16,11 @@ const {
   isActive,
   accountLabel,
 } = require('./telegramClient');
-const { purgeAccount } = require('./accountCleanup');
+const {
+  purgeAccount,
+  renumberAccountSeq,
+  ensureAccountSeqSchema,
+} = require('./accountCleanup');
 const operatorAccess = require('./operatorAccess');
 
 const WIZARD_TTL_MS = 10 * 60 * 1000;
@@ -119,11 +123,14 @@ function workerMenuKeyboard() {
 }
 
 async function listOwnedAccounts(userId) {
+  try {
+    await ensureAccountSeqSchema();
+  } catch (_) {}
   const [rows] = await db.execute(
-    `SELECT id, phone, status, is_autoreply_enabled
+    `SELECT id, seq, phone, status, is_autoreply_enabled
      FROM accounts
      WHERE user_id = ?
-     ORDER BY id DESC`,
+     ORDER BY COALESCE(seq, id) ASC, id ASC`,
     [userId],
   );
   return rows;
@@ -138,10 +145,11 @@ function formatAccountLine(row) {
   } catch (_) {}
   const online = isActive(row.id) ? '🟢' : '🔴';
   const ai = Number(row.is_autoreply_enabled) ? 'ИИ вкл' : 'ИИ выкл';
+  const n = Number(row.seq) || '?';
   return (
-    `${online} <code>${esc(row.phone)}</code>` +
+    `<b>${n}.</b> ${online} <code>${esc(row.phone)}</code>` +
     (name ? ` — ${esc(name)}` : '') +
-    `\n    id ${row.id} · ${ai}`
+    `\n    ${ai}`
   );
 }
 
@@ -163,12 +171,15 @@ async function buildMyAccountsView(userId) {
   }
 
   const lines = rows.map(formatAccountLine);
-  const buttons = rows.map((row) => [
-    {
-      text: `🗑 Удалить ${row.id}`,
-      callback_data: `wrk:del:${row.id}`,
-    },
-  ]);
+  const buttons = rows.map((row) => {
+    const n = Number(row.seq) || row.id;
+    return [
+      {
+        text: `🗑 Удалить ${n}`,
+        callback_data: `wrk:del:${row.id}`,
+      },
+    ];
+  });
   buttons.push([{ text: '🔄 Обновить', callback_data: 'wrk:my' }]);
   buttons.push([{ text: '« Меню', callback_data: 'wrk:menu' }]);
 
@@ -176,7 +187,7 @@ async function buildMyAccountsView(userId) {
     text:
       `<b>🗑 Мои номера</b> · ${rows.length}\n\n` +
       `${lines.join('\n\n')}\n\n` +
-      '<i>id в базе 1…N без дыр: после удаления следующие сдвигаются. Сессия снимается с сервера; из Telegram аккаунт не выходит.</i>',
+      '<i>№ списка 1…N без дыр; после удаления пересчитывается. Сессия снимается с сервера; из Telegram аккаунт не выходит.</i>',
     keyboard: { inline_keyboard: buttons },
   };
 }
@@ -342,6 +353,9 @@ async function saveSession(userId, phone, sessionString) {
      VALUES (?, ?, ?, ?, ?, ?)`,
     [userId, phone, sessionString, 'Подключен', false, ''],
   );
+  try {
+    await renumberAccountSeq(userId);
+  } catch (_) {}
   return result.insertId;
 }
 
@@ -571,7 +585,7 @@ async function handleCallback(api, query) {
     const id = delAsk[1];
     const user = await ensureDbUser(chatId, from);
     const [[row]] = await db.execute(
-      'SELECT id, phone FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
+      'SELECT id, seq, phone FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
       [id, user.id],
     );
     if (!row) {
@@ -584,11 +598,12 @@ async function handleCallback(api, query) {
       return true;
     }
     const isAdmin = operatorAccess.isAdminSync(chatId, from?.username);
+    const n = Number(row.seq) || '?';
     await apiEdit(
       api,
       chatId,
       query.message.message_id,
-      `<b>Удалить номер?</b>\n\n<code>${esc(row.phone)}</code>\n\n` +
+      `<b>Удалить №${n}?</b>\n\n<code>${esc(row.phone)}</code>\n\n` +
         'Сессия снимется с сервера, история в боте очистится.',
       {
         inline_keyboard: [

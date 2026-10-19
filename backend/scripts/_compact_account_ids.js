@@ -1,23 +1,21 @@
 #!/usr/bin/env node
 /**
- * Разовое сжатие accounts.id → 1..N (и всех FK).
+ * Пересчёт accounts.seq (1…N внутри каждого user_id). PK id не трогаем.
  * Запуск на VPS: node scripts/_compact_account_ids.js
  */
 require('dotenv').config();
 const db = require('../db');
-const { compactAccountIds } = require('../services/accountCleanup');
+const { ensureAccountSeqSchema, renumberAccountSeq } = require('../services/accountCleanup');
 
 async function main() {
-  const [before] = await db.execute('SELECT id, phone FROM accounts ORDER BY id');
-  console.log('До:', before.map((r) => `${r.id}:${r.phone}`).join(', '));
-  const mapping = await compactAccountIds();
-  const [after] = await db.execute('SELECT id, phone FROM accounts ORDER BY id');
-  console.log('После:', after.map((r) => `${r.id}:${r.phone}`).join(', '));
+  await ensureAccountSeqSchema();
+  await renumberAccountSeq();
+  const [rows] = await db.execute(
+    'SELECT id, seq, user_id, phone FROM accounts ORDER BY user_id, seq, id',
+  );
   console.log(
-    'Маппинг:',
-    mapping.size
-      ? [...mapping.entries()].map(([a, b]) => `${a}→${b}`).join(', ')
-      : '(без изменений)',
+    rows.map((r) => `u${r.user_id} #${r.seq} id=${r.id} ${r.phone}`).join('\n') ||
+      '(пусто)',
   );
   process.exit(0);
 }

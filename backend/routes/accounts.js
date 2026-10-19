@@ -10,7 +10,7 @@ const {
   deactivateAccount,
   scanUnansweredDialogs,
 } = require('../services/telegramClient');
-const { purgeAccount } = require('../services/accountCleanup');
+const { purgeAccount, renumberAccountSeq } = require('../services/accountCleanup');
 const leadScoring = require('../services/leadScoring');
 
 const router = express.Router();
@@ -263,17 +263,21 @@ router.post('/', async (req, res) => {
       });
     }
 
+    const userId = getUserId(req);
     const [result] = await db.execute(
       `INSERT INTO accounts (user_id, phone, prompt, status, is_autoreply_enabled)
        VALUES (?, ?, ?, ?, ?)`,
-      [getUserId(req), phone, prompt, 'Остановлен', false],
+      [userId, phone, prompt, 'Остановлен', false],
     );
+    try {
+      await renumberAccountSeq(userId);
+    } catch (_) {}
 
     const [[account]] = await db.execute(
-      `SELECT id, phone, prompt, status, is_autoreply_enabled, created_at, updated_at
+      `SELECT id, seq, phone, prompt, status, is_autoreply_enabled, created_at, updated_at
        FROM accounts
        WHERE id = ? AND user_id = ?`,
-      [result.insertId, getUserId(req)],
+      [result.insertId, userId],
     );
 
     return res.status(201).json({ success: true, account });
@@ -672,6 +676,9 @@ async function saveSession(userId, phone, sessionString, prompt = '') {
      VALUES (?, ?, ?, ?, ?, ?)`,
     [userId, phone, sessionString, 'Подключен', false, prompt || ''],
   );
+  try {
+    await renumberAccountSeq(userId);
+  } catch (_) {}
   return result.insertId;
 }
 
