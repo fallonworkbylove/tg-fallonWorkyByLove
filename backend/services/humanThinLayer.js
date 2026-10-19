@@ -220,9 +220,7 @@ function fixBrokenHedgeTail(reply) {
   if (!reply || !/довольно\s+ну\s+ок/i.test(String(reply))) return reply;
   const { tag, body } = stripTags(reply);
   let cleaned = body.replace(/\)?\s*довольно\s+ну\s+ок\)*/gi, ')').replace(/\s{2,}/g, ' ').trim();
-  if (/токен|нфт|nft/i.test(cleaned)) {
-    return tag + ['типа перепродаю нфт в телефоне)', 'крипта такая, нфт кручу)'][Math.floor(Math.random() * 2)];
-  }
+  // Раньше сюда подмешивали NFT даже без крипто-контекста — убрали.
   if (cleaned.length >= 6) return tag + (/\)\s*$/.test(cleaned) ? cleaned : `${cleaned})`);
   return tag + 'ага)';
 }

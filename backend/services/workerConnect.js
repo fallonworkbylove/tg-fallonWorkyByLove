@@ -9,6 +9,8 @@ const {
   resendLoginCode,
   confirmCode,
   confirmPassword,
+  cancelPendingLogin,
+  cancelAllPendingLoginsForUser,
   activateAccount,
   deactivateAccount,
   isActive,
@@ -38,14 +40,22 @@ function normalizePhone(raw) {
 }
 
 function clearWizard(chatId) {
-  wizards.delete(String(chatId));
+  const key = String(chatId);
+  const w = wizards.get(key);
+  wizards.delete(key);
+  // Снимаем GramJS pending, иначе orphan-клиент держит phoneCodeHash часами.
+  if (w?.phone) {
+    cancelPendingLogin(key, w.phone).catch(() => {});
+  } else {
+    cancelAllPendingLoginsForUser(key).catch(() => {});
+  }
 }
 
 function isWizardActive(chatId) {
   const w = wizards.get(String(chatId));
   if (!w) return false;
   if (Date.now() > w.until) {
-    wizards.delete(String(chatId));
+    clearWizard(chatId);
     return false;
   }
   return true;

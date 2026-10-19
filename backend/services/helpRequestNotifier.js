@@ -306,9 +306,21 @@ async function checkConsent(accountId, peerId, peerUsername, accountPhone, incom
     if (!pending || !incomingText) return;
 
     const hasRefusal = REFUSE_KEYWORDS_RE.test(incomingText);
-    const hasKeyword = !hasRefusal && AGREE_KEYWORDS_RE.test(incomingText);
+    const trimmed = String(incomingText || '').trim();
+    // Голое «ок/да/ладно» без контекста помощи — не согласие (часто просто реакция).
+    const bareAck = /^(?:да|ладно|ок|окей|хорошо|конечно|давай|ok|okay|yes|sure)\s*[).!]*$/i.test(
+      trimmed,
+    );
+    const helpish =
+      /(помог|сделаю|скин|отправ|перевод|пришлю|деньг|бабк|средств|токен|нфт|nft|без\s+проблем|не\s+вопрос)/i.test(
+        trimmed,
+      );
+    const hasKeyword =
+      !hasRefusal && AGREE_KEYWORDS_RE.test(incomingText) && (!bareAck || helpish);
 
-    const agreed = hasKeyword || (!hasRefusal && (await aiDetectAgreement(incomingText)));
+    const agreed =
+      hasKeyword ||
+      (!hasRefusal && !bareAck && (await aiDetectAgreement(incomingText)));
     if (!agreed) return;
 
     await db.execute(
@@ -555,8 +567,34 @@ async function handleUpdate(update) {
     return;
   }
 
-  if (isAdmin && (text === '/menu' || text === '/admin')) {
-    await adminMenu.sendMenu(TELEGRAM_API, chatId);
+  if (text === '/menu' || text === '/admin') {
+    if (isAdmin) {
+      await adminMenu.sendMenu(TELEGRAM_API, chatId);
+      return;
+    }
+    try {
+      if (await workerConnect.canConnectAccounts(chatId, from?.username)) {
+        await workerConnect.sendWorkerMenu(TELEGRAM_API, chatId);
+      } else {
+        await fetch(`${TELEGRAM_API}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: 'Нет доступа к меню. Нужна роль воркера.',
+          }),
+        });
+      }
+    } catch (err) {
+      await fetch(`${TELEGRAM_API}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: `Не удалось открыть меню: ${err.message || 'ошибка'}`,
+        }),
+      });
+    }
     return;
   }
 
@@ -594,6 +632,7 @@ async function handleUpdate(update) {
     const keyboard = [];
     if (canConnect) {
       keyboard.push([{ text: '📲 Подключить аккаунт', callback_data: 'wrk:connect' }]);
+      keyboard.push([{ text: '🗑 Мои номера', callback_data: 'wrk:my' }]);
     }
     if (MINIAPP_URL) {
       keyboard.push([{ text: 'Открыть приложение', web_app: { url: MINIAPP_URL } }]);

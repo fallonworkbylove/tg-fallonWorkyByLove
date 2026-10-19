@@ -242,10 +242,13 @@ const FLIP_PHOTO_QUESTION_HINT =
 async function wasDailyFlipSentRecently(accountId, peerId, withinHours = 8) {
   try {
     const hours = Math.max(1, Math.min(48, Number(withinHours) || 8));
+    // Только реальные отправки с файлом — markSkipped ставит sent_at без image_file.
     const [rows] = await db.execute(
       `SELECT id FROM daily_photo_sends
        WHERE account_id = ? AND peer_id = ?
          AND sent_at IS NOT NULL
+         AND image_file IS NOT NULL AND image_file <> ''
+         AND image_file <> '__claiming__'
          AND sent_at > (NOW() - INTERVAL ${hours} HOUR)
        LIMIT 1`,
       [accountId, String(peerId)],
@@ -342,10 +345,26 @@ function isSexualPressure(text) {
 
 /** Он спрашивает, сколько ОНА уже на дв (не «сколько ты на дв» мы ему). */
 const ASKED_HER_DV_RE =
-  /(?:а\s+)?(?:ты|тв)\s+давно\s+(?:в\s+)?дв|давно\s+(?:ли\s+)?(?:ты\s+)?(?:на|в)\s+дв|сколько\s+(?:ты\s+)?(?:уже\s+)?(?:дней\s+)?(?:на|в)\s+дв|скок\s+(?:ты\s+)?(?:уже\s+)?(?:на|в)\s+дв|как\s+давно\s+(?:ты\s+)?(?:на|в)\s+дв|ты\s+(?:уже\s+)?давно\s+(?:тут|здесь)\b/i;
+  /(?:а\s+)?(?:ты|тв)\s+(?:уже\s+)?давно\s+(?:ли\s+)?(?:на|в)\s+дв|(?:а\s+)?(?:ты|тв)\s+давно\s+(?:в\s+)?дв|сколько\s+(?:ты\s+)?(?:уже\s+)?(?:дней\s+)?(?:на|в)\s+дв|скок\s+(?:ты\s+)?(?:уже\s+)?(?:на|в)\s+дв|как\s+давно\s+(?:ты\s+)?(?:на|в)\s+дв/i;
 
 function isAskedHerDv(text) {
-  return ASKED_HER_DV_RE.test(String(text || ''));
+  return ASKED_HER_DV_RE.test(String(text || '').trim());
+}
+
+/** Последний assistant в истории — наш вопрос «сколько на дв?». */
+function lastAssistantWasHowLongQuestion(history) {
+  const recent = Array.isArray(history) ? history : [];
+  for (let i = recent.length - 1; i >= 0; i -= 1) {
+    const h = recent[i];
+    if (!h) continue;
+    if (h.role === 'user') continue;
+    if (h.role === 'assistant') {
+      const c = String(h.content || '').toLowerCase();
+      return c.includes('на дв?') || c.includes('давно тут сидишь');
+    }
+    break;
+  }
+  return false;
 }
 
 /** «Какой?», «о чём?», «про что?» — уточнение к предыдущей фразе. */
@@ -402,10 +421,9 @@ function getHowLongAckHint() {
 function getDvClarifyHint(text, history) {
   const t = String(text || '').trim();
   if (!CLARIFY_WHICH_RE.test(t)) return null;
-  if (!recentHasDvContext(history) && !lastAssistantWasAmbiguousTheme(history)) {
-    return null;
-  }
-  // Если бот уже сама вела про NFT — пусть объясняет NFT, не ломаем.
+  // Только если реально говорили про ДВ — голое «в теме» без дв не угоняем в «про дв)».
+  if (!recentHasDvContext(history)) return null;
+  // Если бот уже сама вела про NFT после дв — пусть объясняет NFT.
   if (botAlreadyPitchedNft(history) && !lastAssistantWasAmbiguousTheme(history)) {
     return null;
   }
@@ -420,6 +438,11 @@ function getDvClarifyHint(text, history) {
 
 function detectHint(text, history = [], options = {}) {
   if (!text) return null;
+
+  // Он отвечает на НАШ вопрос «сколько на дв» — не путать с «а ты давно на дв?».
+  if (lastAssistantWasHowLongQuestion(history)) {
+    return null;
+  }
 
   // «А ты давно в дв?» — про Дайвинчик, НЕ про город/переезд.
   if (isAskedHerDv(text)) {
@@ -630,29 +653,33 @@ function detectHint(text, history = [], options = {}) {
   }
 
   // «Всм? Че я шутил? Где?» — модель приписала ему шутку, которой не было.
-  // Ни в коем случае не продолжать «шутку» и не выкручиваться: признать
-  // спокойно, что она оговорилась, и перевести на живое.
+  // Голое «в смысле?» / «о чём?» без отрицания шутки — обычное уточнение (см. getDvClarifyHint).
   if (PEER_DENIES_JOKED_RE.test(text)) {
-    const recentBot = (Array.isArray(history) ? history : [])
-      .filter((h) => h && h.role === 'assistant')
-      .slice(-3)
-      .map((h) => String(h.content || ''))
-      .join(' ');
-    const botClaimedJoke = /шут|весел|забавн|смешн|насмешил|юмор/i.test(recentBot);
+    const bareClarify = /^(?:а\s+|ну\s+)?(?:в\s*см|всм|в\s+смысле|о\s+ч[её]м(?:\s+ты)?|ты\s+о\s+ч[её]м)\s*[?)!]?\s*$/i.test(
+      String(text || '').trim(),
+    );
     const strongDenial =
-      /че[гг]?о?\s+я\s+шут|где\s+(я|тут)\s+шут|что\s+я\s+шут|я\s+не\s+шут|как(ие|их|ая)\s+шутк|никак(их|ие|ой)\s+шут/i.test(
+      /че[гг]?о?\s+я\s+шут|где\s+(я|тут)\s+шут|что\s+я\s+шут|я\s+не\s+шут|как(ие|их|ая)\s+шутк|никак(их|ие|ой)\s+шут|не\s+шутил/i.test(
         String(text || ''),
       );
-    if (botClaimedJoke || strongDenial) {
-      return (
-        'Собеседник НЕ понимает, о чём ты, и отрицает, что шутил («всм? че я шутил? где?»). ' +
-        'Ты ошибочно приписала ему шутку. ' +
-        'ЗАПРЕЩЕНО: настаивать что он шутил, объяснять «твои шутки неожиданные», ' +
-        'пересказывать несуществующую шутку, выкручиваться и спорить. ' +
-        'Коротко признай, что перепутала / уже сама запуталась, и переведи на живое: ' +
-        '«ой, я что-то запуталась)», «хах, показалось)», «да я уже сама не помню)». ' +
-        'НЕ задавай «а что ты имел в виду» и не допрашивай. 1 короткая фраза.'
-      );
+    if (!bareClarify || strongDenial) {
+      const recentBot = (Array.isArray(history) ? history : [])
+        .filter((h) => h && h.role === 'assistant')
+        .slice(-3)
+        .map((h) => String(h.content || ''))
+        .join(' ');
+      const botClaimedJoke = /шут|весел|забавн|смешн|насмешил|юмор/i.test(recentBot);
+      if (botClaimedJoke || strongDenial) {
+        return (
+          'Собеседник НЕ понимает, о чём ты, и отрицает, что шутил («всм? че я шутил? где?»). ' +
+          'Ты ошибочно приписала ему шутку. ' +
+          'ЗАПРЕЩЕНО: настаивать что он шутил, объяснять «твои шутки неожиданные», ' +
+          'пересказывать несуществующую шутку, выкручиваться и спорить. ' +
+          'Коротко признай, что перепутала / уже сама запуталась, и переведи на живое: ' +
+          '«ой, я что-то запуталась)», «хах, показалось)», «да я уже сама не помню)». ' +
+          'НЕ задавай «а что ты имел в виду» и не допрашивай. 1 короткая фраза.'
+        );
+      }
     }
   }
 
@@ -950,6 +977,7 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
     hasUnansweredProactive,
     isPermanentSendError,
     retireUnreachablePeer,
+    dialogAlreadySaidGoodbye,
   } = require('./telegramClient');
   const { Api } = require('telegram');
   try {
@@ -1005,7 +1033,10 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
           continue;
         }
         // Если в диалоге уже было прощание / «засыпаю» — не будить голосовым.
-        if (await dialogAlreadySaidGoodbye(row.account_id, row.peer_id)) {
+        if (
+          typeof dialogAlreadySaidGoodbye === 'function' &&
+          (await dialogAlreadySaidGoodbye(row.account_id, row.peer_id))
+        ) {
           console.log(
             `[Аккаунт ${row.account_id}] Голосовое молчания пропущено — в диалоге уже попрощались.`,
           );

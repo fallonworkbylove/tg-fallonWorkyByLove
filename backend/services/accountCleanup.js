@@ -33,6 +33,9 @@ const ACCOUNT_ID_COLUMNS = [
 
 const TEMP_OFFSET = 1_000_000;
 
+/** Очередь: compact нельзя гонять параллельно (иначе порча FK). */
+let compactChain = Promise.resolve();
+
 async function deleteFrom(table, accountId) {
   try {
     await db.execute(`DELETE FROM \`${table}\` WHERE account_id = ?`, [accountId]);
@@ -57,10 +60,11 @@ async function updateIdColumn(conn, table, column, fromId, toId) {
 
 /**
  * Сжимает accounts.id в 1..N без дыр. Все FK account_id / telegram_account_id
- * тоже переезжают. Активные клиенты с изменившимся id переподключаются.
+ * тоже переезжают. Перед транзакцией гасим ВСЕ живые клиенты (даже если id
+ * «не меняется» — в temp-фазе он всё равно уходит в 1_000_000+id).
  * @returns {Map<number, number>} oldId → newId (только изменившиеся)
  */
-async function compactAccountIds() {
+async function compactAccountIdsUnlocked() {
   const [rows] = await db.execute(
     'SELECT id, session_string FROM accounts ORDER BY id ASC',
   );
@@ -84,18 +88,19 @@ async function compactAccountIds() {
     telegramClient = require('./telegramClient');
   } catch (_) {}
 
+  // Все онлайн-аккаунты → деактивировать; после compact поднять уже с final id.
   const toReactivate = [];
-  if (telegramClient) {
-    for (const [oldId, newId] of mapping) {
-      if (typeof telegramClient.isActive === 'function' && telegramClient.isActive(oldId)) {
-        const row = rows.find((r) => Number(r.id) === oldId);
-        if (row?.session_string) {
-          toReactivate.push({ newId, session: row.session_string });
-        }
-        try {
-          await telegramClient.deactivateAccount(oldId);
-        } catch (_) {}
+  if (telegramClient && typeof telegramClient.isActive === 'function') {
+    for (const row of rows) {
+      const oldId = Number(row.id);
+      const newId = mapping.has(oldId) ? mapping.get(oldId) : oldId;
+      if (!telegramClient.isActive(oldId)) continue;
+      if (row.session_string) {
+        toReactivate.push({ newId, session: row.session_string });
       }
+      try {
+        await telegramClient.deactivateAccount(oldId);
+      } catch (_) {}
     }
   }
 
@@ -157,6 +162,13 @@ async function compactAccountIds() {
       .join(', ')}`,
   );
   return mapping;
+}
+
+function compactAccountIds() {
+  const run = compactChain.then(() => compactAccountIdsUnlocked());
+  // Не роняем цепочку при ошибке — следующий compact всё равно должен стартовать.
+  compactChain = run.catch(() => {});
+  return run;
 }
 
 async function purgeAccount(accountId, userId) {

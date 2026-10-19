@@ -584,6 +584,38 @@ function bufferKey(accountId, peerId) {
   return `${accountId}:${peerId}`;
 }
 
+/**
+ * Снимает pending login (wizard TTL / отмена). Без ошибки, если сессии нет.
+ */
+async function cancelPendingLogin(userId, phone) {
+  const key = loginKey(userId, phone);
+  const entry = pendingLogins.get(key);
+  if (!entry) return false;
+  pendingLogins.delete(key);
+  if (entry.client) {
+    try {
+      await entry.client.disconnect();
+    } catch (_) {}
+  }
+  return true;
+}
+
+/** Все pending-логины этого telegram userId (на случай TTL без сохранённого phone). */
+async function cancelAllPendingLoginsForUser(userId) {
+  const prefix = `${userId}:`;
+  const keys = [...pendingLogins.keys()].filter((k) => String(k).startsWith(prefix));
+  for (const key of keys) {
+    const entry = pendingLogins.get(key);
+    pendingLogins.delete(key);
+    if (entry?.client) {
+      try {
+        await entry.client.disconnect();
+      } catch (_) {}
+    }
+  }
+  return keys.length;
+}
+
 function loginKey(userId, phone) {
   return `${userId}:${phone}`;
 }
@@ -4151,11 +4183,14 @@ async function fireReengage(accountId, peerId) {
       accountId,
       peerId,
     );
-    let objectionHint = objectionHandler.detectHint(text, replyHistory);
+    // How-long ack важнее generic later/dont_understand — иначе «потом» съедает реакцию на дв.
+    let objectionHint = null;
     if (flipPhotoQuestion) {
       objectionHint = objectionHandler.getFlipPhotoQuestionHint();
-    } else if (!objectionHint && isAnswerToHowLong(replyHistory)) {
+    } else if (isAnswerToHowLong(replyHistory)) {
       objectionHint = objectionHandler.getHowLongAckHint();
+    } else {
+      objectionHint = objectionHandler.detectHint(text, replyHistory);
     }
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, text);
     // На прямой вопрос memory follow-up часто уводит в «философию» вместо ответа.
@@ -5131,13 +5166,16 @@ async function processBufferedMessages(
     const accountMood = await moodEngine.getMood(accountId);
     const personaHint = await accountPersona.buildPersonaHint(accountId);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
-    let objectionHint = objectionHandler.detectHint(text, history, {
-      voiceWillSend: !!voice,
-    });
+    // How-long ack важнее generic later/dont_understand — иначе «потом» съедает реакцию на дв.
+    let objectionHint = null;
     if (flipPhotoQuestion) {
       objectionHint = objectionHandler.getFlipPhotoQuestionHint();
-    } else if (!objectionHint && isAnswerToHowLong(history)) {
+    } else if (isAnswerToHowLong(history)) {
       objectionHint = objectionHandler.getHowLongAckHint();
+    } else {
+      objectionHint = objectionHandler.detectHint(text, history, {
+        voiceWillSend: !!voice,
+      });
     }
     const complimentHint = await complimentEngine.getComplimentHint(accountId, peerId, contextualText);
     const useMemoryHint =
@@ -6985,6 +7023,8 @@ module.exports = {
   resendLoginCode,
   confirmCode,
   confirmPassword,
+  cancelPendingLogin,
+  cancelAllPendingLoginsForUser,
   activateAccount,
   deactivateAccount,
   getActiveClient,
@@ -7011,6 +7051,7 @@ module.exports = {
   isHiddenFromReplies,
   loadArchiveFlags,
   isFloodError,
+  dialogAlreadySaidGoodbye,
   NFT_VOICE_AFTER_HOURS,
   getDialogAgeHours,
   conversationIsRussian,
