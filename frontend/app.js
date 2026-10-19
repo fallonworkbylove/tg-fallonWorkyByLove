@@ -389,9 +389,14 @@ const elements = {
   blacklistInput: document.getElementById('blacklist-input'),
   addBlacklist: document.getElementById('add-blacklist'),
   clearBlacklist: document.getElementById('clear-blacklist'),
+  blacklistPanel: document.getElementById('blacklist-panel'),
+  blacklistCount: document.getElementById('blacklist-count'),
+  blacklistList: document.getElementById('blacklist-list'),
   photoExceptionInput: document.getElementById('photo-exception-input'),
   addPhotoException: document.getElementById('add-photo-exception'),
   clearPhotoExceptions: document.getElementById('clear-photo-exceptions'),
+  photoExceptionsPanel: document.getElementById('photo-exceptions-panel'),
+  photoExceptionsCount: document.getElementById('photo-exceptions-count'),
   photoExceptionsList: document.getElementById('photo-exceptions-list'),
 };
 
@@ -922,7 +927,7 @@ function renderPanel() {
     <div class="section-card card" style="padding:12px;">
       <div class="section-card__header">
         <h3>Быстрый обзор</h3>
-        <button class="btn btn-secondary small" type="button" data-action="open-accounts">К таблице</button>
+        <button class="btn btn-secondary small" type="button" data-action="open-accounts">К аккаунтам</button>
       </div>
       <div class="stack">
         ${state.accounts
@@ -1075,74 +1080,68 @@ function renderAccounts() {
       state.accounts.length > 0 &&
       state.accounts.every((a) => isAccountSelected(a.id));
     elements.accountsList.innerHTML = `
-      <table class="accounts-table">
-        <thead>
-          <tr>
-            <th>
-              <input
-                type="checkbox"
-                data-action="select-all-accounts"
-                ${allSelected ? 'checked' : ''}
-                aria-label="Выбрать все"
-              />
-            </th>
-            <th>Номер</th>
-            <th>Онлайн</th>
-            <th>AI</th>
-            <th title="Исходящие сообщения с 00:00 МСК">Сегодня</th>
-            <th>Медиа</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${state.accounts
-            .map((account) => {
-              const aiEnabled = isAiEnabled(account);
-              const selected = isAccountSelected(account.id);
-              const isOnline = !!account.is_online;
-              const sentToday = Number(
-                account.sent_today ?? account.sentToday ?? 0,
-              );
-              return `
-                <tr class="${selected ? 'is-selected' : ''}" data-account-row="${account.id}">
-                  <td>
-                    <input
-                      type="checkbox"
-                      data-action="select-account"
-                      data-id="${account.id}"
-                      ${selected ? 'checked' : ''}
-                      aria-label="Выбрать ${escapeHtml(account.phone || '')}"
-                    />
-                  </td>
-                  <td><strong>${escapeHtml(account.phone || '')}</strong></td>
-                  <td>
-                    <span class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"></span>
-                    ${isOnline ? 'да' : 'нет'}
-                  </td>
-                  <td>
-                    <span class="badge ${aiEnabled ? 'success' : 'warn'}">
-                      ${aiEnabled ? 'вкл' : 'выкл'}
-                    </span>
-                  </td>
-                  <td class="accounts-table__num" title="Сообщений с 00:00 МСК">${sentToday}</td>
-                  <td>${account.media_chat_link ? 'есть' : '—'}</td>
-                  <td>
-                    <div class="accounts-table__actions">
-                      ${
-                        aiEnabled
-                          ? `<button class="btn btn-secondary small" data-action="stop" data-id="${account.id}" type="button">Стоп</button>`
-                          : `<button class="btn btn-primary small" data-action="ai" data-id="${account.id}" type="button">AI</button>`
-                      }
-                      <button class="btn btn-secondary small" data-action="details" data-id="${account.id}" type="button">Карточка</button>
-                      <button class="btn btn-danger small" data-action="delete" data-id="${account.id}" type="button">Удал.</button>
+      <div class="accounts-cards">
+        <label class="account-card account-card--select-all">
+          <input
+            class="account-card__check"
+            type="checkbox"
+            data-action="select-all-accounts"
+            ${allSelected ? 'checked' : ''}
+            aria-label="Выбрать все"
+          />
+          <span class="account-card__phone">Выбрать все</span>
+        </label>
+        ${state.accounts
+          .map((account) => {
+            const aiEnabled = isAiEnabled(account);
+            const selected = isAccountSelected(account.id);
+            const isOnline = !!account.is_online;
+            const sentToday = Number(
+              account.sent_today ?? account.sentToday ?? 0,
+            );
+            return `
+              <article
+                class="account-card ${selected ? 'is-selected' : ''}"
+                data-account-row="${account.id}"
+              >
+                <div class="account-card__top">
+                  <input
+                    class="account-card__check"
+                    type="checkbox"
+                    data-action="select-account"
+                    data-id="${account.id}"
+                    ${selected ? 'checked' : ''}
+                    aria-label="Выбрать ${escapeHtml(account.phone || '')}"
+                  />
+                  <div class="account-card__main">
+                    <div class="account-card__phone">
+                      <span class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"></span>
+                      ${escapeHtml(account.phone || '')}
                     </div>
-                  </td>
-                </tr>
-              `;
-            })
-            .join('')}
-        </tbody>
-      </table>
+                    <div class="account-card__meta">
+                      <span class="badge ${aiEnabled ? 'success' : 'warn'}">
+                        AI ${aiEnabled ? 'вкл' : 'выкл'}
+                      </span>
+                      <span>${isOnline ? 'онлайн' : 'офлайн'}</span>
+                      <span title="Сообщений с 00:00 МСК">сегодня · <strong>${sentToday}</strong></span>
+                      <span>медиа · ${account.media_chat_link ? 'есть' : 'нет'}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="account-card__actions">
+                  ${
+                    aiEnabled
+                      ? `<button class="btn btn-secondary small" data-action="stop" data-id="${account.id}" type="button">Стоп</button>`
+                      : `<button class="btn btn-primary small" data-action="ai" data-id="${account.id}" type="button">AI</button>`
+                  }
+                  <button class="btn btn-secondary small" data-action="details" data-id="${account.id}" type="button">Карточка</button>
+                  <button class="btn btn-danger small" data-action="delete" data-id="${account.id}" type="button">Удал.</button>
+                </div>
+              </article>
+            `;
+          })
+          .join('')}
+      </div>
     `;
   }
 
@@ -1401,71 +1400,103 @@ function renderLearn() {
     .join('');
 }
 
-function renderBlacklist() {
+function renderDelayPreview() {
   if (!elements.optionsPreview) {
     return;
   }
-
-  const blacklistHtml = state.blacklist.length
-    ? state.blacklist
-        .map((item) => {
-          const userId = getBlacklistUserId(item);
-          const itemId =
-            typeof item === 'object' && item !== null
-              ? item.id
-              : null;
-
-          return `
-            <span class="badge badge-soft">
-              ${escapeHtml(userId)}
-              ${
-                itemId !== null && itemId !== undefined
-                  ? `
-                    <button
-                      type="button"
-                      data-action="delete-blacklist"
-                      data-id="${itemId}"
-                      aria-label="Удалить User ID"
-                    >
-                      ×
-                    </button>
-                  `
-                  : ''
-              }
-            </span>
-          `;
-        })
-        .join(' ')
-    : 'Blacklist пуст';
 
   elements.optionsPreview.innerHTML = `
     <div class="option-item">
       <strong>Задержка</strong>
       <p>${state.options.delay} сек</p>
     </div>
-
     <div class="option-item">
       <strong>Диапазон</strong>
       <p>${state.options.min}–${state.options.max} сек</p>
     </div>
-
-    <div class="option-item">
-      <strong>Blacklist</strong>
-      <p>${blacklistHtml}</p>
-    </div>
   `;
 }
 
-function renderPhotoExceptions() {
-  const container = elements.photoExceptionsList;
+function renderBlacklist() {
+  renderDelayPreview();
 
+  const count = state.blacklist.length;
+  if (elements.blacklistCount) {
+    elements.blacklistCount.textContent = String(count);
+  }
+
+  const container = elements.blacklistList;
   if (!container) {
     return;
   }
 
-  if (!state.photoExceptions.length) {
+  if (!count) {
     container.innerHTML =
-      '<p class="muted">Список пуст — распознавание фото работает для всех пользователей.</p>';
+      '<p class="muted">Список пуст — AI отвечает всем.</p>';
+    return;
+  }
+
+  container.innerHTML = state.blacklist
+    .map((item) => {
+      const userId = getBlacklistUserId(item);
+      const itemId =
+        typeof item === 'object' && item !== null ? item.id : null;
+
+      return `
+        <div class="exception-row">
+          <div class="exception-row__main">
+            <span class="exception-row__handle">${escapeHtml(userId || '—')}</span>
+            <span class="exception-row__meta">AI не отвечает</span>
+          </div>
+          ${
+            itemId !== null && itemId !== undefined
+              ? `
+                <button
+                  class="exception-row__remove"
+                  type="button"
+                  data-action="delete-blacklist"
+                  data-id="${itemId}"
+                  aria-label="Убрать ${escapeHtml(String(userId || ''))} из blacklist"
+                  title="Убрать из списка"
+                >
+                  <span class="exception-row__remove-icon" aria-hidden="true"></span>
+                  Убрать
+                </button>
+              `
+              : ''
+          }
+        </div>
+      `;
+    })
+    .join('');
+}
+
+function openBlacklistPanel() {
+  if (elements.blacklistPanel) {
+    elements.blacklistPanel.open = true;
+  }
+}
+
+function openPhotoExceptionsPanel() {
+  if (elements.photoExceptionsPanel) {
+    elements.photoExceptionsPanel.open = true;
+  }
+}
+
+function renderPhotoExceptions() {
+  const count = state.photoExceptions.length;
+  if (elements.photoExceptionsCount) {
+    elements.photoExceptionsCount.textContent = String(count);
+  }
+
+  const container = elements.photoExceptionsList;
+  if (!container) {
+    return;
+  }
+
+  if (!count) {
+    container.innerHTML =
+      '<p class="muted">Список пуст — распознавание фото работает для всех.</p>';
     return;
   }
 
@@ -2271,6 +2302,7 @@ async function addToBlacklist() {
     }
 
     renderBlacklist();
+    openBlacklistPanel();
     notify('User ID добавлен в blacklist');
   } catch (error) {
     handleRequestError(error);
@@ -2286,6 +2318,7 @@ async function clearBlacklist() {
     await loadBlacklist();
 
     renderBlacklist();
+    openBlacklistPanel();
     notify('Blacklist очищен');
   } catch (error) {
     handleRequestError(error);
@@ -2388,6 +2421,7 @@ async function deleteBlacklistItem(id) {
     await loadBlacklist();
 
     render();
+    openBlacklistPanel();
     notify('Запись удалена из blacklist');
   } catch (error) {
     handleRequestError(error);
@@ -2407,6 +2441,7 @@ async function deletePhotoExceptionItem(id) {
     await loadPhotoExceptions();
 
     render();
+    openPhotoExceptionsPanel();
     notify('Пользователь удалён из списка исключений');
   } catch (error) {
     handleRequestError(error);
@@ -2434,6 +2469,7 @@ async function handleAddPhotoException() {
     }
 
     render();
+    openPhotoExceptionsPanel();
     notify('Пользователь добавлен в список исключений');
   } catch (error) {
     handleRequestError(error);
@@ -2449,6 +2485,7 @@ async function handleClearPhotoExceptions() {
     await loadPhotoExceptions();
 
     render();
+    openPhotoExceptionsPanel();
     notify('Список исключений очищен');
   } catch (error) {
     handleRequestError(error);
