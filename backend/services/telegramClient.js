@@ -66,6 +66,7 @@ const memoryTriggers = require('./memoryTriggers');
 const accountPersona = require('./accountPersona');
 const objectionHandler = require('./objectionHandler');
 const complimentEngine = require('./complimentEngine');
+const humanExtra = require('./humanExtra');
 
 // Сколько последних сообщений диалога передавать модели как контекст.
 // Было 10 (всего 5 обменов) — бот забывал, о чём уже спрашивал, и мог
@@ -1104,7 +1105,7 @@ function pickReplyDelayMs(settings) {
  */
 function delayBeforeSendMs(settings, text, opts = {}) {
   const think = pickReplyDelayMs(settings);
-  const typing = computeTypingMs(text);
+  const typing = computeTypingMs(text, opts.accountId);
   if (opts.alreadyTyping) {
     return think + Math.min(1800, Math.max(300, Math.round(typing * 0.35)));
   }
@@ -1136,22 +1137,26 @@ function computeReadDwellMs(incomingText) {
  * Длительность «печатает...» по длине ответа (набор с телефона).
  * Короткие — быстро; длинные — дольше, с редкими заминками.
  */
-function computeTypingMs(text) {
+function computeTypingMs(text, accountId = null) {
   const len = plainTextLen(text);
-  if (!len) return Math.round(350 + Math.random() * 450);
-  if (len <= 6) return Math.round(420 + Math.random() * 480);
-  if (len <= 18) return Math.round(650 + Math.random() * 700 + len * 35);
-
-  // Большой палец / RU: ~7–13 симв/сек в живом чате.
-  const charsPerSec = 7.2 + Math.random() * 5.8;
-  let typeMs = (len / charsPerSec) * 1000;
-  // Заминка «подумала слово» раз в ~50–70 символов.
-  const hesitations = Math.floor(len / (50 + Math.floor(Math.random() * 20)));
-  for (let i = 0; i < hesitations; i += 1) {
-    if (Math.random() < 0.6) typeMs += 280 + Math.random() * 780;
+  const pace = accountId != null ? humanExtra.getAccountPace(accountId) : null;
+  const mul = pace?.typingMul || 1;
+  let base;
+  if (!len) base = 350 + Math.random() * 450;
+  else if (len <= 6) base = 420 + Math.random() * 480;
+  else if (len <= 18) base = 650 + Math.random() * 700 + len * 35;
+  else {
+    // Большой палец / RU: ~7–13 симв/сек в живом чате.
+    const charsPerSec = 7.2 + Math.random() * 5.8;
+    let typeMs = (len / charsPerSec) * 1000;
+    const hesitations = Math.floor(len / (50 + Math.floor(Math.random() * 20)));
+    for (let i = 0; i < hesitations; i += 1) {
+      if (Math.random() < 0.6) typeMs += 280 + Math.random() * 780;
+    }
+    base = typeMs;
   }
   // Видимый typing не бесконечный — иначе палево на длинных ответах.
-  return Math.min(9000, Math.max(600, Math.round(typeMs)));
+  return Math.min(9000, Math.max(600, Math.round(base * mul)));
 }
 
 /**
@@ -1205,11 +1210,12 @@ async function waitBeforeReply(client, peer, delayMs, typingMs = 4000) {
       // Индикатор печати не критичен.
     }
 
-    // Иногда коротко «передумала» — сброс typing, потом снова печатает.
+    // «Передумала» — сброс typing, потом снова (шанс выше у «медленных» аккаунтов).
+    const rethinkChance = waitBeforeReply._rethinkChance ?? 0.22;
     if (
-      typeBudget - typingElapsed > 2200 &&
-      typingElapsed > 1200 &&
-      Math.random() < 0.14
+      typeBudget - typingElapsed > 1800 &&
+      typingElapsed > 900 &&
+      Math.random() < rethinkChance
     ) {
       try {
         await client.invoke(
@@ -1219,7 +1225,7 @@ async function waitBeforeReply(client, peer, delayMs, typingMs = 4000) {
           }),
         );
       } catch (_) {}
-      const pause = 350 + Math.random() * 700;
+      const pause = 400 + Math.random() * 1100;
       await sleep(pause);
       typingElapsed += pause;
       continue;
@@ -1236,7 +1242,15 @@ async function waitBeforeReply(client, peer, delayMs, typingMs = 4000) {
  * Живой порядок: прочитано → смотрит (от длины входящего) → думает → печатает (от длины ответа) → send.
  * Бюджет delayMs не раздуваем второй паузой: чтение входит в тихую фазу.
  */
-async function humanPauseBeforeSend(client, peer, message, delayMs, typingMs, incomingText = '') {
+async function humanPauseBeforeSend(
+  client,
+  peer,
+  message,
+  delayMs,
+  typingMs,
+  incomingText = '',
+  accountId = null,
+) {
   await markPeerAsRead(client, peer, message);
 
   const incoming =
@@ -1247,7 +1261,7 @@ async function humanPauseBeforeSend(client, peer, message, delayMs, typingMs, in
     '';
   const readDwellMs = computeReadDwellMs(incoming);
   const typeMs = Math.min(
-    typingMs != null ? typingMs : computeTypingMs(''),
+    typingMs != null ? typingMs : computeTypingMs('', accountId),
     Math.max(0, delayMs),
   );
   const silentBudget = Math.max(0, delayMs - typeMs);
@@ -1255,7 +1269,11 @@ async function humanPauseBeforeSend(client, peer, message, delayMs, typingMs, in
   const dwell = Math.min(readDwellMs, Math.max(380, silentBudget + 600));
   await sleep(dwell);
   const remainingSilent = Math.max(0, silentBudget - dwell);
+  if (accountId != null) {
+    waitBeforeReply._rethinkChance = humanExtra.getAccountPace(accountId).rethinkChance;
+  }
   await waitBeforeReply(client, peer, remainingSilent + typeMs, typeMs);
+  waitBeforeReply._rethinkChance = undefined;
 }
 
 /**
@@ -1728,23 +1746,30 @@ function shouldSuppressNftForTurn(
   if (history && typeof objectionHandler.getDvClarifyHint === 'function') {
     if (objectionHandler.getDvClarifyHint(text, history)) return true;
   }
+  if (history && typeof objectionHandler.getDvRareCorrectionHint === 'function') {
+    if (objectionHandler.getDvRareCorrectionHint(text, history)) return true;
+  }
   return false;
 }
 
-/** Если модель всё же ушла в NFT при ДВ-контексте — жёсткий безопасный ответ. */
+/** Если модель всё же ушла в NFT / «уже бывал» при ДВ-контексте — жёсткий безопасный ответ. */
 function sanitizeReplyAgainstNftLeak(reply, objectionHint) {
   const hint = String(objectionHint || '');
   if (!hint) return reply;
   const dvGuard =
-    /только про дв|про ДВ|НА дв|ЗАПРЕЩЕНО: NFT|ЗАПРЕЩЕНО: «ты уже в теме|КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: NFT/i.test(
+    /только про дв|про ДВ|НА дв|ЗАПРЕЩЕНО: NFT|ЗАПРЕЩЕНО: «ты уже в теме|КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: NFT|КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: «уже бывал/i.test(
       hint,
     );
   if (!dvGuard) return reply;
   const text = String(reply || '');
-  if (!/нфт|\bnft\b|токен|флип|коллекц|платформ|крипт|whitelist|вайтлист/i.test(text)) {
-    return reply;
-  }
+  const nftLeak = /нфт|\bnft\b|токен|флип|коллекц|платформ|крипт|whitelist|вайтлист/i.test(text);
+  const veteranPush =
+    /новичок|редко сидит|мало дней|редко на дв|не бывалый|КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: «уже бывал/i.test(
+      hint,
+    ) && /уже\s+бывал|уже\s+шаришь|ну\s+ты\s+на\s+дв\s+уже|опытный\s+на\s+дв/i.test(text);
+  if (!nftLeak && !veteranPush) return reply;
   if (/уточняет|какой\s*\//i.test(hint)) return 'ну про дв)';
+  if (/редко на дв|не бывалый|поправляет/i.test(hint)) return 'ага поняла)';
   return 'поняла)';
 }
 
@@ -2614,14 +2639,52 @@ function peerAsksToProveHuman(text) {
   return PEER_VERIFY_HUMAN_RE.test(userTextForMediaIntent(text));
 }
 
+/**
+ * Модель иногда копирует служебную метку истории
+ * `[медиа:#222] {кружок: …}` вместо <<CIRCLE>> — это нельзя слать текстом в чат.
+ * Вырезаем метку; тип медиа и живой хвост («ну а у тебя как?») сохраняем.
+ */
+function stripLeakedMediaHistoryTag(reply) {
+  let text = String(reply || '');
+  const typeMap = { фото: 'photo', видео: 'video', кружок: 'circle', медиа: 'photo' };
+  let leakedType = null;
+
+  text = text.replace(
+    /\[медиа:#\d+\]\s*\{(фото|видео|кружок|медиа)\s*:\s*([^}]*)\}/gi,
+    (_, kind, body) => {
+      leakedType = typeMap[String(kind).toLowerCase()] || leakedType;
+      return String(body || '').trim();
+    },
+  );
+  text = text.replace(/\[медиа:#\d+\]\s*/gi, () => {
+    if (!leakedType) leakedType = 'circle';
+    return '';
+  });
+  // Голое `{кружок: …}` без префикса — тоже служебное.
+  text = text.replace(
+    /\{(фото|видео|кружок|медиа)\s*:\s*([^}]*)\}/gi,
+    (_, kind, body) => {
+      leakedType = typeMap[String(kind).toLowerCase()] || leakedType;
+      return String(body || '').trim();
+    },
+  );
+
+  text = text.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  return { text, leakedType };
+}
+
 function extractMediaRequest(reply) {
-  const first = reply.match(/<<\s*(PHOTO|VIDEO|CIRCLE)\s*>>/i);
+  const first = String(reply || '').match(/<<\s*(PHOTO|VIDEO|CIRCLE)\s*>>/i);
   const map = { PHOTO: 'photo', VIDEO: 'video', CIRCLE: 'circle' };
-  const mediaType = first ? map[first[1].toUpperCase()] : null;
-  let text = reply
-    .replace(MEDIA_TOKEN_RE, '')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
+  const fromToken = first ? map[first[1].toUpperCase()] : null;
+  const stripped = stripLeakedMediaHistoryTag(
+    String(reply || '')
+      .replace(MEDIA_TOKEN_RE, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim(),
+  );
+  let text = stripped.text;
+  const mediaType = fromToken || stripped.leakedType || null;
 
   // Подстраховка: если модель всё же прислала отказ ВМЕСТЕ с медиа-токеном
   // (например «не, давай пока тут общаться)» + <<CIRCLE>>), убираем
@@ -4032,8 +4095,10 @@ async function flushMessageBuffer(accountId, peerId, senderName) {
 
   messageBuffers.delete(key);
 
-  // Склеиваем все сообщения серии в один текст (каждое с новой стро��и).
-  const combinedText = entry.texts.join('\n').trim();
+  // Пустые «ок/ага/аа» из пачки выкидываем, если есть живая строка.
+  const kept = humanExtra.filterBoringBatch(entry.texts);
+  const combinedText = kept.join('\n').trim();
+  if (!combinedText) return;
 
   await processBufferedMessages(
     accountId,
@@ -4053,6 +4118,41 @@ async function flushMessageBuffer(accountId, peerId, senderName) {
  * это приводило к тому, что реальный вопрос собеседника оставался б��з ответа.
  * Если пауза для этого диалога уже идёт — второй раз не планируем.
  */
+/**
+ * Редкая досылка «а ещё)» через 20–90с — как дописала мысль.
+ * Не шлём, если уже идёт буфер / занятость / in-flight.
+ */
+function scheduleAfterthought(accountId, sender, peerId, senderName, prevOutText) {
+  const delay = humanExtra.afterthoughtDelayMs(accountId);
+  const phrase = humanExtra.pickAfterthought(prevOutText);
+  if (!delay || !phrase) return;
+  const key = bufferKey(accountId, peerId);
+  const timer = setTimeout(() => {
+    (async () => {
+      try {
+        if (messageBuffers.has(key) || deferredDialogs.has(key) || processingInFlight.has(key)) {
+          return;
+        }
+        const client = getActiveClient(accountId);
+        if (!client) return;
+        const settings = await getAccountSettings(accountId);
+        if (!settings?.enabled) return;
+        if (!isWithinWorkingHours(settings)) return;
+        await waitBeforeReply(client, sender, 900 + Math.random() * 1200, 800);
+        await client.sendMessage(sender, { message: phrase });
+        await saveMessage(accountId, peerId, senderName, 'assistant', phrase);
+        lastReplyAt.set(key, Date.now());
+        console.log(
+          `[${accountLabel(accountId)}] Досылка «${phrase}» для ${senderName} (+${Math.round(delay / 1000)}с).`,
+        );
+      } catch (e) {
+        console.error(`[${accountLabel(accountId)}] afterthought:`, e.message);
+      }
+    })();
+  }, delay);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
 function scheduleReengage(accountId, sender, peerId, senderName, history, text, message) {
   const key = bufferKey(accountId, peerId);
   if (deferredDialogs.has(key)) return;
@@ -4166,7 +4266,18 @@ async function fireReengage(accountId, peerId) {
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, text);
     const accountMood = await moodEngine.getMood(accountId);
     const personaHint = await accountPersona.buildPersonaHint(accountId);
+    const slangHint = humanExtra.slangHintForAccount(accountId);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
+    const msgDateRe =
+      message?.date != null
+        ? new Date(Number(message.date) * (Number(message.date) < 1e12 ? 1000 : 1))
+        : null;
+    const morningHint = humanExtra.needsMorningApology(msgDateRe)
+      ? humanExtra.morningApologyHint()
+      : null;
+    const awayMin = await humanExtra.lastAssistantAgeMinutes(db, accountId, peerId);
+    const awayHint = morningHint ? null : humanExtra.awayReturnHint(awayMin);
+    const detailHint = humanExtra.buildHisDetailCallbackHint(history, text);
     const liveHistory = await getHistory(accountId, peerId);
     // Перед scheduleReengage user уже saveMessage — не дублируем turn в generateReply.
     let replyHistory = liveHistory.length ? liveHistory : history;
@@ -4188,7 +4299,7 @@ async function fireReengage(accountId, peerId) {
     if (flipPhotoQuestion) {
       objectionHint = objectionHandler.getFlipPhotoQuestionHint();
     } else if (isAnswerToHowLong(replyHistory)) {
-      objectionHint = objectionHandler.getHowLongAckHint();
+      objectionHint = objectionHandler.getHowLongAckHint(text);
     } else {
       objectionHint = objectionHandler.detectHint(text, replyHistory);
     }
@@ -4247,12 +4358,16 @@ async function fireReengage(accountId, peerId) {
       accountMoodHint: accountMood.hint || null,
       flashEmotion: moodInfo.flash || null,
       personaHint,
+      slangHint,
       emotionHint,
       sessionForgetHint,
       memoryContextHint,
       memoryHint: sessionForgetHint ? null : useMemoryHint,
       objectionHint,
       complimentHint,
+      morningApologyHint: morningHint,
+      awayReturnHint: awayHint,
+      hisDetailHint: detailHint,
       accountId,
     });
     if (!rawReply) {
@@ -4262,6 +4377,8 @@ async function fireReengage(accountId, peerId) {
       );
     }
     rawReply = sanitizeReplyAgainstNftLeak(rawReply, objectionHint);
+    rawReply = humanExtra.stripAntiMirror(rawReply, text);
+    rawReply = humanExtra.echoLengthClip(text, rawReply);
     if (dueMemory && useMemoryHint && !sessionForgetHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
@@ -4354,10 +4471,11 @@ async function fireReengage(accountId, peerId) {
     const pendingWorkAside = !!nft.sayWorkProblem;
 
     const reactionOnly = !!reaction && !outText && !mediaType && !nft.sendVoice;
+    const lateTextMs = humanExtra.reactThenTextDelayMs(accountId, reaction, outText);
 
     // Read → dwell → typing → send (не typing до прочтения).
-    const delayMs = delayBeforeSendMs(settings, outText);
-    if (reactionOnly) {
+    const delayMs = delayBeforeSendMs(settings, outText, { accountId });
+    if (reactionOnly || (reaction && lateTextMs > 0)) {
       await markPeerAsRead(client, sender, null);
       await sleep(800 + Math.floor(Math.random() * 2200));
     } else {
@@ -4369,8 +4487,9 @@ async function fireReengage(accountId, peerId) {
         sender,
         null,
         delayMs,
-        Math.min(computeTypingMs(outText), delayMs),
+        Math.min(computeTypingMs(outText, accountId), delayMs),
         text,
+        accountId,
       );
     }
 
@@ -4385,13 +4504,23 @@ async function fireReengage(accountId, peerId) {
       }
     }
 
+    if (outText && lateTextMs > 0) {
+      await sleep(lateTextMs);
+      const typeMs = Math.min(2800, computeTypingMs(outText, accountId));
+      waitBeforeReply._rethinkChance = humanExtra.getAccountPace(accountId).rethinkChance;
+      await waitBeforeReply(client, sender, typeMs, typeMs);
+      waitBeforeReply._rethinkChance = undefined;
+    }
+
     if (outText) {
+      outText = humanExtra.applyAccountSlang(outText, accountId);
       await sendHumanText(client, sender, accountId, peerId, senderName, outText, text);
       lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
       await learningDb.recordBotReply(accountId, peerId, text, stripQuestionTags(outText), learningStage);
       console.log(
         `[${accountLabel(accountId)}] Отложенный ответ для ${senderName}: "${stripQuestionTags(outText)}"`,
       );
+      scheduleAfterthought(accountId, sender, peerId, senderName, outText);
     }
 
     if (laugh && !nft.sendVoice && !reactionOnly && !laughedRecently(history)) {
@@ -4592,8 +4721,12 @@ async function resolveReplyTargets(client, sender, bubbles, incomingText) {
 }
 
 async function sendHumanText(client, sender, accountId, peerId, senderName, outText, incomingText = '') {
+  // Никогда не слать в Telegram служебные `[медиа:#…]` — только живой текст.
+  outText = stripLeakedMediaHistoryTag(outText).text;
+  if (!outText) return;
   const parsed = parseReplyBubbles(outText);
-  const bubbles = parsed.map((b) => b.text);
+  const bubbles = parsed.map((b) => b.text).filter(Boolean);
+  if (!bubbles.length) return;
   outText = bubbles.join('\n');
   // Запоминаем, что рассказала о себе — для следующих ответов этому человеку.
   memoryTriggers.extractSelfTold(accountId, peerId, outText).catch(() => {});
@@ -5165,13 +5298,24 @@ async function processBufferedMessages(
     const moodInfo = await moodEngine.getConversationMood(accountId, peerId, contextualText);
     const accountMood = await moodEngine.getMood(accountId);
     const personaHint = await accountPersona.buildPersonaHint(accountId);
+    const slangHint = humanExtra.slangHintForAccount(accountId);
     const dueMemory = await memoryTriggers.getDueFollowUp(accountId, peerId);
+    const msgDate =
+      message?.date != null
+        ? new Date(Number(message.date) * (Number(message.date) < 1e12 ? 1000 : 1))
+        : null;
+    const morningHint = humanExtra.needsMorningApology(msgDate)
+      ? humanExtra.morningApologyHint()
+      : null;
+    const awayMin = await humanExtra.lastAssistantAgeMinutes(db, accountId, peerId);
+    const awayHint = morningHint ? null : humanExtra.awayReturnHint(awayMin);
+    const detailHint = humanExtra.buildHisDetailCallbackHint(history, contextualText || text);
     // How-long ack важнее generic later/dont_understand — иначе «потом» съедает реакцию на дв.
     let objectionHint = null;
     if (flipPhotoQuestion) {
       objectionHint = objectionHandler.getFlipPhotoQuestionHint();
     } else if (isAnswerToHowLong(history)) {
-      objectionHint = objectionHandler.getHowLongAckHint();
+      objectionHint = objectionHandler.getHowLongAckHint(text);
     } else {
       objectionHint = objectionHandler.detectHint(text, history, {
         voiceWillSend: !!voice,
@@ -5232,12 +5376,16 @@ async function processBufferedMessages(
       accountMoodHint: accountMood.hint || null,
       flashEmotion: moodInfo.flash || null,
       personaHint,
+      slangHint,
       emotionHint,
       sessionForgetHint,
       memoryContextHint,
       memoryHint: sessionForgetHint ? null : useMemoryHint,
       objectionHint,
       complimentHint,
+      morningApologyHint: morningHint,
+      awayReturnHint: awayHint,
+      hisDetailHint: detailHint,
       accountId,
     });
     if (!rawReply) {
@@ -5247,6 +5395,8 @@ async function processBufferedMessages(
       );
     }
     rawReply = sanitizeReplyAgainstNftLeak(rawReply, objectionHint);
+    rawReply = humanExtra.stripAntiMirror(rawReply, contextualText || text);
+    rawReply = humanExtra.echoLengthClip(contextualText || text, rawReply);
     if (dueMemory && useMemoryHint && !sessionForgetHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     // Отделяем текст от запрошенного типа медиа (токен вырезаем из текста).
@@ -5355,20 +5505,21 @@ async function processBufferedMessages(
     const pendingWorkAside = !!nft.sayWorkProblem;
 
     const reactionOnly = !!reaction && !outText && !mediaType && !voice && !nft.sendVoice;
+    const lateTextMs = humanExtra.reactThenTextDelayMs(accountId, reaction, outText);
 
-    // 5. Держим случайную паузу с индикатором «печатает...» — так ответ
-    // выглядит ��ивым, а не мгновенным. Длительность индикатора зависит от
-    // длины итогового текста, чтобы длинные сообщения «печатались» дольше.
-    if (reactionOnly) {
+    // 5. Пауза: реакция отдельно → (опц.) текст позже; иначе обычный typing.
+    if (reactionOnly || (reaction && lateTextMs > 0)) {
       await markPeerAsRead(client, sender, message);
-      const reactDelay = 800 + Math.floor(Math.random() * 2200);
+      const reactDelay = 700 + Math.floor(Math.random() * 2000);
       console.log(
         `[${accountLabel(accountId)}] Пауза ${Math.round(reactDelay / 1000)}с перед реакцией для ${senderName}.`,
       );
       await sleep(reactDelay);
     } else {
       const textDelayMs =
-        forcedDelayMs != null ? forcedDelayMs : delayBeforeSendMs(settings, outText);
+        forcedDelayMs != null
+          ? forcedDelayMs
+          : delayBeforeSendMs(settings, outText, { accountId });
       console.log(
         `[${accountLabel(accountId)}] Пауза ${Math.round(textDelayMs / 1000)}с перед ответом для ${senderName}.`,
       );
@@ -5377,8 +5528,9 @@ async function processBufferedMessages(
         sender,
         message,
         textDelayMs,
-        Math.min(computeTypingMs(outText), textDelayMs),
+        Math.min(computeTypingMs(outText, accountId), textDelayMs),
         contextualText || text,
+        accountId,
       );
     }
 
@@ -5414,7 +5566,22 @@ async function processBufferedMessages(
       }
     }
 
+    if (outText && lateTextMs > 0) {
+      console.log(
+        `[${accountLabel(accountId)}] Текст после реакции через ~${Math.round(lateTextMs / 1000)}с для ${senderName}.`,
+      );
+      await sleep(lateTextMs);
+      if (await cancelReplyIfDialogGone(client, accountId, sender, senderName, message, 'после паузы реакции')) {
+        return;
+      }
+      const typeMs = Math.min(2800, computeTypingMs(outText, accountId));
+      waitBeforeReply._rethinkChance = humanExtra.getAccountPace(accountId).rethinkChance;
+      await waitBeforeReply(client, sender, typeMs, typeMs);
+      waitBeforeReply._rethinkChance = undefined;
+    }
+
     if (outText) {
+      outText = humanExtra.applyAccountSlang(outText, accountId);
       await sendHumanText(client, sender, accountId, peerId, senderName, outText, text);
       lastReplyAt.set(bufferKey(accountId, peerId), Date.now());
       if (msgId) lastAnsweredMsgId.set(inFlightKey, msgId);
@@ -5423,6 +5590,7 @@ async function processBufferedMessages(
       if (pendingWorkAside) {
         await maybeSendWorkAside(client, sender, accountId, peerId, senderName, true);
       }
+      scheduleAfterthought(accountId, sender, peerId, senderName, outText);
     }
 
     if (laugh && !voice && !nft.sendVoice && !reactionOnly && !laughedRecently(history)) {
@@ -7019,6 +7187,8 @@ async function tickNftCampaign(accountId) {
     tickDailyLife(accountId);
   }
 module.exports = {
+  extractMediaRequest,
+  stripLeakedMediaHistoryTag,
   startLogin,
   resendLoginCode,
   confirmCode,

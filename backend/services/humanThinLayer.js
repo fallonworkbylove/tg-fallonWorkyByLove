@@ -1,9 +1,10 @@
 /**
  * Тонкий слой человечности: короткий хинт + мало постфильтров.
- * Без банков уклонов («короче хз)» / «как получится)») — они сами палят бота.
- *
- * Подключается в aiResponder.finalize; на VPS не деплоить, пока идёт day-test (1 окт).
+ * Хинт — про КАК писать (позитив), не простыня запретов.
+ * Safety/sense-фиксы — ниже в applyThinPostfilters.
  */
+
+const softHumanLite = require('./softHumanLite');
 
 function bare(userMessage) {
   return String(userMessage || '')
@@ -28,24 +29,59 @@ function isWeak(body) {
   );
 }
 
-/** Один сжатый хинт вместо десятка system-блоков. */
+/** Вытащить 1–3 «живых» слова из его фразы для якоря. */
+function pickHookWords(msg) {
+  const stop = new Set([
+    'это', 'вот', 'как', 'что', 'чем', 'где', 'кто', 'про', 'для', 'или', 'если',
+    'меня', 'тебя', 'тебе', 'мне', 'мой', 'моя', 'мои', 'твой', 'твоя', 'просто',
+    'очень', 'только', 'сейчас', 'щас', 'типа', 'вообще', 'короче', 'ладно',
+    'ага', 'угу', 'ну', 'да', 'нет', 'неа', 'ок', 'окей', 'есть', 'было', 'будет',
+  ]);
+  const words = String(msg || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 4 && !stop.has(w));
+  const uniq = [];
+  for (const w of words) {
+    if (!uniq.includes(w)) uniq.push(w);
+    if (uniq.length >= 3) break;
+  }
+  return uniq;
+}
+
+/** Один сжатый хинт: ремесло живого чата, без каскада ЗАПРЕЩЕНО. */
 function buildThinHumanHint(userMessage, history) {
   const msg = bare(userMessage);
-  const hasQ = /\?/.test(msg) || /^(?:сколько|скок|где|откуда|когда|почему|зачем|как\s+тебя|ты\s+замуж)/i.test(msg);
+  const hasQ =
+    /\?/.test(msg) ||
+    /^(?:сколько|скок|где|откуда|когда|почему|зачем|как\s+тебя|ты\s+замуж)/i.test(msg);
+  const hooks = pickHookWords(msg);
   const parts = [
-    'Ты обычная девушка в Telegram: коротко, тепло, по его теме. Не ChatGPT, не коуч, не анкета. ' +
-      'ЗАПРЕЩЕНО: «хороший подход», «восприятие», «нужно остановиться и подумать», «каждому своё», ' +
-      '«поняла что ты шутник», «про стиль», «ок спасибо», «уточни пожалуйста», голый «?», пустое «ага)» на рассказ. ' +
-      'Не уклоняйся штампом «короче хз)» / «ну смотря)» / «сложно так сразу)» — ответь хоть чуть по сути.',
+    'Пиши как девушка в обычном Telegram: коротко, тепло, будто печатаешь с телефона. ' +
+      'Цепляйся к его словам — повтори крошку смысла своими словами, не общий кивок. ' +
+      'Ритм живой: иногда одна обрубленная фраза, иногда два коротких куска; можно «ну/хм/типа» в начале, если к месту. ' +
+      'Скобка «)» — улыбка, не обязательно каждый раз. Без коуч-тона и без «эссе про жизнь».',
   ];
-  if (hasQ) {
-    parts.push('У него вопрос — одна короткая фраза по сути, не кивок и не уклон.');
+  if (hooks.length) {
+    parts.push(`Якорь из его сообщения: ${hooks.map((w) => `«${w}»`).join(', ')} — обыграй хотя бы одно.`);
   }
-  if (msg.length >= 40 && !hasQ) {
-    parts.push('Он рассказал что-то — живая реакция с деталью из его слов, не «ага согласна».');
+  if (hasQ) {
+    parts.push('У него вопрос — сначала прямой короткий ответ по сути, потом уже болтовня если хочется.');
+  } else if (msg.length >= 35) {
+    parts.push(
+      'Он поделился — живая реакция с деталью из его слов (что именно зацепило), не голое «ага)» / «поняла)».',
+    );
+  } else if (msg.length > 0 && msg.length < 12 && !hasQ) {
+    parts.push('Короткое «ок/ага» от него — можно так же коротко, без разгона темы.');
   }
   if (Array.isArray(history) && history.length >= 4) {
-    parts.push('Смотри историю: держи нить, не начинай с нуля.');
+    parts.push('Держи нить диалога: продолжай последнюю тему, не начинай с чистого листа.');
+  }
+  if (softHumanLite.needsReciprocalQuestion(history, userMessage)) {
+    parts.push(
+      'Диалог односторонний — после короткого ответа один живой вопрос про него (день / чем занят / настроение), без зеркала «а ты откуда».',
+    );
   }
   return parts.join(' ');
 }
@@ -240,7 +276,6 @@ function fixDismissiveFriendly(reply, userMessage) {
  * Единая точка: safety → sense → style. Без ASK_DODGE / pickAskFallback.
  */
 function applyThinPostfilters(reply, userMessage, history = null, systemPrompt = null) {
-  void history;
   void systemPrompt;
   if (!reply) return reply;
   let out = reply;
@@ -255,6 +290,8 @@ function applyThinPostfilters(reply, userMessage, history = null, systemPrompt =
   out = fixFormalPlease(out);
   out = fixBrokenHedgeTail(out);
   out = fixDismissiveFriendly(out, userMessage);
+  // Мягкий слой: коуч-фразы, обрубки, взаимный вопрос — без банков уклонов.
+  out = softHumanLite.applySoftLite(out, history, userMessage);
   return out;
 }
 

@@ -4,6 +4,7 @@ const { logUsage } = require('./finetuneUsage');
 const humanizeSpeech = require('./humanizeSpeech');
 const lifeTexture = require('./lifeTexture');
 const humanThinLayer = require('./humanThinLayer');
+const humanExtra = require('./humanExtra');
 
 // ---------------------------------------------------------------------------
 // ПРОКСИ для OpenAI.
@@ -400,7 +401,7 @@ function enrichGeoFollowUp(history, userMessage) {
   }
 
   const clarifying =
-    /(переезж|куда\s+(ты\s+)?(ед|переез)|в\s+каком\s+городе|а\s+щас|а\s+сейчас|так\s+ты\s+в\s+|мама|мам[ауе]|зд[еэ]сь|зачем\s+тебе\s+в\s+|откуда\s+ты|где\s+ты\s+(сейчас|щас)|болеет)/i.test(
+    /(переезж|куда\s+(ты\s+)?(ед|переез)|в\s+каком\s+городе|а\s+щас|а\s+сейчас|так\s+ты\s+в\s+|мама|мам[ауе]|зд[еэ]сь|зачем\s+тебе\s+в\s+|откуда\s+ты|где\s+ты\s+(сейчас|щас)|болеет|пизд|вр[её]ш|раскрыл|путаешь|показани|ты\s+же\s+говорил|через\s+пару\s+недел)/i.test(
       text,
     );
   if (!clarifying) return text;
@@ -509,12 +510,13 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
 
   // Сжатый стиль (thin): без простыни запретов — детали в humanThinLayer.buildThinHumanHint.
   const humanStyleReminder =
-    'Стиль: живая девушка в Telegram, не бот и не колл-центр. Коротко, тепло, по его теме. ' +
-    'На медиа которое ОН прислал — реагируй на содержимое, НЕ «покажи». ' +
-    'На прямой вопрос — короткий ответ БЕЗ зеркального «а ты?». ' +
+    'Стиль: живая девушка в Telegram, будто с телефона — коротко, тепло, по его теме. ' +
+    'Цепляйся к конкретике из его фразы своими словами. Ритм неровный: то короче, то чуть живее. ' +
+    'На медиа которое ОН прислал — реагируй на содержимое, не проси «покажи». ' +
+    'На прямой вопрос — сначала короткий ответ, без зеркального «а ты?». ' +
     '«Спасибо» только на комплимент/подарок, не на «ок/молодец». Без лести и морали. ' +
-    'Иногда мелочь из своего дня; изредка «ну/хз/блин» перед содержательной фразой. ' +
-    'Своё мнение и лёгкая вредность ок. Женский род о себе. ДВ = Дайвинчик — знаешь. ' +
+    'Иногда мелочь из своего дня; иногда «ну/хм/типа/блин» перед фразой, если звучит естественно. ' +
+    'Своё мнение и лёгкая вредность ок. Не обязана поддакивать. Женский род о себе. ДВ = Дайвинчик — знаешь. ' +
     'Реакции: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
 
   const answerFirstReminder =
@@ -604,7 +606,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
         'фото/видео/кружок, а собеседник просто спрашивает про него или продолжает разговор ' +
         '(например «а куда едешь?», «а что там?», «красиво») — отвечай обычным текстом и НЕ вставляй ' +
         'новый токен. Новый токен вставляй только если человек СНОВА явно просит прислать ещё. ' +
-        'Максимум ОДИН токен за сообщение. Если про фото/видео речи нет — токены не вставляй.',
+        'Максимум ОДИН токен за сообщение. Если про фото/видео речи нет — токены не вставляй. ' +
+        'НИКОГДА не пиши в ответ служебные строки вида [медиа:#123] или {кружок: …} — только <<PHOTO>>/<<VIDEO>>/<<CIRCLE>> и обычный текст.',
     });
   } else if (options.contextualCircle) {
     messages.push({
@@ -617,6 +620,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
         'и НЕ шли фото/видео токены <<PHOTO>>/<<VIDEO>> без прямой просьбы. ' +
         'Если только что уже было медиа — токен не ставь. ' +
         'С токеном не пиши отказы («не могу», «попозже»). Короткий текст или только <<CIRCLE>>. ' +
+        'НИКОГДА не пиши [медиа:#…] / {кружок:…} — только токен <<CIRCLE>>. ' +
         'В большинстве ответов токен НЕ нужен — обычный текст.',
     });
   }
@@ -665,11 +669,23 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   if (options.personaHint) {
     messages.push({ role: 'system', content: options.personaHint });
   }
+  if (options.slangHint) {
+    messages.push({ role: 'system', content: options.slangHint });
+  }
   if (options.emotionHint) {
     messages.push({ role: 'system', content: options.emotionHint });
   }
   if (options.sessionForgetHint) {
     messages.push({ role: 'system', content: options.sessionForgetHint });
+  }
+  if (options.morningApologyHint) {
+    messages.push({ role: 'system', content: options.morningApologyHint });
+  }
+  if (options.awayReturnHint) {
+    messages.push({ role: 'system', content: options.awayReturnHint });
+  }
+  if (options.hisDetailHint) {
+    messages.push({ role: 'system', content: options.hisDetailHint });
   }
 
   // Memory Triggers: бот сама возвращается к факту / помнит что уже говорила.
@@ -767,7 +783,17 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   for (const h of history || []) {
     if (!h || !h.content) continue;
     const role = h.role === 'assistant' ? 'assistant' : 'user';
-    messages.push({ role, content: String(h.content) });
+    let content = String(h.content);
+    // Служебную метку БД не показываем модели — иначе копирует `[медиа:#222]` в чат.
+    if (role === 'assistant') {
+      content = content
+        .replace(
+          /^\[медиа:#\d+\]\s*\{(фото|видео|кружок|медиа)\s*:\s*([^}]+)\}/i,
+          (_, kind, desc) => `[ты отправила ${kind}: ${String(desc).trim()}]`,
+        )
+        .replace(/^\[медиа:#\d+\]\s*/i, '[ты отправила медиа] ');
+    }
+    messages.push({ role, content });
   }
   messages.push({ role: 'user', content: contextualUserMessage });
 
@@ -836,9 +862,20 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
       history,
       finalPrompt,
     );
-    const strippedMoveSpam = softenMoveSpamOnDayAsk(strippedJobMove, contextualUserMessage, history);
+    const strippedGeoSwap = fixSwappedCurrentCity(
+      strippedJobMove,
+      contextualUserMessage,
+      history,
+      finalPrompt,
+    );
+    const strippedMoveSpam = softenMoveSpamOnDayAsk(strippedGeoSwap, contextualUserMessage, history);
     const strippedConfused = fixConfusedScript(strippedMoveSpam, contextualUserMessage, history);
-    const strippedPolite = replaceDesignerClaims(stripPlatitudes(stripRoboticPoliteness(strippedConfused, userMessage)));
+    const strippedBroken = fixBrokenChatFragments(strippedConfused);
+    const strippedNftQ = softBlockNftOnBareQuestion(strippedBroken, contextualUserMessage, history);
+    const strippedDeleteAdmit = fixFalseDeleteAdmit(strippedNftQ, contextualUserMessage);
+    const strippedPolite = replaceDesignerClaims(
+      stripPlatitudes(stripRoboticPoliteness(strippedDeleteAdmit, userMessage)),
+    );
     const strippedQ = stripHabitualTrailingQuestion(strippedPolite, history, contextualUserMessage);
     const noSelfFix = humanizeSpeech.stripSelfCorrections(strippedQ);
     const dehyped = humanizeSpeech.softenHype(noSelfFix, history, humanize);
@@ -848,7 +885,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     const clipped = stripDanglingTail(clipOverlongReply(gendered, maxReplyLines));
     const shortBurst = humanizeSpeech.maybeShortBurst(clipped, humanize, replyLang);
     const withBeat = humanizeSpeech.maybeWaitBeat(shortBurst, humanize, history, replyLang);
-    const withTypos = replyLang === 'ru' ? humanizeSpeech.applyHumanTypos(withBeat, humanize) : withBeat;
+    const bubbled =
+      replyLang === 'ru' ? humanizeSpeech.maybeDoubleBubble(withBeat, humanize, replyLang) : withBeat;
+    const punct = humanizeSpeech.varyTerminalPunctuation(bubbled, humanize, replyLang);
+    const withTypos = replyLang === 'ru' ? humanizeSpeech.applyHumanTypos(punct, humanize) : punct;
     const cleanedEn =
       replyLang === 'en'
         ? humanizeSpeech.stripEnParenSmiles(humanizeSpeech.stripRuLeakFromEn(withTypos))
@@ -861,9 +901,15 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
       history,
       finalPrompt,
     );
+    const noMirror = humanExtra.stripAntiMirror(thinned, contextualUserMessage);
+    const echoed = humanExtra.echoLengthClip(contextualUserMessage, noMirror);
+    const slanged =
+      replyLang === 'ru' && options.accountId != null
+        ? humanExtra.applyAccountSlang(echoed, options.accountId)
+        : echoed;
     // Ответ был одним приветствием, а мы уже здоровались — реакция вместо второго «привет)».
-    if (clipped.trim() && !thinned.trim()) return `<<REACT:${['❤', '🥰', '😁'][Math.floor(Math.random() * 3)]}>>`;
-    return lowercaseSentenceStarts(thinned);
+    if (clipped.trim() && !slanged.trim()) return `<<REACT:${['❤', '🥰', '😁'][Math.floor(Math.random() * 3)]}>>`;
+    return lowercaseSentenceStarts(slanged);
   };
 
   const raw = completion.choices[0]?.message?.content?.trim() || '';
@@ -1154,6 +1200,28 @@ function seededPick(seedStr, arr, n) {
   return out;
 }
 
+/** Пул мелочей с лёгким уклоном под время суток (МСК). */
+function dayDetailsPoolNow() {
+  const hour = Number(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Europe/Moscow',
+      hour: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date()).find((p) => p.type === 'hour')?.value || 12,
+  ) % 24;
+  const preferRe =
+    hour < 11
+      ? /(с утра|сонн|чай|кофе|выспал|голова)/i
+      : hour >= 22 || hour < 5
+        ? /(ноч|сериал|сонн|плед|до\s+3)/i
+        : hour >= 18
+          ? /(вечер|ужин|сериал|плед|роллы|подруж)/i
+          : /(день|магазин|ноут|улиц|токен|коробк)/i;
+  const preferred = DAY_DETAILS_RU.filter((d) => preferRe.test(d));
+  const rest = DAY_DETAILS_RU.filter((d) => !preferRe.test(d));
+  return preferred.length ? preferred.concat(rest) : DAY_DETAILS_RU;
+}
+
 /** 3 мелочи дня на аккаунт (одни и те же весь день по МСК), без уже сказанных. */
 function buildDayDetailsHint(accountId, userMessage, history) {
   if (accountId == null) return null;
@@ -1164,7 +1232,8 @@ function buildDayDetailsHint(accountId, userMessage, history) {
     .filter((h) => h && h.role === 'assistant')
     .map((h) => String(h.content || '').toLowerCase())
     .join(' ');
-  const fresh = seededPick(`${accountId}:${day}`, DAY_DETAILS_RU, 3).filter(
+  const pool = dayDetailsPoolNow();
+  const fresh = seededPick(`${accountId}:${day}`, pool, 3).filter(
     (d) => !said.includes(d.split(/[ ,]+/).slice(0, 3).join(' ')),
   );
   if (!fresh.length) return null;
@@ -1426,6 +1495,116 @@ function fixInventedJobAsMoveReason(reply, userMessage, history, prompt) {
     .join('\n');
 }
 
+function cityStem(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^а-яa-z\-]/gi, '')
+    .replace(/(ского|скому|ским|ском|ого|ому|ым|ом|ем|ей|ой|ая|ое|ые|ую|ии|ий|ый|а|я|у|е|и|ы|о)$/i, '')
+    .slice(0, 7);
+}
+
+function sameCity(a, b) {
+  const sa = cityStem(a);
+  const sb = cityStem(b);
+  if (!sa || !sb || sa.length < 3 || sb.length < 3) return false;
+  return sa === sb || sa.startsWith(sb) || sb.startsWith(sa);
+}
+
+/** Город «сейчас живу / сейчас в …» из своих недавних реплик. */
+function extractStatedCurrentCity(history) {
+  const recent = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-6)
+    .map((h) => String(h.content || ''));
+  for (let i = recent.length - 1; i >= 0; i -= 1) {
+    const t = recent[i];
+    const m =
+      t.match(
+        /(?:сейчас|щас)\s+в\s+([А-ЯЁа-яё\-]+(?:\s+[А-ЯЁа-яё\-]+)?)/i,
+      ) ||
+      t.match(
+        /живу\s+в\s+([А-ЯЁа-яё\-]+(?:\s+[А-ЯЁа-яё\-]+)?)/i,
+      ) ||
+      t.match(
+        /(?:из\s+России,?\s*)?сейчас\s+в\s+([А-ЯЁа-яё\-]+(?:\s+[А-ЯЁа-яё\-]+)?)\s+живу/i,
+      );
+    if (m && m[1]) return m[1].trim();
+  }
+  return null;
+}
+
+function extractPromptCities(prompt) {
+  const p = String(prompt || '');
+  const m = p.match(
+    /жив[её]шь\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+).{0,120}?переезжаешь\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+)/i,
+  );
+  if (!m) return { from: null, to: null };
+  return { from: m[1], to: m[2] };
+}
+
+const BARE_IM_IN_CITY_RE =
+  /(?:^|[.!?)\n]\s*)(?:в\s+смысле\??\s*)?(?:я\s+)?(?:сейчас\s+|щас\s+)?в\s+([А-ЯЁа-яё\-]+(?:\s+[А-ЯЁа-яё\-]+)?)\s*(?:живу|нахожусь)?\s*[).!?]*/gi;
+
+/**
+ * «живу в Нижнем» → через минуту «я в Липецке» без слова переезд — чиним.
+ */
+function fixSwappedCurrentCity(reply, userMessage, history, prompt) {
+  const text = String(reply || '');
+  if (!text) return reply;
+
+  const stated = extractStatedCurrentCity(history);
+  const { from: promptFrom, to: promptTo } = extractPromptCities(prompt);
+  const currentCity = stated || promptFrom;
+  if (!currentCity) return reply;
+
+  // Явный переезд («переезжаю в B / поеду в B») — ок, города не путаем.
+  if (/переезж\w*\s+в\s+|поеду\s+в\s+|еду\s+в\s+|собираюсь\s+(?:в|ех)/i.test(text)) {
+    return reply;
+  }
+
+  const claimed = [];
+  let m;
+  const re = new RegExp(BARE_IM_IN_CITY_RE.source, 'gi');
+  while ((m = re.exec(text)) !== null) {
+    if (m[1]) claimed.push(m[1].trim());
+  }
+  const whole = text.match(
+    /^(?:в\s+смысле\??\s*)?(?:я\s+)?(?:сейчас\s+|щас\s+)?в\s+([А-ЯЁа-яё\-]+(?:\s+[А-ЯЁа-яё\-]+)?)\s*[).!?]*/i,
+  );
+  if (whole && whole[1]) claimed.push(whole[1].trim());
+
+  // Голый «я в B / в Липецке», где B ≠ текущий город (часто = город переезда).
+  const badClaim = claimed.find((c) => !sameCity(c, currentCity));
+  if (!badClaim) return reply;
+  if (promptTo && !sameCity(badClaim, promptTo) && stated) {
+    // Заявила третий город — тоже чиним к текущему + dest из промпта.
+  } else if (promptTo && !sameCity(badClaim, promptTo) && !stated) {
+    return reply;
+  }
+
+  const dest = promptTo && !sameCity(promptTo, currentCity) ? promptTo : badClaim;
+  const fallbacks = [
+    `в смысле? пока в ${currentCity}, в ${dest} переезжаю)`,
+    `пока ещё в ${currentCity}) в ${dest} поеду`,
+    `сейчас в ${currentCity}, еду в ${dest})`,
+  ];
+  const fallback = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+  if (text.length < 90) return fallback;
+  return text
+    .split('\n')
+    .map((line) => {
+      const lineCity = line.match(
+        /(?:я\s+)?(?:сейчас\s+|щас\s+)?в\s+([А-ЯЁа-яё\-]+(?:\s+[А-ЯЁа-яё\-]+)?)/i,
+      );
+      if (lineCity && sameCity(lineCity[1], badClaim) && !/переезж|поеду|еду\s+в/i.test(line)) {
+        return fallback;
+      }
+      return line;
+    })
+    .join('\n');
+}
+
 const SHORT_ACK_RE =
   /^(хорошо|хоршо|ок|окей|оке|окэй|ok|ладно|лан|понятно|понятненько|ясно|ясненько|пон|понял|поняла|норм|нормально|молодец|молодчина|умница|красава|красавица|класс|круто|супер|отлично|ага|угу|ну\s+да|да|ну\s+ок|ну\s+ладно|бывает|ну\s+бывает|прикольно|ааа|а+\s*понятно|лол|кек|хах+|ахах+|хм|эм)[\s).!👍😊🙂☺️❤️🔥😁😂❤🥰😘]*$/i;
 
@@ -1532,6 +1711,93 @@ function fixConfusedScript(reply, userMessage, history) {
   return reply;
 }
 
+const BROKEN_CHAT_FALLBACKS = ['ахах ладно)', 'ну ок)', 'поняла)', 'хм окей)'];
+
+/** Обрубки вроде «ну, что попал» / «просто читай» без объекта — звучат как сломанный скрипт. */
+function isBrokenChatLine(line) {
+  const bare = String(line || '')
+    .replace(/^\s*<<[^>\n]+>>\s*/, '')
+    .trim();
+  if (!bare) return false;
+  if (/^(?:ну[,.]?\s*)?что\s+попал\s*\)?\.?$/i.test(bare)) return true;
+  if (/^(?:жесть[,.]?\s*)?(?:раз\s+так[,.]?\s*)?(?:тогда\s+)?просто\s+читай\s*\)?\.?$/i.test(bare)) {
+    return true;
+  }
+  if (/просто\s+читай/i.test(bare) && bare.length <= 72) return true;
+  // «что попал» без дополнения (не «что попал в кадр»).
+  if (
+    /что\s+попал/i.test(bare) &&
+    bare.length <= 48 &&
+    !/что\s+попал\s+(?:в|на|под|мне|тебе|сюда|туда)/i.test(bare)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function fixBrokenChatFragments(reply) {
+  const text = String(reply || '');
+  if (!text.trim()) return reply;
+  const lines = text.split('\n');
+  let changed = false;
+  const out = lines.map((line) => {
+    if (!isBrokenChatLine(line)) return line;
+    changed = true;
+    const tag = (line.match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
+    return (
+      tag + BROKEN_CHAT_FALLBACKS[Math.floor(Math.random() * BROKEN_CHAT_FALLBACKS.length)]
+    );
+  });
+  if (!changed) return reply;
+  const joined = out.filter((l) => String(l).trim()).join('\n');
+  return joined || BROKEN_CHAT_FALLBACKS[0];
+}
+
+/**
+ * Он написал только «?» — не питчить NFT/коллекции в ответ на непонимание.
+ */
+function softBlockNftOnBareQuestion(reply, userMessage, history) {
+  const msg = bareUserText(userMessage).trim();
+  if (!/^\?{1,5}$/.test(msg)) return reply;
+  const text = String(reply || '');
+  if (!/нфт|\bnft\b|токен|флип|коллекц|платформ|крипт|whitelist|вайтлист/i.test(text)) {
+    return reply;
+  }
+  const recent = (Array.isArray(history) ? history : []).slice(-6);
+  const lastAsst = [...recent].reverse().find((h) => h && h.role === 'assistant');
+  const last = String(lastAsst?.content || '');
+  // После обрубка / тумана / NFT — мягко сбросить, не продолжать питч.
+  if (
+    isBrokenChatLine(last) ||
+    /интересн\w*\s+вещ|коллекц|нфт|\bnft\b|токен|просто\s+читай|что\s+попал/i.test(last)
+  ) {
+    return 'ахах да ничего, проехали)';
+  }
+  return reply;
+}
+
+const FALSE_DELETE_ADMIT_RE =
+  /(?:^|[.!\n])\s*(?:да[,.]?\s*)?(?:я\s+)?(?:удалила|стёрла|стерла)(?:\s+(?:вс[её]|переписк\w*|диалог\w*|чат\w*|сообщен\w*|анкет\w*))?/i;
+
+/**
+ * Модель иногда врёт «удалила, чтобы…» — у бота нет API удаления чатов.
+ * На обвинение подменяем короткое отрицание.
+ */
+function fixFalseDeleteAdmit(reply, userMessage) {
+  const msg = bareUserText(userMessage);
+  const accused =
+    /удалила|стёрла|стерла|переписк\w*\s+удал|диалог\w*\s+удал|сообщен\w*\s+удал/i.test(msg);
+  if (!accused) return reply;
+  const text = String(reply || '');
+  if (!FALSE_DELETE_ADMIT_RE.test(text) && !/чтобы\s+не\s+терять\s+время|лучше\s+начинать\s+с\s+новым/i.test(text)) {
+    return reply;
+  }
+  if (/неа|не\s+удал|ничего\s+не\s+удал|не\s+трогала|у\s+меня\s+вс[её]\s+на\s+месте/i.test(text)) {
+    return reply;
+  }
+  return 'неа, ничего не удаляла)';
+}
+
 function buildOwnMediaHint(history) {
   const recent = (Array.isArray(history) ? history : []).slice(-4);
   for (let i = recent.length - 1; i >= 0; i -= 1) {
@@ -1629,12 +1895,12 @@ function stripPlatitudes(reply) {
     .join('\n');
 }
 
-const FILLER_START_RU = ['ну ', 'эм, ', 'короче ', 'ну типо ', 'хм, '];
+const FILLER_START_RU = ['ну ', 'эм, ', 'короче ', 'ну типа ', 'хм, ', 'блин ', 'аа '];
 const FILLER_WORD_RE =
-  /^(ну|эм|хм|короче|типо|кстати|конечно|вроде|блин|ааа|ой|ахах|хах|да|не|нет|ага)\b/i;
+  /^(ну|эм|хм|короче|типа|типо|кстати|конечно|вроде|блин|ааа|аа|ой|ахах|хах|да|не|нет|ага)\b/i;
 
 /**
- * Иногда разговорное слово в начале — модель сама вставляет «типо/конечно»,
+ * Иногда разговорное слово в начале — модель сама вставляет «типа/конечно»,
  * но редко; подстраховываем, не чаще раза в несколько ответов.
  */
 function maybeAddFillerWord(reply, replyLang, history) {
@@ -1645,9 +1911,9 @@ function maybeAddFillerWord(reply, replyLang, history) {
     .filter((h) => h && h.role === 'assistant')
     .slice(-3)
     .map((h) => String(h.content || ''));
-  if (recentBot.some((t) => /^(ну|эм|хм|короче|типо)(?![а-яё])/i.test(t.trim()))) return reply;
+  if (recentBot.some((t) => /^(ну|эм|хм|короче|типа|типо|блин)(?![а-яё])/i.test(t.trim()))) return reply;
   if (/^(спасибо|рада|приятно|взаимно|окей|ок|да\s+не\s+за\s+что|не\s+за\s+что|мило|очень\s+мило|привет|приветик|хай|здравствуй|доброе|добрый)(?![а-яё])/i.test(text)) return reply;
-  if (Math.random() > 0.08) return reply;
+  if (Math.random() > 0.14) return reply;
   const filler = FILLER_START_RU[Math.floor(Math.random() * FILLER_START_RU.length)];
   const first = text.charAt(0);
   const rest = /[А-ЯЁ]/.test(first) && !/^[А-ЯЁ]{2}/.test(text) ? first.toLowerCase() + text.slice(1) : text;
@@ -2322,6 +2588,10 @@ function stripHabitualTrailingQuestion(reply, history, userMessage) {
   const softMirror =
     /\s*[.,!]?\s*(?:а\s+ты\??|а\s+у\s+тебя\??|and\s+you\??|what\s+about\s+you\??)\s*$/i;
 
+  // Анти-зеркало: он только что «а ты?» — не зеркалим обратно.
+  const anti = humanExtra.stripAntiMirror(text, userMessage);
+  if (anti !== text) return anti;
+
   if (mirrorTail.test(text) || softMirror.test(text)) {
     text = text.replace(mirrorTail, '').replace(softMirror, '').trim();
     if (text.length >= 3) return text;
@@ -2336,7 +2606,23 @@ function stripHabitualTrailingQuestion(reply, history, userMessage) {
     return userQ ? 'поняла)' : 'ага)';
   }
 
-  if (!recentHadQ && Math.random() < 0.18) return reply;
+  // Взаимность: если давно молчала вопросом — оставляем хвостовой «?».
+  // Но не если он сам только что зеркалил «а ты?».
+  try {
+    const soft = require('./softHumanLite');
+    const userMirrored = /(?:^|\n)\s*(?:а\s+)?(?:ты|у\s+тебя)\s*(?:\?|$)/i.test(userText);
+    if (
+      !userMirrored &&
+      soft.shouldKeepTrailingQuestion(history, userMessage) &&
+      /\?/.test(text)
+    ) {
+      return text;
+    }
+  } catch (_) {
+    /* optional */
+  }
+
+  if (!recentHadQ && Math.random() < 0.28) return reply;
 
   const stripped = dropTrailingQuestion(text);
 
@@ -2632,4 +2918,8 @@ Object.assign(module.exports, {
   describeImage,
   detectReplyLanguage,
   isRussianConversation,
+  fixSwappedCurrentCity,
+  fixBrokenChatFragments,
+  softBlockNftOnBareQuestion,
+  isBrokenChatLine,
 });
