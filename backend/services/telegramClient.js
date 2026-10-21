@@ -4324,11 +4324,11 @@ async function fireReengage(accountId, peerId) {
       .filter(Boolean)
       .join('\n');
     const [learningSnippet, manualSnippet, ragSnippet] = await Promise.all([
-      learningDb.buildLearningSnippet(learningStage),
+      learningDb.buildLearningSnippet(learningStage, { accountId, peerId }),
       learningDb.buildManualTrainingSnippet(accountId, text),
       ragExamples.buildRagSnippet(ragDay, text, ragHistoryHint),
     ]);
-    // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
+    // Факт + стиль чата запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
 
     const emotionHint = buildEmotionHint(replyHistory);
@@ -5340,11 +5340,11 @@ async function processBufferedMessages(
       .filter(Boolean)
       .join('\n');
     const [learningSnippet, manualSnippet, ragSnippet] = await Promise.all([
-      learningDb.buildLearningSnippet(learningStage),
+      learningDb.buildLearningSnippet(learningStage, { accountId, peerId }),
       learningDb.buildManualTrainingSnippet(accountId, text),
       ragExamples.buildRagSnippet(ragDay, contextualText || text, ragHistoryHint),
     ]);
-    // Факт из входящего сообщения запоминаем «на будущее» (не блокирует ответ).
+    // Факт + стиль чата запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
 
     const emotionHint = buildEmotionHint(history);

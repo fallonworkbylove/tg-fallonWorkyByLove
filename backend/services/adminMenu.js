@@ -25,6 +25,7 @@ function menuKeyboard(chatId) {
   const rows = [
     [{ text: '📲 Подключить аккаунт', callback_data: 'wrk:connect' }],
     [{ text: '🗑 Мои номера', callback_data: 'wrk:my' }],
+    [{ text: '🔔 Уведомления', callback_data: 'wrk:ntf' }],
     [{ text: '📱 Аккаунты в боте', callback_data: 'adm:accounts' }],
     [{ text: '📊 Статистика', callback_data: 'adm:stats' }],
     [{ text: '💳 Баланс и статус OpenAI', callback_data: 'adm:openai' }],

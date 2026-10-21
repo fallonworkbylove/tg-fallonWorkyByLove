@@ -83,6 +83,20 @@ async function ensureSchema() {
         UNIQUE KEY uniq_account_peer (account_id, peer_id)
       )
     `);
+    // Кого ещё уведомлять о лидах по номеру (кроме владельца).
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS account_notify_delegates (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        account_id INT NOT NULL,
+        owner_user_id INT NOT NULL,
+        subscriber_chat_id VARCHAR(64) NOT NULL,
+        subscriber_username VARCHAR(255) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_acc_sub (account_id, subscriber_chat_id),
+        KEY idx_owner (owner_user_id),
+        KEY idx_sub (subscriber_chat_id)
+      )
+    `);
   })();
   return schemaReady;
 }
@@ -382,6 +396,113 @@ async function getAccountNotificationSubscribers(accountId, telegramUserId) {
   return rows;
 }
 
+/**
+ * Все chat_id, кому слать лиды/согласие по аккаунту:
+ * владелец (если /start) + делегаты с /start.
+ */
+async function getLeadNotifyChatIds(accountId) {
+  await ensureSchema();
+  const chats = new Set();
+  const owner = await getAccountOwner(accountId);
+  if (owner?.telegramUserId) {
+    const own = await getAccountNotificationSubscribers(accountId, owner.telegramUserId);
+    for (const row of own) chats.add(String(row.chat_id));
+  }
+  const [delegates] = await db.execute(
+    `SELECT DISTINCT d.subscriber_chat_id AS chat_id
+     FROM account_notify_delegates d
+     INNER JOIN notification_subscribers ns
+       ON CAST(ns.chat_id AS CHAR) = CAST(d.subscriber_chat_id AS CHAR)
+     WHERE d.account_id = ?`,
+    [accountId],
+  );
+  for (const row of delegates || []) chats.add(String(row.chat_id));
+  return [...chats].map((chat_id) => ({ chat_id }));
+}
+
+async function listNotifyDelegates(accountId) {
+  await ensureSchema();
+  const [rows] = await db.execute(
+    `SELECT d.subscriber_chat_id, d.subscriber_username, d.created_at,
+            (ns.chat_id IS NOT NULL) AS is_subscribed
+     FROM account_notify_delegates d
+     LEFT JOIN notification_subscribers ns
+       ON CAST(ns.chat_id AS CHAR) = CAST(d.subscriber_chat_id AS CHAR)
+     WHERE d.account_id = ?
+     ORDER BY d.id ASC`,
+    [accountId],
+  );
+  return rows || [];
+}
+
+async function addNotifyDelegate({ accountId, ownerUserId, subscriberChatId, subscriberUsername }) {
+  await ensureSchema();
+  const chatId = String(subscriberChatId || '').trim();
+  if (!chatId) throw new Error('Нужен chat_id подписчика');
+  await db.execute(
+    `INSERT INTO account_notify_delegates
+       (account_id, owner_user_id, subscriber_chat_id, subscriber_username)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       subscriber_username = COALESCE(VALUES(subscriber_username), subscriber_username),
+       owner_user_id = VALUES(owner_user_id)`,
+    [accountId, ownerUserId, chatId, subscriberUsername || null],
+  );
+  return true;
+}
+
+async function removeNotifyDelegate(accountId, subscriberChatId) {
+  await ensureSchema();
+  const [result] = await db.execute(
+    `DELETE FROM account_notify_delegates
+     WHERE account_id = ? AND subscriber_chat_id = ?`,
+    [accountId, String(subscriberChatId)],
+  );
+  return (result?.affectedRows || 0) > 0;
+}
+
+/** Найти chat_id по @username среди тех, кто уже жали /start. */
+async function resolveSubscriberByUsername(username) {
+  const uname = String(username || '')
+    .trim()
+    .replace(/^@/, '')
+    .toLowerCase();
+  if (!uname || !/^[a-z0-9_]{4,32}$/i.test(uname)) return null;
+  await ensureSchema();
+  const [[ns]] = await db.execute(
+    `SELECT chat_id, username FROM notification_subscribers
+     WHERE LOWER(REPLACE(username, '@', '')) = ?
+     LIMIT 1`,
+    [uname],
+  );
+  if (ns) return { chatId: String(ns.chat_id), username: ns.username || uname };
+  const [[u]] = await db.execute(
+    `SELECT telegram_user_id AS chat_id, username FROM users
+     WHERE LOWER(REPLACE(username, '@', '')) = ? AND telegram_user_id IS NOT NULL
+     LIMIT 1`,
+    [uname],
+  );
+  if (!u) return null;
+  // Должен быть в подписчиках бота, иначе sendMessage не дойдёт.
+  const [[sub]] = await db.execute(
+    `SELECT chat_id FROM notification_subscribers
+     WHERE CAST(chat_id AS CHAR) = CAST(? AS CHAR) LIMIT 1`,
+    [String(u.chat_id)],
+  );
+  if (!sub) return null;
+  return { chatId: String(u.chat_id), username: u.username || uname };
+}
+
+async function isNotificationSubscriber(chatId) {
+  await ensureSchema();
+  const [[row]] = await db.execute(
+    `SELECT chat_id FROM notification_subscribers
+     WHERE CAST(chat_id AS CHAR) = CAST(? AS CHAR) LIMIT 1`,
+    [String(chatId)],
+  );
+  return !!row;
+}
+
 function formatAccountLabel(accountId, accountPhone, accountName) {
   const name = String(accountName || '').trim();
   const phone = accountPhone ? ` (${accountPhone})` : '';
@@ -394,14 +515,11 @@ async function notifyOperators({ accountId, accountPhone, accountName, peerId, p
     return;
   }
 
-  const owner = await getAccountOwner(accountId);
-  const subscribers = owner?.telegramUserId
-    ? await getAccountNotificationSubscribers(accountId, owner.telegramUserId)
-    : [];
+  const subscribers = await getLeadNotifyChatIds(accountId);
   if (subscribers.length === 0) {
     console.log(
       `[helpRequestNotifier] Собеседник согласился помочь (аккаунт №${accountId}), ` +
-        'но владелец не подписан на уведомления бота.',
+        'но нет подписчиков (владелец/делегаты не в /start).',
     );
     return;
   }
@@ -449,13 +567,10 @@ async function notifyLeadReady({
     return false;
   }
 
-  const owner = await getAccountOwner(accountId);
-  const subscribers = owner?.telegramUserId
-    ? await getAccountNotificationSubscribers(accountId, owner.telegramUserId)
-    : [];
+  const subscribers = await getLeadNotifyChatIds(accountId);
   if (subscribers.length === 0) {
     console.log(
-      `[helpRequestNotifier] Лид готов (аккаунт №${accountId}), но владелец не подписан на бота.`,
+      `[helpRequestNotifier] Лид готов (аккаунт №${accountId}), но нет подписчиков (владелец/делегаты).`,
     );
     return false;
   }
@@ -633,6 +748,7 @@ async function handleUpdate(update) {
     if (canConnect) {
       keyboard.push([{ text: '📲 Подключить аккаунт', callback_data: 'wrk:connect' }]);
       keyboard.push([{ text: '🗑 Мои номера', callback_data: 'wrk:my' }]);
+      keyboard.push([{ text: '🔔 Уведомления', callback_data: 'wrk:ntf' }]);
     }
     if (MINIAPP_URL) {
       keyboard.push([{ text: 'Открыть приложение', web_app: { url: MINIAPP_URL } }]);
@@ -837,4 +953,10 @@ module.exports = {
   isAutoreplyDisabledForPeer,
   enableAutoreplyForPeer,
   notifyLeadReady,
+  getLeadNotifyChatIds,
+  listNotifyDelegates,
+  addNotifyDelegate,
+  removeNotifyDelegate,
+  resolveSubscriberByUsername,
+  isNotificationSubscriber,
 };

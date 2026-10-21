@@ -22,6 +22,7 @@ const CHILD_TABLES = [
   'archived_peers',
   'cleared_peers',
   'operator_lead_flags',
+  'account_notify_delegates',
   'dialogs',
 ];
 

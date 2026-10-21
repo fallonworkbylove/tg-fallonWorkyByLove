@@ -107,6 +107,7 @@ function doneKeyboard(isAdmin) {
   const rows = [
     [{ text: '📲 Ещё номер', callback_data: 'wrk:connect' }],
     [{ text: '🗑 Мои номера', callback_data: 'wrk:my' }],
+    [{ text: '🔔 Уведомления', callback_data: 'wrk:ntf' }],
   ];
   if (isAdmin) rows.push([{ text: '« Меню', callback_data: 'adm:menu' }]);
   else rows.push([{ text: '« Меню', callback_data: 'wrk:menu' }]);
@@ -118,8 +119,13 @@ function workerMenuKeyboard() {
     inline_keyboard: [
       [{ text: '📲 Подключить аккаунт', callback_data: 'wrk:connect' }],
       [{ text: '🗑 Мои номера', callback_data: 'wrk:my' }],
+      [{ text: '🔔 Уведомления', callback_data: 'wrk:ntf' }],
     ],
   };
+}
+
+function menuBackData(chatId, from) {
+  return operatorAccess.isAdminSync(chatId, from?.username) ? 'adm:menu' : 'wrk:menu';
 }
 
 async function listOwnedAccounts(userId) {
@@ -196,9 +202,112 @@ async function sendWorkerMenu(api, chatId) {
   await apiSend(
     api,
     chatId,
-    '<b>Меню воркера</b>\n\nПодключи номер или удали свой аккаунт из бота.',
+    '<b>Меню воркера</b>\n\nПодключи номер, удали аккаунт или настрой, кому слать уведомления о лидах.',
     workerMenuKeyboard(),
   );
+}
+
+/**
+ * Список номеров → кому слать лиды (делегаты).
+ */
+async function buildNotifyAccountsView(userId, chatId, from) {
+  const rows = await listOwnedAccounts(userId);
+  const back = menuBackData(chatId, from);
+  if (!rows.length) {
+    return {
+      text:
+        '<b>🔔 Уведомления</b>\n\n' +
+        'Сначала подключи номер — потом можно добавить человека, который будет получать лиды.',
+      keyboard: {
+        inline_keyboard: [
+          [{ text: '📲 Подключить', callback_data: 'wrk:connect' }],
+          [{ text: '« Меню', callback_data: back }],
+        ],
+      },
+    };
+  }
+  const buttons = rows.map((row) => {
+    const n = Number(row.seq) || row.id;
+    return [
+      {
+        text: `🔔 №${n} · ${row.phone}`,
+        callback_data: `wrk:ntf:a:${row.id}`,
+      },
+    ];
+  });
+  buttons.push([{ text: '« Меню', callback_data: back }]);
+  return {
+    text:
+      '<b>🔔 Уведомления о лидах</b>\n\n' +
+      'Выбери номер. К нему можно привязать другого человека — он будет получать те же «Лид готов», что и ты.\n\n' +
+      '<i>Человек должен один раз написать этому боту /start.</i>',
+    keyboard: { inline_keyboard: buttons },
+  };
+}
+
+async function buildNotifyAccountDetail(userId, accountId, chatId, from) {
+  const notifier = require('./helpRequestNotifier');
+  const [[acc]] = await db.execute(
+    'SELECT id, seq, phone FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
+    [accountId, userId],
+  );
+  const back = menuBackData(chatId, from);
+  if (!acc) {
+    return {
+      text: 'Номер не найден или это не твой аккаунт.',
+      keyboard: { inline_keyboard: [[{ text: '« Назад', callback_data: 'wrk:ntf' }]] },
+    };
+  }
+  const n = Number(acc.seq) || acc.id;
+  const delegates = await notifier.listNotifyDelegates(accountId);
+  const lines = delegates.length
+    ? delegates.map((d, i) => {
+        const who = d.subscriber_username
+          ? `@${String(d.subscriber_username).replace(/^@/, '')}`
+          : `id ${d.subscriber_chat_id}`;
+        const ok = Number(d.is_subscribed) ? '✅' : '⚠️ нет /start';
+        return `${i + 1}. ${ok} ${esc(who)}`;
+      })
+    : ['Пока никого нет — лиды только тебе (если ты в /start).'];
+
+  const buttons = [
+    [{ text: '➕ Добавить человека', callback_data: `wrk:ntf:add:${accountId}` }],
+  ];
+  for (const d of delegates) {
+    const label = d.subscriber_username
+      ? `@${String(d.subscriber_username).replace(/^@/, '').slice(0, 20)}`
+      : String(d.subscriber_chat_id).slice(0, 16);
+    buttons.push([
+      {
+        text: `🗑 Снять ${label}`,
+        callback_data: `wrk:ntf:rm:${accountId}:${d.subscriber_chat_id}`,
+      },
+    ]);
+  }
+  buttons.push([{ text: '« К номерам', callback_data: 'wrk:ntf' }]);
+  buttons.push([{ text: '« Меню', callback_data: back }]);
+
+  return {
+    text:
+      `<b>🔔 №${n}</b> <code>${esc(acc.phone)}</code>\n\n` +
+      '<b>Кто получает лиды:</b>\n' +
+      `${lines.join('\n')}\n\n` +
+      'Добавь @username человека, который уже нажал /start у этого бота.',
+    keyboard: { inline_keyboard: buttons },
+  };
+}
+
+async function showNotifyMenu(api, chatId, from, { editMessageId } = {}) {
+  if (!(await canConnectAccounts(chatId, from?.username))) {
+    const text = 'Нет доступа.';
+    if (editMessageId) await apiEdit(api, chatId, editMessageId, text);
+    else await apiSend(api, chatId, text);
+    return;
+  }
+  const user = await ensureDbUser(chatId, from);
+  const view = await buildNotifyAccountsView(user.id, chatId, from);
+  if (editMessageId) await apiEdit(api, chatId, editMessageId, view.text, view.keyboard);
+  else await apiSend(api, chatId, view.text, view.keyboard);
 }
 
 async function showMyAccounts(api, chatId, from, { editMessageId } = {}) {
@@ -434,12 +543,90 @@ async function handleText(api, chatId, text, from) {
   if (!w) return false;
 
   if (text === '/cancel' || /^отмена$/i.test(text)) {
+    const wasNotify = w.step === 'notify_bind';
     clearWizard(chatId);
-    await apiSend(api, chatId, 'Подключение отменено.');
+    await apiSend(api, chatId, wasNotify ? 'Добавление отменено.' : 'Подключение отменено.');
     return true;
   }
 
   const isAdmin = operatorAccess.isAdminSync(chatId, from?.username);
+
+  // Привязка получателя уведомлений: @username или числовой id.
+  if (w.step === 'notify_bind') {
+    const notifier = require('./helpRequestNotifier');
+    const raw = String(text || '').trim();
+    const accountId = Number(w.accountId);
+    const user = await ensureDbUser(chatId, from);
+    const [[acc]] = await db.execute(
+      'SELECT id FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
+      [accountId, user.id],
+    );
+    if (!acc) {
+      clearWizard(chatId);
+      await apiSend(api, chatId, 'Номер не найден.');
+      return true;
+    }
+
+    let resolved = null;
+    if (/^@?[a-zA-Z0-9_]{4,32}$/.test(raw) && !/^\d+$/.test(raw.replace(/^@/, ''))) {
+      resolved = await notifier.resolveSubscriberByUsername(raw);
+      if (!resolved) {
+        await apiSend(
+          api,
+          chatId,
+          'Не нашёл этого человека среди подписчиков бота.\n\n' +
+            'Пусть он напишет сюда <b>/start</b>, потом пришли его @username ещё раз.',
+          cancelKeyboard(),
+        );
+        return true;
+      }
+    } else if (/^\d{5,15}$/.test(raw)) {
+      const ok = await notifier.isNotificationSubscriber(raw);
+      if (!ok) {
+        await apiSend(
+          api,
+          chatId,
+          'Этот id ещё не жали /start у бота.\n\nПусть напишет <b>/start</b>, потом пришли id снова.',
+          cancelKeyboard(),
+        );
+        return true;
+      }
+      resolved = { chatId: raw, username: null };
+    } else {
+      await apiSend(
+        api,
+        chatId,
+        'Пришли <b>@username</b> или числовой Telegram id.',
+        cancelKeyboard(),
+      );
+      return true;
+    }
+
+    if (String(resolved.chatId) === String(chatId)) {
+      await apiSend(api, chatId, 'Себя добавлять не нужно — ты и так владелец номера.', cancelKeyboard());
+      return true;
+    }
+
+    await notifier.addNotifyDelegate({
+      accountId,
+      ownerUserId: user.id,
+      subscriberChatId: resolved.chatId,
+      subscriberUsername: resolved.username,
+    });
+    clearWizard(chatId);
+    const who = resolved.username
+      ? `@${String(resolved.username).replace(/^@/, '')}`
+      : `id ${resolved.chatId}`;
+    const view = await buildNotifyAccountDetail(user.id, accountId, chatId, from);
+    await apiSend(
+      api,
+      chatId,
+      `<b>✅ Добавлено</b>\n\n${esc(who)} будет получать уведомления о лидах по этому номеру.\n\n` +
+        view.text,
+      view.keyboard,
+    );
+    return true;
+  }
 
   try {
     if (w.step === 'phone') {
@@ -569,7 +756,7 @@ async function handleCallback(api, query) {
       api,
       chatId,
       query.message.message_id,
-      '<b>Меню воркера</b>\n\nПодключи номер или удали свой аккаунт из бота.',
+      '<b>Меню воркера</b>\n\nПодключи номер, удали аккаунт или настрой уведомления о лидах.',
       workerMenuKeyboard(),
     );
     return true;
@@ -579,6 +766,95 @@ async function handleCallback(api, query) {
     await showMyAccounts(api, chatId, from, {
       editMessageId: query.message.message_id,
     });
+    return true;
+  }
+
+  if (data === 'wrk:ntf') {
+    await showNotifyMenu(api, chatId, from, {
+      editMessageId: query.message.message_id,
+    });
+    return true;
+  }
+
+  const ntfAcc = data.match(/^wrk:ntf:a:(\d+)$/);
+  if (ntfAcc) {
+    if (!(await canConnectAccounts(chatId, from?.username))) {
+      await apiEdit(api, chatId, query.message.message_id, 'Нет доступа.');
+      return true;
+    }
+    const user = await ensureDbUser(chatId, from);
+    const view = await buildNotifyAccountDetail(user.id, Number(ntfAcc[1]), chatId, from);
+    await apiEdit(api, chatId, query.message.message_id, view.text, view.keyboard);
+    return true;
+  }
+
+  const ntfAdd = data.match(/^wrk:ntf:add:(\d+)$/);
+  if (ntfAdd) {
+    if (!(await canConnectAccounts(chatId, from?.username))) {
+      await apiEdit(api, chatId, query.message.message_id, 'Нет доступа.');
+      return true;
+    }
+    const user = await ensureDbUser(chatId, from);
+    const accountId = Number(ntfAdd[1]);
+    const [[acc]] = await db.execute(
+      'SELECT id, seq, phone FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
+      [accountId, user.id],
+    );
+    if (!acc) {
+      await apiEdit(api, chatId, query.message.message_id, 'Номер не найден.');
+      return true;
+    }
+    clearWizard(chatId);
+    touch(chatId, {
+      step: 'notify_bind',
+      accountId,
+      userId: user.id,
+    });
+    {
+      const w = wizards.get(String(chatId));
+      if (w) delete w.phone;
+    }
+    const n = Number(acc.seq) || acc.id;
+    await apiEdit(
+      api,
+      chatId,
+      query.message.message_id,
+      `<b>➕ Кому слать лиды</b>\n\n` +
+        `Номер №${n} <code>${esc(acc.phone)}</code>\n\n` +
+        'Пришли <b>@username</b> человека или его числовой Telegram id.\n' +
+        'Он должен заранее написать этому боту <b>/start</b>.',
+      cancelKeyboard(),
+    );
+    return true;
+  }
+
+  const ntfRm = data.match(/^wrk:ntf:rm:(\d+):(.+)$/);
+  if (ntfRm) {
+    if (!(await canConnectAccounts(chatId, from?.username))) {
+      await apiEdit(api, chatId, query.message.message_id, 'Нет доступа.');
+      return true;
+    }
+    const user = await ensureDbUser(chatId, from);
+    const accountId = Number(ntfRm[1]);
+    const subChat = String(ntfRm[2]);
+    const [[acc]] = await db.execute(
+      'SELECT id FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
+      [accountId, user.id],
+    );
+    if (!acc) {
+      await apiEdit(api, chatId, query.message.message_id, 'Номер не найден.');
+      return true;
+    }
+    const notifier = require('./helpRequestNotifier');
+    await notifier.removeNotifyDelegate(accountId, subChat);
+    const view = await buildNotifyAccountDetail(user.id, accountId, chatId, from);
+    await apiEdit(
+      api,
+      chatId,
+      query.message.message_id,
+      `<b>Снято.</b>\n\n${view.text}`,
+      view.keyboard,
+    );
     return true;
   }
 
@@ -704,4 +980,6 @@ module.exports = {
   cancelKeyboard,
   sendWorkerMenu,
   showMyAccounts,
+  showNotifyMenu,
+  workerMenuKeyboard,
 };
