@@ -13,10 +13,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Syne:wght@600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=38" />
+    <link rel="stylesheet" href="styles.css?v=44" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -35,11 +35,11 @@
       <p class="side-nav__brand">LoveRussian</p>
       <p class="side-nav__tag">операторская</p>
       <button class="side-nav__btn active" data-tab="panel" type="button">Панель</button>
-      <button class="side-nav__btn" data-tab="accounts" type="button">Аккаунты TG</button>
       <button class="side-nav__btn" data-tab="leads" type="button">Лиды</button>
+      <button class="side-nav__btn" data-tab="accounts" type="button">Аккаунты TG</button>
+      <button class="side-nav__btn" data-tab="stats" type="button">Статы</button>
       <button class="side-nav__btn" data-tab="learn" type="button">Учить</button>
       <button class="side-nav__btn" data-tab="options" type="button">Опции</button>
-      <button class="side-nav__btn" data-tab="stats" type="button">Статы</button>
       <button class="side-nav__btn" data-tab="info" type="button">Инфо</button>
     </aside>
 
@@ -79,31 +79,73 @@
 
       <main class="content">
         <section class="tab-panel active" data-panel="panel">
-          <div class="panel-hero card">
-            <div class="panel-hero__icon" aria-hidden="true"></div>
-            <div>
-              <p class="panel-hero__kicker">Сегодня</p>
-              <h2>Главная сводка</h2>
-              <p>Аккаунты, диалоги и быстрые действия — на компьютере и телефоне.</p>
+          <div class="panel-strip card panel-rise">
+            <div class="panel-strip__mark" aria-hidden="true"></div>
+            <div class="panel-strip__text">
+              <p class="panel-hero__kicker">Панель</p>
+              <h2>Главная</h2>
+              <p id="panel-live" class="panel-strip__live">Загрузка…</p>
+            </div>
+            <button class="btn btn-secondary small panel-strip__refresh" data-action="refresh" type="button">↻</button>
+          </div>
+
+          <div id="panel-summary" class="stats-grid summary-grid summary-grid--panel panel-rise"></div>
+
+          <div class="panel-deck card panel-rise" aria-label="Быстрые действия">
+            <div class="panel-deck__row">
+              <p class="panel-bulk__label">Автоответ</p>
+              <div class="panel-bulk__actions">
+                <button id="bulk-start-panel" class="btn btn-primary bulk-action" data-action="bulk-start" type="button">Включить все</button>
+                <button id="bulk-stop-panel" class="btn btn-secondary bulk-action" data-action="bulk-stop" type="button">Выключить все</button>
+              </div>
+            </div>
+            <div class="panel-deck__divider" aria-hidden="true"></div>
+            <div class="panel-tools">
+              <button class="btn btn-secondary" data-action="open-accounts" type="button">+ Аккаунт</button>
+              <button class="btn btn-secondary" data-action="open-leads" type="button">К лидам</button>
+              <button class="btn btn-danger" data-action="logout" type="button">Выйти</button>
             </div>
           </div>
 
-          <div class="action-row panel-actions">
-            <button class="btn btn-primary" data-action="refresh" type="button">Обновить</button>
-            <div class="bulk-controls" aria-label="Управление всеми аккаунтами">
-              <button id="bulk-start-panel" class="btn btn-primary bulk-action" data-action="bulk-start" type="button">Включить все аккаунты</button>
-              <button id="bulk-stop-panel" class="btn btn-secondary bulk-action" data-action="bulk-stop" type="button">Выключить все аккаунты</button>
-            </div>
-            <button class="btn btn-secondary" data-action="open-accounts" type="button">Добавить аккаунт</button>
-            <button class="btn btn-secondary" data-action="open-leads" type="button">Лиды</button>
-            <button class="btn btn-danger" data-action="logout" type="button">Выйти</button>
+          <div class="panel-section-label panel-rise">
+            <span>Аккаунты сейчас</span>
+            <button class="btn btn-secondary small" type="button" data-action="open-accounts">Все</button>
           </div>
-
-          <div id="panel-summary" class="stats-grid summary-grid"></div>
-          <div id="panel-accounts" class="stack"></div>
+          <div id="panel-accounts" class="stack panel-rise"></div>
         </section>
 
         <section class="tab-panel" data-panel="accounts">
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Аккаунты</h3>
+              <button class="btn btn-secondary small" type="button" data-action="refresh">Обновить</button>
+            </div>
+            <div id="accounts-bulk-bar" class="accounts-bulk-bar" hidden>
+              <span id="accounts-selected-count">Выбрано: 0</span>
+              <button class="btn btn-primary small" type="button" data-action="bulk-selected-start">AI вкл</button>
+              <button class="btn btn-secondary small" type="button" data-action="bulk-selected-stop">AI выкл</button>
+              <button class="btn btn-secondary small" type="button" data-action="clear-selection">Снять</button>
+            </div>
+            <div id="accounts-list" class="accounts-table-wrap"></div>
+          </div>
+
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Лимиты</h3>
+              <span class="badge badge-soft">Бесплатно</span>
+            </div>
+            <div id="limits-values" class="limits-grid">
+              <div>
+                <strong>0</strong>
+                <p>Использовано</p>
+              </div>
+              <div>
+                <strong>1</strong>
+                <p>Доступно</p>
+              </div>
+            </div>
+          </div>
+
           <div class="section-card card">
             <h2>Подключить аккаунт</h2>
             <form id="account-form" class="form-grid">
@@ -135,37 +177,6 @@
 
           <div class="section-card card">
             <div class="section-card__header">
-              <h3>Лимиты</h3>
-              <span class="badge badge-soft">Бесплатно</span>
-            </div>
-            <div id="limits-values" class="limits-grid">
-              <div>
-                <strong>0</strong>
-                <p>Использовано</p>
-              </div>
-              <div>
-                <strong>1</strong>
-                <p>Доступно</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="section-card card">
-            <div class="section-card__header">
-              <h3>Аккаунты</h3>
-              <button class="btn btn-secondary small" type="button" data-action="refresh">Обновить</button>
-            </div>
-            <div id="accounts-bulk-bar" class="accounts-bulk-bar" hidden>
-              <span id="accounts-selected-count">Выбрано: 0</span>
-              <button class="btn btn-primary small" type="button" data-action="bulk-selected-start">AI вкл</button>
-              <button class="btn btn-secondary small" type="button" data-action="bulk-selected-stop">AI выкл</button>
-              <button class="btn btn-secondary small" type="button" data-action="clear-selection">Снять</button>
-            </div>
-            <div id="accounts-list" class="accounts-table-wrap"></div>
-          </div>
-
-          <div class="section-card card">
-            <div class="section-card__header">
               <h3>Медиагалерея</h3>
               <button class="btn btn-secondary small" type="button" data-action="open-media-gallery">Открыть</button>
             </div>
@@ -193,14 +204,6 @@
 
         <section class="tab-panel" data-panel="learn">
           <div class="section-card card">
-            <div class="section-card__header">
-              <h3>Обучающие примеры</h3>
-              <span class="badge badge-soft">Примеры</span>
-            </div>
-            <div id="learn-list" class="stack"></div>
-          </div>
-
-          <div class="section-card card">
             <h3>Новый пример</h3>
             <form id="example-form" class="form-grid">
               <label>
@@ -221,6 +224,14 @@
               </label>
               <button class="btn btn-primary full" type="submit" data-action="save-example">Сохранить пример</button>
             </form>
+          </div>
+
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Обучающие примеры</h3>
+              <span class="badge badge-soft">Примеры</span>
+            </div>
+            <div id="learn-list" class="stack"></div>
           </div>
         </section>
 
@@ -304,7 +315,6 @@
         </section>
 
         <section class="tab-panel" data-panel="stats">
-          <div id="stats-cards" class="stats-grid summary-grid"></div>
           <div class="section-card card stats-accounts-block">
             <h3>Сообщения по аккаунтам</h3>
             <div class="stats-bulk-actions">
@@ -313,16 +323,17 @@
             </div>
             <div id="stats-accounts" class="stack stats-accounts-list"></div>
           </div>
+          <div id="stats-cards" class="stats-grid summary-grid"></div>
         </section>
       </main>
 
       <nav class="bottom-nav" aria-label="Вкладки">
         <button class="nav-btn active" data-tab="panel" type="button"><span class="nav-btn__label">Панель</span></button>
-        <button class="nav-btn" data-tab="accounts" type="button"><span class="nav-btn__label">TG</span></button>
         <button class="nav-btn" data-tab="leads" type="button"><span class="nav-btn__label">Лиды</span></button>
+        <button class="nav-btn" data-tab="accounts" type="button"><span class="nav-btn__label">TG</span></button>
+        <button class="nav-btn" data-tab="stats" type="button"><span class="nav-btn__label">Статы</span></button>
         <button class="nav-btn" data-tab="learn" type="button"><span class="nav-btn__label">Учить</span></button>
         <button class="nav-btn" data-tab="options" type="button"><span class="nav-btn__label">Опции</span></button>
-        <button class="nav-btn" data-tab="stats" type="button"><span class="nav-btn__label">Статы</span></button>
       </nav>
     </div>
     </div>

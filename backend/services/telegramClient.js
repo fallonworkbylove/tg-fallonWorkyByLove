@@ -3129,12 +3129,24 @@ async function trySendMedia(
     warmOwnMediaLight(client, accountId, link, record.items);
     const filtered = await filterMediaForDaylight(client, record.items, mediaType, link, sentIds);
     const descriptions = mediaDescriptionsForLink(link);
-    let item = pickMediaByContext(filtered, mediaType, sentIds, descriptions, contextText)
-      || pickUnsentMedia(filtered, mediaType, sentIds, descriptions);
+    // Кружки одному человеку не повторяем никогда (пока в истории есть [медиа:#id]).
+    const allowRepeat = mediaType !== 'circle';
+    let item =
+      pickMediaByContext(filtered, mediaType, sentIds, descriptions, contextText, {
+        allowRepeat,
+      }) ||
+      pickUnsentMedia(filtered, mediaType, sentIds, descriptions, { allowRepeat });
     if (!item) {
+      const noFreshCircle =
+        mediaType === 'circle' &&
+        record.items.some((i) => i.type === 'circle' && sentIds.has(i.id));
       console.log(
         `[${accountLabel(accountId)}] Нет подходящего медиа типа "${mediaType}" для ${senderName}` +
-          (isDarkOutsideNow() ? ' (на улице темно, дневные не шлю).' : ' (на улице светло, ночные не шлю).'),
+          (noFreshCircle
+            ? ' (все кружки этому человеку уже уходили — повтор запрещён).'
+            : isDarkOutsideNow()
+              ? ' (на улице темно, дневные не шлю).'
+              : ' (на улице светло, ночные не шлю).'),
       );
       return false;
     }

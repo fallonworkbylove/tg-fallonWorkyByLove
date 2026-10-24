@@ -822,28 +822,38 @@ function renderPanel() {
     Number(state.funnelCounts?.operator || 0) +
     Number(state.funnelCounts?.interest || 0);
 
+  const liveEl = document.getElementById('panel-live');
+  if (liveEl) {
+    const parts = [];
+    parts.push(state.accounts.length ? `${online} онлайн` : 'нет аккаунтов');
+    parts.push(`AI ${aiOn}/${state.accounts.length || 0}`);
+    if (hotLeads > 0) parts.push(`${hotLeads} горячих`);
+    else parts.push(`${messages} сообщ.`);
+    liveEl.textContent = parts.join(' · ');
+  }
+
   elements.panelSummary.innerHTML = `
-    <div class="stat-card">
+    <div class="stat-card stat-card--accent">
       <strong>${accountsUsed}/${accountsLimit}</strong>
       <span>Аккаунты</span>
     </div>
     <div class="stat-card">
-      <strong>${online} · AI ${aiOn}</strong>
-      <span>Онлайн / автоответ</span>
+      <strong>${online}<span class="stat-card__split">/</span>${aiOn}</strong>
+      <span>Онлайн / AI</span>
     </div>
     <div class="stat-card">
       <strong>${messages}</strong>
       <span>Сообщения</span>
     </div>
-    <div class="stat-card">
+    <div class="stat-card ${hotLeads ? 'stat-card--hot' : ''}">
       <strong>${hotLeads || '—'}</strong>
-      <span>Горячие в воронке</span>
+      <span>Горячие лиды</span>
     </div>
   `;
 
   if (!state.accounts.length) {
     elements.panelAccounts.innerHTML = `
-      <div class="empty-state">
+      <div class="empty-state card">
         <h3>Аккаунтов пока нет</h3>
         <p>Добавьте первый Telegram-аккаунт, чтобы запустить AI-автоответчик</p>
         <button
@@ -859,11 +869,7 @@ function renderPanel() {
   }
 
   elements.panelAccounts.innerHTML = `
-    <div class="section-card card" style="padding:12px;">
-      <div class="section-card__header">
-        <h3>Быстрый обзор</h3>
-        <button class="btn btn-secondary small" type="button" data-action="open-accounts">К аккаунтам</button>
-      </div>
+    <div class="section-card card panel-accounts-card">
       <div class="stack">
         ${state.accounts
           .slice(0, 6)

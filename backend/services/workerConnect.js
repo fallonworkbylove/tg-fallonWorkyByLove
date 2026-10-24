@@ -117,9 +117,11 @@ function doneKeyboard(isAdmin) {
 function workerMenuKeyboard() {
   return {
     inline_keyboard: [
-      [{ text: '📲 Подключить аккаунт', callback_data: 'wrk:connect' }],
-      [{ text: '🗑 Мои номера', callback_data: 'wrk:my' }],
-      [{ text: '🔔 Уведомления', callback_data: 'wrk:ntf' }],
+      [
+        { text: '📲 Подключить', callback_data: 'wrk:connect' },
+        { text: '🗑 Мои номера', callback_data: 'wrk:my' },
+      ],
+      [{ text: '🔔 Уведомления о лидах', callback_data: 'wrk:ntf' }],
     ],
   };
 }
@@ -202,7 +204,7 @@ async function sendWorkerMenu(api, chatId) {
   await apiSend(
     api,
     chatId,
-    '<b>Меню воркера</b>\n\nПодключи номер, удали аккаунт или настрой, кому слать уведомления о лидах.',
+    '<b>Меню</b>\n\nПодключи номер, посмотри свои аккаунты или настрой, кому слать уведомления о лидах.',
     workerMenuKeyboard(),
   );
 }

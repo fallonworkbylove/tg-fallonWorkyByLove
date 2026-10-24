@@ -17,26 +17,93 @@ const BILLING_URL = 'https://platform.openai.com/settings/organization/billing';
 const TG_PROBE_HOST = '149.154.167.50';
 const TG_PROBE_PORT = 443;
 const PROXY_PROBE_TIMEOUT_MS = 8000;
-
-const MENU_TEXT = '<b>Админ-меню</b>\n\nВыбери раздел:';
+/** Быстрая проверка из /menu — короткий таймаут, всё параллельно. */
+const QUICK_PROBE_TIMEOUT_MS = 2500;
 
 function menuKeyboard(chatId) {
   const rows = [
-    [{ text: '📲 Подключить аккаунт', callback_data: 'wrk:connect' }],
-    [{ text: '🗑 Мои номера', callback_data: 'wrk:my' }],
-    [{ text: '🔔 Уведомления', callback_data: 'wrk:ntf' }],
-    [{ text: '📱 Аккаунты в боте', callback_data: 'adm:accounts' }],
-    [{ text: '📊 Статистика', callback_data: 'adm:stats' }],
-    [{ text: '💳 Баланс и статус OpenAI', callback_data: 'adm:openai' }],
+    [
+      { text: '📲 Подключить', callback_data: 'wrk:connect' },
+      { text: '🗑 Мои номера', callback_data: 'wrk:my' },
+    ],
+    [{ text: '🔔 Уведомления о лидах', callback_data: 'wrk:ntf' }],
+    [
+      { text: '📱 Аккаунты', callback_data: 'adm:accounts' },
+      { text: '📊 Статистика', callback_data: 'adm:stats' },
+    ],
+    [
+      { text: '💳 OpenAI', callback_data: 'adm:openai' },
+      { text: '🛠 Система', callback_data: 'adm:system' },
+    ],
   ];
   if (operatorAccess.isSuperAdmin(chatId)) {
-    rows.push([{ text: '👥 Доступ (тестеры / админы)', callback_data: 'adm:ops' }]);
+    rows.push([{ text: '👥 Доступ', callback_data: 'adm:ops' }]);
   }
+  rows.push([{ text: '⚡ Быстрая проверка', callback_data: 'adm:check' }]);
   rows.push(
-    [{ text: '🚫 Чёрный список', callback_data: 'adm:bl' }],
-    [{ text: '🛠 Система (прокси / ИИ)', callback_data: 'adm:system' }],
+    [
+      { text: '🚫 Чёрный список', callback_data: 'adm:bl' },
+      { text: '🔄 Обновить', callback_data: 'adm:menu' },
+    ],
   );
   return { inline_keyboard: rows };
+}
+
+/** Живая шапка /menu: онлайн · AI · горячие · сообщения сегодня. */
+async function buildMenuHomeText() {
+  let online = 0;
+  let total = 0;
+  let aiOn = 0;
+  let hot = 0;
+  let sentToday = 0;
+
+  try {
+    const tc = require('./telegramClient');
+    const [rows] = await db.execute(
+      `SELECT a.id, a.is_autoreply_enabled AS ai
+       FROM accounts a
+       LEFT JOIN users u ON u.id = a.user_id
+       WHERE COALESCE(u.is_blocked, 0) = 0`,
+    );
+    total = rows.length;
+    aiOn = rows.filter((r) => Number(r.ai)).length;
+    online = rows.filter((r) => {
+      try {
+        return tc.isActive(r.id);
+      } catch (_) {
+        return false;
+      }
+    }).length;
+  } catch (_) {}
+
+  try {
+    const [[h]] = await db.execute(
+      `SELECT COUNT(*) AS c FROM operator_lead_flags
+       WHERE funnel_stage IN ('interest', 'pitch', 'operator')`,
+    );
+    hot = Number(h?.c || 0);
+  } catch (_) {}
+
+  try {
+    const dayStart = sqlMskDayStart(0);
+    const [[m]] = await db.execute(
+      `SELECT SUM(role = 'assistant') AS sent
+       FROM conversation_messages
+       WHERE created_at >= ${dayStart}`,
+    );
+    sentToday = Number(m?.sent || 0);
+  } catch (_) {}
+
+  const live = total
+    ? `${online} онлайн · AI ${aiOn}/${total}` + (hot > 0 ? ` · ${hot} горячих` : '')
+    : 'нет аккаунтов';
+
+  return (
+    '<b>Админ-меню</b>\n' +
+    `<code>${esc(live)}</code>\n` +
+    `Сегодня отправлено: <b>${num(sentToday)}</b>\n\n` +
+    'Выбери раздел:'
+  );
 }
 
 function sectionKeyboard(refreshData) {
@@ -55,7 +122,20 @@ function systemKeyboard() {
         { text: '🔄 Обновить', callback_data: 'adm:system' },
         { text: '« Меню', callback_data: 'adm:menu' },
       ],
+      [{ text: '⚡ Быстрая проверка', callback_data: 'adm:check' }],
       [{ text: '♻️ Перезапустить бота', callback_data: 'adm:restart' }],
+    ],
+  };
+}
+
+function checkKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '🔄 Ещё раз', callback_data: 'adm:check' },
+        { text: '🛠 Подробнее', callback_data: 'adm:system' },
+      ],
+      [{ text: '« Меню', callback_data: 'adm:menu' }],
     ],
   };
 }
@@ -380,7 +460,7 @@ function parseProxyList() {
     .filter((p) => p.host && p.port && (p.type === 'socks5' || p.type === 'socks'));
 }
 
-async function probeSocksToTelegram(proxy) {
+async function probeSocksToTelegram(proxy, timeoutMs = PROXY_PROBE_TIMEOUT_MS) {
   const started = Date.now();
   try {
     const { socket } = await SocksClient.createConnection({
@@ -393,7 +473,7 @@ async function probeSocksToTelegram(proxy) {
       },
       command: 'connect',
       destination: { host: TG_PROBE_HOST, port: TG_PROBE_PORT },
-      timeout: PROXY_PROBE_TIMEOUT_MS,
+      timeout: timeoutMs,
     });
     try {
       socket.destroy();
@@ -406,22 +486,114 @@ async function probeSocksToTelegram(proxy) {
   }
 }
 
-async function probeAllProxies() {
+async function probeAllProxies({ timeoutMs = PROXY_PROBE_TIMEOUT_MS, concurrency = 3 } = {}) {
   const list = parseProxyList();
+  if (!list.length) return [];
+  // Быстрый режим: все сразу; полный — пачками по concurrency.
+  if (concurrency <= 0 || concurrency >= list.length) {
+    return Promise.all(
+      list.map(async (p) => ({ ...p, ...(await probeSocksToTelegram(p, timeoutMs)) })),
+    );
+  }
   const results = [];
-  // По 3 параллельно — не растягивать меню на минуту.
-  const concurrency = 3;
   for (let i = 0; i < list.length; i += concurrency) {
     const chunk = list.slice(i, i + concurrency);
     const probed = await Promise.all(
       chunk.map(async (p) => {
-        const r = await probeSocksToTelegram(p);
+        const r = await probeSocksToTelegram(p, timeoutMs);
         return { ...p, ...r };
       }),
     );
     results.push(...probed);
   }
   return results;
+}
+
+/** Короткий отчёт: OpenAI + прокси → TG + онлайн аккаунтов. ~2–3 с. */
+async function buildQuickCheckText() {
+  const notifier = require('./helpRequestNotifier');
+  const tc = require('./telegramClient');
+  const started = Date.now();
+
+  const [proxyResults, ping, accountRows] = await Promise.all([
+    probeAllProxies({ timeoutMs: QUICK_PROBE_TIMEOUT_MS, concurrency: 0 }),
+    pingOpenAi(),
+    db
+      .execute(
+        `SELECT a.id, a.is_autoreply_enabled AS ai
+         FROM accounts a
+         LEFT JOIN users u ON u.id = a.user_id
+         WHERE COALESCE(u.is_blocked, 0) = 0`,
+      )
+      .then(([rows]) => rows)
+      .catch(() => []),
+  ]);
+
+  const total = accountRows.length;
+  const aiOn = accountRows.filter((r) => Number(r.ai)).length;
+  const online = accountRows.filter((r) => {
+    try {
+      return tc.isActive(r.id);
+    } catch (_) {
+      return false;
+    }
+  }).length;
+
+  const okProxies = proxyResults.filter((p) => p.ok).length;
+  const proxyTotal = proxyResults.length;
+
+  let aiLine;
+  if (ping.ok) {
+    aiLine = `✅ OpenAI · ${(ping.ms / 1000).toFixed(1)} с`;
+  } else {
+    const kind = notifier.classifyOpenAiError(ping.err);
+    aiLine =
+      kind === 'billing'
+        ? '❌ OpenAI · нет денег'
+        : kind === 'auth'
+          ? '❌ OpenAI · ключ'
+          : `❌ OpenAI · ${esc(String(ping.err?.message || 'ошибка').slice(0, 60))}`;
+  }
+
+  let proxyLine;
+  if (!proxyTotal) {
+    proxyLine = '⚪ Прокси · PROXY_LIST пуст';
+  } else if (okProxies === proxyTotal) {
+    proxyLine = `✅ Прокси · ${okProxies}/${proxyTotal} до Telegram`;
+  } else if (okProxies === 0) {
+    proxyLine = `❌ Прокси · 0/${proxyTotal} — до Telegram никто не достучится`;
+  } else {
+    proxyLine = `🟡 Прокси · ${okProxies}/${proxyTotal} ок`;
+  }
+
+  const dead = proxyResults.filter((p) => !p.ok).slice(0, 5);
+  const deadLines = dead.length
+    ? '\n' +
+      dead
+        .map((p) => `    ❌ <code>${esc(p.host)}:${p.port}</code> · ${esc(p.error || 'timeout')}`)
+        .join('\n') +
+      (proxyResults.filter((p) => !p.ok).length > 5 ? '\n    …' : '')
+    : '';
+
+  const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+  const verdict =
+    ping.ok && (proxyTotal === 0 || okProxies > 0)
+      ? '🟢 В целом ок'
+      : !ping.ok && okProxies === 0 && proxyTotal > 0
+        ? '🔴 ИИ и прокси лежат'
+        : !ping.ok
+          ? '🟠 ИИ не отвечает'
+          : '🟠 Прокси плохие';
+
+  return (
+    '<b>⚡ Быстрая проверка</b>\n\n' +
+    `${verdict}\n` +
+    `${aiLine}\n` +
+    `${proxyLine}${deadLines}\n` +
+    `📱 Аккаунты · онлайн <b>${online}</b> / ${total}, AI ${aiOn}\n` +
+    `⏱ ${elapsed} с · uptime ${formatUptime(process.uptime())}\n\n` +
+    '<i>Короткий таймаут 2.5 с. Подробный прогон — «Система».</i>'
+  );
 }
 
 function formatUptime(sec) {
@@ -834,9 +1006,16 @@ async function handleBlacklistCallback(api, data, target) {
 // ---------------------------------------------------------------------------
 
 async function sendMenu(api, chatId) {
+  let text;
+  try {
+    text = await buildMenuHomeText();
+  } catch (err) {
+    console.error('[adminMenu] home:', err.message);
+    text = '<b>Админ-меню</b>\n\nВыбери раздел:';
+  }
   await tg(api, 'sendMessage', {
     chat_id: chatId,
-    text: MENU_TEXT,
+    text,
     parse_mode: 'HTML',
     reply_markup: menuKeyboard(chatId),
   });
@@ -847,6 +1026,11 @@ const SECTIONS = {
   'adm:stats': { build: buildStatsText, loading: '⏳ Считаю статистику…' },
   'adm:openai': { build: buildOpenAiText, loading: '⏳ Проверяю OpenAI…' },
   'adm:system': { build: buildSystemText, loading: '⏳ Проверяю прокси и ИИ…', keyboard: systemKeyboard },
+  'adm:check': {
+    build: buildQuickCheckText,
+    loading: '⚡ Проверяю OpenAI и прокси…',
+    keyboard: checkKeyboard,
+  },
 };
 
 async function handleCallback(api, query) {
@@ -865,9 +1049,16 @@ async function handleCallback(api, query) {
     try {
       require('./workerConnect').clearWizard(chatId);
     } catch (_) {}
+    let text;
+    try {
+      text = await buildMenuHomeText();
+    } catch (err) {
+      console.error('[adminMenu] home:', err.message);
+      text = '<b>Админ-меню</b>\n\nВыбери раздел:';
+    }
     await tg(api, 'editMessageText', {
       ...target,
-      text: MENU_TEXT,
+      text,
       reply_markup: menuKeyboard(chatId),
     });
     return;
@@ -899,14 +1090,16 @@ async function handleCallback(api, query) {
     return;
   }
   if (query.data === 'adm:dt' || query.data === 'adm:dating' || String(query.data || '').startsWith('dt:')) {
+    let text;
+    try {
+      text = await buildMenuHomeText();
+    } catch (_) {
+      text = '<b>Админ-меню</b>\n\nВыбери раздел:';
+    }
     await tg(api, 'editMessageText', {
       ...target,
-      text:
-        '<b>Сайты знакомств</b>\n\n' +
-        'Раздел удалён. Управление только через Telegram-аккаунты бота.',
-      reply_markup: {
-        inline_keyboard: [[{ text: '« Меню', callback_data: 'adm:menu' }]],
-      },
+      text,
+      reply_markup: menuKeyboard(chatId),
     });
     return;
   }
