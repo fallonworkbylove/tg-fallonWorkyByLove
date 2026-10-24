@@ -233,9 +233,13 @@ function enrichShortFollowUp(history, userMessage) {
   const isShort = text.length <= 28 && words.length <= 4;
   if (!isShort) return text;
 
+  // Только явные уточнения/wh — не вешать «уточнение к …» на «норм», «давай», «ну да».
   const followUpRe =
-    /^(а\s+)?(чем|чего|почему|зачем|как|какой|какая|какие|какое|где|куда|откуда|от\s*куда|когда|кто|что|ну\s+и|типа|в\s+смысле|это\s+как|и\s+что)\b/i;
-  if (!followUpRe.test(text) && words.length > 2) return text;
+    /^(а\s+)?(чем|чего|почему|зачем|как|какой|какая|какие|какое|где|куда|откуда|от\s*куда|когда|кто|что|ну\s+и|типа|в\s+смысле|это\s+как|и\s+что)\b|\?\s*$/i;
+  if (!followUpRe.test(text)) return text;
+  if (/^(?:ну\s+|да\s+)?(?:ага|угу|ок|окей|ладно|норм|хорошо|ясно|понял[а]?)\s*[).!]?\s*$/i.test(text)) {
+    return text;
+  }
 
   let lastAssistant = '';
   for (let i = (history || []).length - 1; i >= 0; i -= 1) {
@@ -461,7 +465,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Если переезжаешь к маме — мама живёт В городе переезда. ' +
     'ПЕРЕЕЗД НАВСЕГДА: ты переезжаешь насовсем, будешь там жить. НЕ «ненадолго», НЕ «временно», НЕ «только помочь маме и назад». ' +
     'Мама — одна из причин, но остаёшься жить там. На «надолго?» — «насовсем». На «в каком районе будешь жить» — сначала у мамы, потом снимешь своё / ещё выбираешь район. ' +
-    'ПОЧЕМУ ПЕРЕЕЗЖАЕШЬ: мама / ближе к семье / жильё поудобнее. ' +
+    'ПОЧЕМУ ПЕРЕЕЗЖАЕШЬ: раньше переехала с парнем, он изменил — расстались; ты уже обустроилась и не хотела снова срываться, ' +
+    'но с мамой беда — приходится ехать. ' +
     'КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: «нашла работу», «устроилась», «новая работа в городе», «работа там» как причина переезда — ' +
     'твоя работа (флипинг токенов / онлайн) удалённая, город для неё не нужен, из любого места. ' +
     'НЕЛЬЗЯ: «мама в Липецке, а я еду в Прагу/Донецк/… чтобы быть рядом с ней» — это противоречие. ' +
@@ -496,12 +501,13 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // которые находятся ближе к концу контекста — на длинной истории (20-30
   // сообщений) правило длины, сказанное только в самом начале, размывается.
   const loveReminder =
-    'Тон: тёплый и живой, как с человеком который тебе симпатичен — но без навязчивости. ' +
-    'Дружелюбие и лёгкий интерес к нему должны чувствоваться в формулировках (мягко, по-человечески). ' +
-    'НЕ будь холодной/сухой «по делу» и НЕ будь прилипчивой: без «я тебя люблю», «дорожу тобой», «ты мне так важен» в каждом ответе. ' +
-    'Лёгкая нежность — иногда, когда диалог уже тёплый или он сам флиртует; иначе просто тепло и спокойно. ' +
-    'Если он холоден или грубит — тепла меньше, без уговоров. ' +
-    'Эмодзи почти не используй (чаще ноль). Скобку «)» как улыбку можно, но НЕ в каждом сообщении.';
+    'Тон: залюбленный и тёплый — как девушка, которой он симпатичен: мягко, с лёгкой нежностью в формулировках ' +
+    '(«мне приятно)», «ну ты милый)», «рада что написал)», интерес к нему), без сухости «по делу». ' +
+    'Дружелюбие и интерес должны чувствоваться почти всегда, когда он не грубит. ' +
+    'НЕ прилипай: без «я тебя люблю», «дорожу тобой», «ты мне так важен» в каждом ответе и без нытья. ' +
+    'Лёгкая ласка/нежность — чаще, когда диалог уже тёплый или он сам флиртует; если холоден/грубит — тепла меньше. ' +
+    'Смайлики-эмодзи РЕДКО: максимум один мягкий в конце (☺️ 😊 🥰 💕 🙂), не чаще чем раз в несколько реплик; чаще достаточно скобки «)». ' +
+    'Без россыпи эмодзи и без «!!!».';
 
   const laughReminder =
     'Если последнее сообщение собеседника тебе реально смешное — шутка, прикол, неожиданная смешная фраза — ' +
@@ -510,14 +516,14 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
 
   // Сжатый стиль (thin): без простыни запретов — детали в humanThinLayer.buildThinHumanHint.
   const humanStyleReminder =
-    'Стиль: живая девушка в Telegram, будто с телефона — коротко, тепло, по его теме. ' +
-    'Цепляйся к конкретике из его фразы своими словами. Ритм неровный: то короче, то чуть живее. ' +
+    'Стиль: живая девушка в Telegram, будто с телефона — коротко, залюбленно и тепло, по его теме. ' +
+    'Цепляйся к конкретике из его фразы своими словами. Ритм неровный: то короче, то чуть нежнее. ' +
     'На медиа которое ОН прислал — реагируй на содержимое, не проси «покажи». ' +
     'На прямой вопрос — сначала короткий ответ, без зеркального «а ты?». ' +
     '«Спасибо» только на комплимент/подарок, не на «ок/молодец». Без лести и морали. ' +
     'Иногда мелочь из своего дня; иногда «ну/хм/типа/блин» перед фразой, если звучит естественно. ' +
     'Своё мнение и лёгкая вредность ок. Не обязана поддакивать. Женский род о себе. ДВ = Дайвинчик — знаешь. ' +
-    'Реакции: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
+    'Текст: чаще «)», редко один смайл ☺️/😊/🥰. Реакции TG: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
 
   const answerFirstReminder =
     'Сначала по делу на то, что он СЕЙЧАС написал — коротко. ' +
@@ -536,15 +542,12 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     '«давай пока тут общаться» — ТОЛЬКО при отказе от встречи/контактов.';
 
   const lengthReminder =
-    'ДЛИНА: обычно ОДНА короткая фраза (3-12 слов). Максимум 2 коротких предложения. ' +
-    'Исключение: если он задал несколько вопросов — 2-3 короткие строки, по строке на вопрос. ' +
-    'Без списков, абзацев и «потому что…». Дефис «-», не тире «—». ' +
+    'ДЛИНА: 1–2 коротких фразы (примерно 5–20 слов). Голое «ок/ага» — только если он сам написал голое ок/ага. ' +
+    'Если он сказал мысль/факт/историю — ответь ПО СУТИ его слов (зацепи 1 деталь), не отпиской «ну да)» / «хах просто ну да)». ' +
+    'Несколько вопросов — 2-3 короткие строки. Без списков и эссе. Дефис «-», не тире «—». ' +
     'ВОПРОС В КОНЦЕ: по умолчанию БЕЗ вопроса. Вопрос редко, примерно каждый 5-й ответ. ' +
-    'ЗАПРЕЩЕНО почти каждое сообщение заканчивать «а ты?», «а ты откуда?», «а ты чем занимаешься?», «что интересного?». ' +
-    'Если ТЫ только что задала вопрос, а он ответил — НЕ добивай уточняющим вопросом на ту же тему (это выглядит как допрос). ' +
-    'Сказала про себя (город/работу) — НЕ зеркаль «а ты?». Просто точка или скобка. ' +
-    'Чаще просто среагируй: «ахах норм)», «звучит тяжёло», «ого». ' +
-    'Факт из истории (город/работа/имя) — не переспрашивай.';
+    'Не заканчивай почти каждое сообщение «а ты?». Если только что спросила — не добивай допросом. ' +
+    'Сказала про себя — не зеркаль «а ты?». Факт из истории не переспрашивай.';
 
   const contextGuard = buildContextGuard(history, contextualUserMessage);
 
@@ -734,9 +737,19 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     messages.push({ role: 'system', content: multiQuestionHint });
   }
   const incomingLines = bareUserText(userMessage).split('\n').filter((l) => l.trim()).length;
-  // Длинная анкета о себе + «а ты?» — реакция и ответ про себя, двумя строками.
+  const bareIncoming = bareUserText(userMessage).trim();
+  const substantiveIncoming =
+    bareIncoming.length >= 35 ||
+    (bareIncoming.split(/\s+/).filter(Boolean).length >= 6 && !/^(?:ну\s+|да\s+)?(?:ага|угу|ок|окей|ладно)\b/i.test(bareIncoming));
+  // На нормальные реплики — до 2 строк; на пачку вопросов — до 3.
   const maxReplyLines =
-    userQuestions.length >= 2 ? Math.min(3, userQuestions.length) : userQuestions.length === 1 && incomingLines >= 3 ? 2 : 1;
+    userQuestions.length >= 2
+      ? Math.min(3, userQuestions.length)
+      : userQuestions.length === 1 && incomingLines >= 3
+        ? 2
+        : substantiveIncoming
+          ? 2
+          : 1;
   const shortAckHint = buildShortAckHint(userMessage);
   if (shortAckHint) {
     messages.push({ role: 'system', content: shortAckHint });
@@ -808,7 +821,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     // правило про 1-2 предложения, ответ физически не может растянуться в
     // длинный текст. ~120 токенов хватает на 2 нормальных русских
     // предложения с запасом.
-    max_tokens: maxReplyLines > 1 ? 110 : 70,
+    max_tokens: maxReplyLines > 1 ? 140 : 110,
     temperature: 0.7,
   };
 
@@ -868,7 +881,13 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
       history,
       finalPrompt,
     );
-    const strippedMoveSpam = softenMoveSpamOnDayAsk(strippedGeoSwap, contextualUserMessage, history);
+    const strippedHisCity = fixFalseHisCityMirror(
+      strippedGeoSwap,
+      contextualUserMessage,
+      history,
+      finalPrompt,
+    );
+    const strippedMoveSpam = softenMoveSpamOnDayAsk(strippedHisCity, contextualUserMessage, history);
     const strippedConfused = fixConfusedScript(strippedMoveSpam, contextualUserMessage, history);
     const strippedBroken = fixBrokenChatFragments(strippedConfused);
     const strippedNftQ = softBlockNftOnBareQuestion(strippedBroken, contextualUserMessage, history);
@@ -1463,9 +1482,9 @@ const JOB_AS_MOVE_REASON_RE =
   /(?:нашла|нашлась|устроил[ао]сь|получила)\s+(?:новую\s+)?работ|новая\s+работа|работа\s+(?:там|в\s+этом\s+город)|из[- ]?за\s+работ/i;
 
 const JOB_MOVE_FALLBACKS_RU = [
-  'просто к маме поближе, да и жильё поудобнее)',
-  'мама там живёт, хочу рядом, жильё нормальное нашла)',
-  'к семье ближе) да и место спокойнее',
+  'с парнем сюда переехала, он изменил — а я уже обустроилась, не хотела срываться, но с мамой беда, приходится)',
+  'да с мамой беда, а тут после парня и так застряла, уже привыкла — теперь снова сборы)',
+  'раньше с парнем переехали, расстались из-за измены, я б осталась, но мама — приходится ехать)',
 ];
 
 /**
@@ -1539,8 +1558,103 @@ function extractPromptCities(prompt) {
   const m = p.match(
     /жив[её]шь\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+).{0,120}?переезжаешь\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+)/i,
   );
-  if (!m) return { from: null, to: null };
-  return { from: m[1], to: m[2] };
+  if (m) return { from: m[1], to: m[2] };
+  const single =
+    p.match(/жив[её]шь\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+)/i) ||
+    p.match(/сейчас\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+)/i);
+  return { from: single ? single[1] : null, to: null };
+}
+
+/**
+ * «А давно в Краснодаре?» — город, про который он спрашивает ЕЁ (не себя).
+ */
+function extractAskedCityAboutHer(userMessage) {
+  const msg = bareUserText(userMessage);
+  if (!msg) return null;
+  // «А ты давно на дв?» — не город.
+  if (/(?:^|\s)(?:на\s+)?дв(?:\s|$|[?)])/i.test(msg) && !/в\s+[А-ЯЁа-яё]{3,}/i.test(msg)) {
+    return null;
+  }
+  let m = msg.match(
+    /(?:^|\n)(?:а\s+)?(?:ты\s+)?(?:как\s+)?(?:давно|скол[ьк]ко(?:\s+уже)?)\s+в\s+([А-ЯЁа-яё\-]+(?:\s+[А-ЯЁа-яё\-]+)?)\s*\??\s*$/i,
+  );
+  if (m) return { city: m[1].trim(), clarifying: false };
+  m = msg.match(
+    /(?:ты\s+)?(?:сейчас\s+|щас\s+)?(?:жив[её]шь\s+)?в\s+([А-ЯЁа-яё\-]+(?:\s+[А-ЯЁа-яё\-]+)?)\s*\??\s*$/i,
+  );
+  if (m && msg.split(/\s+/).length <= 8) return { city: m[1].trim(), clarifying: /^в\s+/i.test(msg.trim()) && msg.length <= 28 };
+  return null;
+}
+
+/**
+ * Он спросил про ЕЁ город — она зеркалит «а ты давно там живёшь?» /
+ * отрицает свой город / на «В X?» подтверждает будто ОН там живёт.
+ */
+function fixFalseHisCityMirror(reply, userMessage, history, prompt) {
+  let text = String(reply || '').trim();
+  if (!text) return reply;
+
+  const asked = extractAskedCityAboutHer(userMessage);
+  const msg = bareUserText(userMessage);
+  const { from: promptFrom, to: promptTo } = extractPromptCities(prompt);
+  const herCity = extractStatedCurrentCity(history) || promptFrom;
+
+  const HIS_LIVE_Q_RE =
+    /\s*[,.]?\s*а\s+ты\s+(?:давно\s+)?(?:там|здесь|тут|в\s+[А-ЯЁа-яё\-]+(?:\s+[А-ЯЁа-яё\-]+)?)\s+жив[её]шь\??\s*\)?/gi;
+  const HIS_LIVE_Q2_RE =
+    /\s*[,.]?\s*а\s+ты\s+давно\s+там\s*\??\s*\)?/gi;
+
+  let stripped = text.replace(HIS_LIVE_Q_RE, '').replace(HIS_LIVE_Q2_RE, '').replace(/\s{2,}/g, ' ').trim();
+  if (stripped.length >= 6) text = stripped;
+
+  // «В Краснодаре?» после её «а ты там живёшь» — не «да, в Краснодаре».
+  const lastAsst = [...(Array.isArray(history) ? history : [])]
+    .reverse()
+    .find((h) => h && h.role === 'assistant');
+  const lastAsstText = String(lastAsst?.content || '');
+  const clarifyingCity =
+    asked?.clarifying ||
+    (/^в\s+[А-ЯЁа-яё\-]+(?:\s+[А-ЯЁа-яё\-]+)?\s*\??\s*$/i.test(msg) && msg.length <= 28);
+  if (
+    clarifyingCity &&
+    /а\s+ты\s+(?:давно\s+)?(?:там|в\s+)/i.test(lastAsstText) &&
+    /^(?:да[,.]?\s*)?(?:в\s+[А-ЯЁа-яё\-]+|там)(?![а-яёa-z0-9])/i.test(text)
+  ) {
+    return ['хах нет, я про себя криво спросила)', 'ой не, это я спутала)', 'хах я не про тебя)'][
+      Math.floor(Math.random() * 3)
+    ];
+  }
+
+  if (!asked?.city) {
+    return text.length >= 4 ? text : reply;
+  }
+
+  const city = asked.city;
+  const isHerNow = herCity && sameCity(city, herCity);
+  const isHerDest = promptTo && sameCity(city, promptTo) && !isHerNow;
+  const denies =
+    /не\s+была\s+никогда|никогда\s+не\s+была|не\s+довелось|не\s+была\s+в|в\s+[А-ЯЁа-яё\-]+\s+не\s+была/i.test(
+      text,
+    );
+
+  if (isHerNow && denies) {
+    return [
+      `ну да, тут уже какое-то время)`,
+      `ага, живу тут)`,
+      `ну да, в ${herCity})`,
+    ][Math.floor(Math.random() * 3)];
+  }
+  if (isHerDest && denies && /никогда|не\s+довелось/i.test(text) && !/переезж|собира|поеду|еду/i.test(text)) {
+    return [
+      `ещё нет, только собираюсь в ${promptTo})`,
+      `пока не, вот переезжаю туда)`,
+      `не была ещё, скоро буду)`,
+    ][Math.floor(Math.random() * 3)];
+  }
+
+  // Убрали зеркало — если остался только обрубок, оставить осмысленное.
+  if (text.length < 4) return reply;
+  return text;
 }
 
 const BARE_IM_IN_CITY_RE =
@@ -2593,17 +2707,19 @@ function stripHabitualTrailingQuestion(reply, history, userMessage) {
   if (anti !== text) return anti;
 
   if (mirrorTail.test(text) || softMirror.test(text)) {
+    const before = text;
     text = text.replace(mirrorTail, '').replace(softMirror, '').trim();
-    if (text.length >= 3) return text;
-    return userQ ? 'ага' : 'ага)';
+    if (text.length >= 8) return text;
+    return before;
   }
 
   // Только что задала вопрос — на его ответ НЕ добивать ещё одним (допрос).
   const lastAssistantHadQ = recent.length > 0 && /\?/.test(recent[recent.length - 1]);
   if (lastAssistantHadQ) {
     const strippedHard = dropTrailingQuestion(text);
+    if (strippedHard.length >= 8) return strippedHard;
     if (strippedHard.length >= 3) return strippedHard;
-    return userQ ? 'поняла)' : 'ага)';
+    return text;
   }
 
   // Взаимность: если давно молчала вопросом — оставляем хвостовой «?».
@@ -2626,8 +2742,8 @@ function stripHabitualTrailingQuestion(reply, history, userMessage) {
 
   const stripped = dropTrailingQuestion(text);
 
+  if (stripped.length >= 8) return stripped;
   if (stripped.length >= 3) return stripped;
-  if (!userQ) return 'ага)';
   return text;
 }
 
@@ -2685,11 +2801,15 @@ function clipOverlongReply(reply, maxLines = 1) {
   return text.trim();
 }
 
+/** Мягкие смайлы, которые можно оставить в тексте (редко, максимум один). */
+const SOFT_INLINE_SMILE_RE =
+  /(?:☺️|😊|🙂|😌|🥰|💕|😘|😅|🙈|✨|❤️|❤)/u;
+
 /**
  * Анти-детект стиль: убирает восклицательные знаки и точки в конце сообщения
  * (живая переписка в мессенджере обычно без них — точка в конце фразы часто
  * читается как «сухо/раздражённо», а обилие «!» типично для ИИ-генерации).
- * Также срезает россыпь эмодзи — оставляем живой текст со скобкой «)».
+ * Эмодзи: россыпь режем, один мягкий смайл в конце можно оставить.
  * Применяется всегда, независимо от настроения/времени суток/промпта.
  */
 function applyAntiDetectStyle(text) {
@@ -2724,11 +2844,22 @@ function applyAntiDetectStyle(text) {
         return `, ${keepCap ? ch : ch.toLowerCase()}${rest}`;
       },
     );
+    // Редкий мягкий смайл в хвосте оставляем; остальное (и дубли) срезаем.
+    let keptSmile = null;
+    const tailSmile = result.match(
+      /\s*((?:☺️|😊|🙂|😌|🥰|💕|😘|😅|🙈|✨|❤️|❤)+)\s*$/u,
+    );
+    if (tailSmile) {
+      const one = tailSmile[1].match(SOFT_INLINE_SMILE_RE);
+      keptSmile = one ? one[0] : null;
+      result = result.slice(0, tailSmile.index).trimEnd();
+    }
     result = result.replace(/\p{Extended_Pictographic}/gu, '');
+    result = result.replace(/[\uFE0F\u200D]/g, '');
+    if (keptSmile) result = `${result} ${keptSmile}`.trim();
   } catch (_) {
-    // ignore
+    result = result.replace(/[\uFE0F\u200D]/g, '');
   }
-  result = result.replace(/[\uFE0F\u200D]/g, '');
   result = result.replace(/[ \t]{2,}/g, ' ').trim();
   result = result.trimEnd();
   while (result.endsWith('.') && !result.endsWith('..')) {
@@ -2919,7 +3050,10 @@ Object.assign(module.exports, {
   detectReplyLanguage,
   isRussianConversation,
   fixSwappedCurrentCity,
+  fixFalseHisCityMirror,
+  extractAskedCityAboutHer,
   fixBrokenChatFragments,
   softBlockNftOnBareQuestion,
   isBrokenChatLine,
+  applyAntiDetectStyle,
 });

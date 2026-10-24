@@ -4377,8 +4377,10 @@ async function fireReengage(accountId, peerId) {
       );
     }
     rawReply = sanitizeReplyAgainstNftLeak(rawReply, objectionHint);
-    rawReply = humanExtra.stripAntiMirror(rawReply, text);
-    rawReply = humanExtra.echoLengthClip(text, rawReply);
+    if (sexualPressure || objectionHandler.isNudeAsk(text)) {
+      rawReply = objectionHandler.softenSexualPressureReply(rawReply, text);
+    }
+    // echoLength / antiMirror уже в finalize aiResponder — второй раз не режем.
     if (dueMemory && useMemoryHint && !sessionForgetHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     const { text: replyWithoutLaugh, laugh } = splitLaugh(rawReply);
@@ -5395,8 +5397,13 @@ async function processBufferedMessages(
       );
     }
     rawReply = sanitizeReplyAgainstNftLeak(rawReply, objectionHint);
-    rawReply = humanExtra.stripAntiMirror(rawReply, contextualText || text);
-    rawReply = humanExtra.echoLengthClip(contextualText || text, rawReply);
+    {
+      const nudeSrc = contextualText || text;
+      if (sexualPressure || objectionHandler.isNudeAsk(nudeSrc)) {
+        rawReply = objectionHandler.softenSexualPressureReply(rawReply, nudeSrc);
+      }
+    }
+    // echoLength / antiMirror уже в finalize aiResponder — второй раз не режем.
     if (dueMemory && useMemoryHint && !sessionForgetHint) memoryTriggers.markFollowedUp(dueMemory.id).catch(() => {});
 
     // Отделяем текст от запрошенного типа медиа (токен вырезаем из текста).

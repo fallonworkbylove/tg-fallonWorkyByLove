@@ -111,15 +111,18 @@ const USER_MIRRORED_RE =
 /** Если он только что зеркалил «а ты?» — не зеркалим обратно. */
 function stripAntiMirror(reply, userMessage) {
   if (!reply) return reply;
-  let text = String(reply).trim();
+  const original = String(reply).trim();
+  let text = original;
   const userMirrored = USER_MIRRORED_RE.test(String(userMessage || ''));
   if (MIRROR_TAIL_RE.test(text) || SOFT_MIRROR_RE.test(text) || (userMirrored && /\?\s*$/.test(text))) {
     text = text.replace(MIRROR_TAIL_RE, '').replace(SOFT_MIRROR_RE, '').trim();
     if (userMirrored && /\?\s*$/.test(text) && text.split(/\s+/).length <= 12) {
       text = text.replace(/\s*\?[)\s]*$/, '').trim();
     }
-    if (text.length >= 3) return text;
-    return 'ага)';
+    // Оставляем то, что осталось после среза зеркала (даже короткое «норм)»).
+    // Пустой хвост → исходник целиком, без подмены на «ага)».
+    if (text.length >= 2) return text;
+    return original;
   }
   return reply;
 }
@@ -131,21 +134,30 @@ function plainLen(text) {
     .trim().length;
 }
 
-/** Эхо длины: он коротко → режем наш ответ до первой фразы / 6–8 слов. */
+const USER_SHORT_ACK_ONLY_RE =
+  /^(?:ну\s+|да\s+|а\s+)?(?:ага|угу|ок|окей|ладно|понял[а]?|ясно|норм|хорошо|спс|спасибо|лол|кек|хм+|мм+|аа+)\s*[).!]?\s*$/i;
+
+/**
+ * Эхо длины только на голые «ок/ага» — не режем ответ на нормальные реплики
+ * и вопросы («почему?», «в смысле?»), иначе получается «на отъебись».
+ */
 function echoLengthClip(userMessage, reply) {
   if (!reply) return reply;
-  const uLen = plainLen(userMessage);
-  if (uLen === 0 || uLen > 28) return reply;
+  const bare = String(userMessage || '')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!bare || !USER_SHORT_ACK_ONLY_RE.test(bare)) return reply;
   const text = String(reply).trim();
-  if (plainLen(text) <= 36) return reply;
+  if (plainLen(text) <= 40) return reply;
   const first = text.split(/\n/)[0].trim();
   let cut = first.split(/(?<=[).!?…])\s+/).filter(Boolean)[0] || first;
   const words = cut.split(/\s+/).filter(Boolean);
-  if (words.length > 8) {
-    cut = words.slice(0, 5 + Math.floor(Math.random() * 3)).join(' ');
+  if (words.length > 10) {
+    cut = words.slice(0, 7 + Math.floor(Math.random() * 3)).join(' ');
     if (!/[)….!?]$/.test(cut) && Math.random() < 0.55) cut += ')';
   }
-  if (cut.length >= 3 && cut.length < text.length) return cut;
+  if (cut.length >= 8 && cut.length < text.length) return cut;
   return reply;
 }
 

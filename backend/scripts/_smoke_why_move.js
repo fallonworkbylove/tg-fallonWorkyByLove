@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-require('dotenv').config();
+process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'sk-test';
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const oh = require('../services/objectionHandler');
 
 const hist = [
@@ -12,8 +14,8 @@ const main = oh.detectHint('а основное?', hist);
 const earn = oh.detectHint('много зарабатываешь?', hist);
 const earn2 = oh.detectHint('сколько заработала?', hist);
 
-const okShort = /нашла работу/i.test(String(short || ''));
-const okWhy = /нашла работу|мама/i.test(String(why || ''));
+const okShort = /нашла работу|парень|измен|мамой/i.test(String(short || ''));
+const okWhy = /парень|измен|обустроил|мамой|нашла работу/i.test(String(why || ''));
 const okMain =
   /флипинг токенов|это и есть основное/i.test(String(main || '')) &&
   !/ты сказала, что флипинг — подработка/i.test(String(main || ''));

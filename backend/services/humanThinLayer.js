@@ -58,10 +58,11 @@ function buildThinHumanHint(userMessage, history) {
     /^(?:сколько|скок|где|откуда|когда|почему|зачем|как\s+тебя|ты\s+замуж)/i.test(msg);
   const hooks = pickHookWords(msg);
   const parts = [
-    'Пиши как девушка в обычном Telegram: коротко, тепло, будто печатаешь с телефона. ' +
+    'Пиши как девушка в обычном Telegram: коротко, залюбленно и тепло, будто печатаешь с телефона. ' +
       'Цепляйся к его словам — повтори крошку смысла своими словами, не общий кивок. ' +
       'Ритм живой: иногда одна обрубленная фраза, иногда два коротких куска; можно «ну/хм/типа» в начале, если к месту. ' +
-      'Скобка «)» — улыбка, не обязательно каждый раз. Без коуч-тона и без «эссе про жизнь».',
+      'Лёгкая нежность в формулировках ок («мне приятно)», «ну ты милый)»). ' +
+      'Скобка «)» — улыбка; эмодзи-смайл (☺️😊🥰) — редко, максимум один. Без коуч-тона и без «эссе про жизнь».',
   ];
   if (hooks.length) {
     parts.push(`Якорь из его сообщения: ${hooks.map((w) => `«${w}»`).join(', ')} — обыграй хотя бы одно.`);
@@ -81,6 +82,10 @@ function buildThinHumanHint(userMessage, history) {
   if (softHumanLite.needsReciprocalQuestion(history, userMessage)) {
     parts.push(
       'Диалог односторонний — после короткого ответа один живой вопрос про него (день / чем занят / настроение), без зеркала «а ты откуда».',
+    );
+  } else if (softHumanLite.USER_CLOSING_RE.test(bare)) {
+    parts.push(
+      'Он прощается / идёт спать — только тёплое спокойной ночи, БЕЗ вопроса «чем занят / как день».',
     );
   }
   return parts.join(' ');
@@ -220,7 +225,8 @@ function fixCoachSpeak(reply) {
   if (cleaned.length >= 8 && !COACH_RE.test(cleaned) && !isWeak(cleaned)) {
     return tag + (/\)\s*$/.test(cleaned) ? cleaned : `${cleaned})`);
   }
-  return tag + ['ну бывает)', 'ага)', 'хм ок)', 'поняла)'][Math.floor(Math.random() * 4)];
+  // Не сводим к «ага)» — оставляем исходник, если вычистить нечего осмысленного.
+  return reply;
 }
 
 const EDITORIAL_RE =
@@ -258,7 +264,7 @@ function fixBrokenHedgeTail(reply) {
   let cleaned = body.replace(/\)?\s*довольно\s+ну\s+ок\)*/gi, ')').replace(/\s{2,}/g, ' ').trim();
   // Раньше сюда подмешивали NFT даже без крипто-контекста — убрали.
   if (cleaned.length >= 6) return tag + (/\)\s*$/.test(cleaned) ? cleaned : `${cleaned})`);
-  return tag + 'ага)';
+  return reply;
 }
 
 function fixDismissiveFriendly(reply, userMessage) {
@@ -270,6 +276,28 @@ function fixDismissiveFriendly(reply, userMessage) {
     return tag + ['давай)', 'слушаю)', 'ок, слушаю)'][Math.floor(Math.random() * 3)];
   }
   return reply;
+}
+
+const AI_ASSIST_ASK_RE =
+  /сгенерир\w*|напиши\s+(?:мне\s+)?(?:текст|поздравлени|открытк|стих|эссе|сочинени)|сделай\s+(?:мне\s+)?открытк|текст\s+поздравлени/i;
+const AI_ASSIST_REPLY_RE =
+  /можно\s+так\s*:|можно\s+сделать\s+что-то\s+вроде\s*:|дорогой\s*\[|поздравля(?:ю|ем)\s+(?:тебя\s+)?со\s+свадьб|пусть\s+ваша\s+любовь|гармонии\s+в\s+вашем|«[^»]{40,}»|"[^"]{40,}"/i;
+const AI_ASSIST_REFUSALS = [
+  'хах я не нейросеть, сама пиши)',
+  'ну ты серьёзно) я ж не chatgpt',
+  'не, не в этом формате)',
+  'ахах нет, давай без генераций)',
+];
+
+/** Режим ChatGPT на «сгенерируй текст/открытку» — срезаем шаблон. */
+function fixAiAssistantMode(reply, userMessage) {
+  if (!reply) return reply;
+  const msg = bare(userMessage);
+  if (!AI_ASSIST_ASK_RE.test(msg)) return reply;
+  const { tag, body } = stripTags(reply);
+  if (!AI_ASSIST_REPLY_RE.test(body) && body.length < 80) return reply;
+  if (!AI_ASSIST_REPLY_RE.test(body) && !/[«"]/.test(body)) return reply;
+  return tag + AI_ASSIST_REFUSALS[Math.floor(Math.random() * AI_ASSIST_REFUSALS.length)];
 }
 
 /**
@@ -284,6 +312,7 @@ function applyThinPostfilters(reply, userMessage, history = null, systemPrompt =
   out = fixMeetWeakDodge(out, userMessage);
   out = fixRelationshipAsk(out, userMessage);
   out = fixDirectFactAsk(out, userMessage);
+  out = fixAiAssistantMode(out, userMessage);
   out = fixCoachSpeak(out);
   out = fixEditorialTone(out);
   out = fixServiceThanks(out);
@@ -305,4 +334,5 @@ module.exports = {
   fixDirectFactAsk,
   fixServiceThanks,
   fixMeetWeakDodge,
+  fixAiAssistantMode,
 };
