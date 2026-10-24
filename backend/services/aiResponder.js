@@ -225,8 +225,13 @@ function isRussianConversation(userMessage, history = []) {
  * и отвечает «не поняла, о чём речь».
  */
 function enrichShortFollowUp(history, userMessage) {
-  const text = String(userMessage || '').trim();
+  let text = String(userMessage || '').trim();
   if (!text) return text;
+  // Схлопываем случайный двойной ярлык из старых сообщений в истории.
+  text = text.replace(
+    /\[уточнение к твоей фразе\s*[«"][^»"]*[»"]\]:\s*\[ответ на(?:\s+его\s+сообщение)?\s*[«"][^»"]*[»"]\]:\s*/i,
+    (m) => m.replace(/:\s*\[ответ на[^\]]+\]:\s*/i, ']: '),
+  );
   if (/\[(?:ответ на|уточнение к|Ответ на сообщение|геоконтекст)/i.test(text)) return text;
 
   const words = text.split(/\s+/).filter(Boolean);
@@ -890,7 +895,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     const strippedMoveSpam = softenMoveSpamOnDayAsk(strippedHisCity, contextualUserMessage, history);
     const strippedConfused = fixConfusedScript(strippedMoveSpam, contextualUserMessage, history);
     const strippedBroken = fixBrokenChatFragments(strippedConfused);
-    const strippedNftQ = softBlockNftOnBareQuestion(strippedBroken, contextualUserMessage, history);
+    const strippedTypos = fixModelTypos(strippedBroken);
+    const strippedNftQ = softBlockNftOnBareQuestion(strippedTypos, contextualUserMessage, history);
     const strippedDeleteAdmit = fixFalseDeleteAdmit(strippedNftQ, contextualUserMessage);
     const strippedPolite = replaceDesignerClaims(
       stripPlatitudes(stripRoboticPoliteness(strippedDeleteAdmit, userMessage)),
@@ -1865,6 +1871,32 @@ function fixBrokenChatFragments(reply) {
   if (!changed) return reply;
   const joined = out.filter((l) => String(l).trim()).join('\n');
   return joined || BROKEN_CHAT_FALLBACKS[0];
+}
+
+/** Типичный мусор модели / после typo-слоя — чиним точечно. */
+const MODEL_TYPO_FIXES = [
+  [/на\s+веоном\s+пути/gi, 'на верном пути'],
+  [/веоном/gi, 'верном'],
+  [/заучит(?=[)\s,.!?]|$)/gi, 'звучит'],
+  [/завучит(?=[)\s,.!?]|$)/gi, 'звучит'],
+  [/верномм/gi, 'верном'],
+  [/нормальнго/gi, 'нормально'],
+  [/приятнго/gi, 'приятно'],
+];
+
+function fixModelTypos(reply) {
+  if (!reply) return reply;
+  let text = String(reply);
+  let changed = false;
+  for (const [re, to] of MODEL_TYPO_FIXES) {
+    re.lastIndex = 0;
+    if (re.test(text)) {
+      re.lastIndex = 0;
+      text = text.replace(re, to);
+      changed = true;
+    }
+  }
+  return changed ? text : reply;
 }
 
 /**
@@ -2896,18 +2928,39 @@ async function transcribeAudio(buffer, filename = 'voice.ogg') {
  * Описание всегда на русском — служебный текст для модели, не речь собеседника.
  * Язык ответа бота выбирается отдельно по истории диалога.
  */
+/** MIME для vision: только то, что принимает OpenAI. tgs/webm/etc → null. */
+function detectVisionImageMime(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+    return 'image/png';
+  }
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return 'image/gif';
+  if (
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return 'image/webp';
+  }
+  return null;
+}
+
 async function describeImage(buffer, caption = '') {
   try {
+    const mime = detectVisionImageMime(buffer);
+    if (!mime) {
+      // Анимированные стикеры (.tgs), video-sticker и пр. — не jpeg/png/gif/webp.
+      // Не долбим API 400-ками; достаточно подписи/эмодзи.
+      if (caption) return `стикер ${caption}`.trim();
+      return '';
+    }
     const base64 = buffer.toString('base64');
-    // Стикеры Telegram часто webp — правильный MIME повышает шанс OCR текста.
-    const isWebp =
-      Buffer.isBuffer(buffer) &&
-      buffer.length > 12 &&
-      buffer[8] === 0x57 &&
-      buffer[9] === 0x45 &&
-      buffer[10] === 0x42 &&
-      buffer[11] === 0x50;
-    const mime = isWebp ? 'image/webp' : 'image/jpeg';
 
     const completion = await mediaClient.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -2935,8 +2988,13 @@ async function describeImage(buffer, caption = '') {
     });
     return completion.choices[0]?.message?.content?.trim() || '';
   } catch (err) {
-    console.error('Ошибка распознавания фото:', err.message);
-    return '';
+    const msg = String(err.message || err);
+    if (/unsupported image|invalid_image|invalid image/i.test(msg)) {
+      console.warn('Vision: формат не поддержан, пропускаю.', caption ? `caption=${caption}` : '');
+    } else {
+      console.error('Ошибка распознавания фото:', msg);
+    }
+    return caption ? `стикер ${caption}`.trim() : '';
   }
 }
 
@@ -3053,7 +3111,9 @@ Object.assign(module.exports, {
   fixFalseHisCityMirror,
   extractAskedCityAboutHer,
   fixBrokenChatFragments,
+  fixModelTypos,
   softBlockNftOnBareQuestion,
   isBrokenChatLine,
   applyAntiDetectStyle,
+  detectVisionImageMime,
 });

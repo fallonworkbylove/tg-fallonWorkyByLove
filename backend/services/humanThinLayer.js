@@ -240,13 +240,42 @@ function fixEditorialTone(reply) {
 }
 
 const SERVICE_THANKS_RE =
-  /^(?:ок|окей|хорошо|ладно|ага)[,\s]*(?:спасибо|спс)\s*\)*$|^(?:спасибо|спс)\s*\)*$/i;
+  /^(?:ок|окей|хорошо|ладно|ага|да)[,\s]*(?:нормально[,.\s]*)?(?:спасибо|спс)\s*\)*$|^(?:спасибо|спс)\s*\)*$/i;
 
 function fixServiceThanks(reply) {
   if (!reply) return reply;
   const { tag, body } = stripTags(reply);
   if (!SERVICE_THANKS_RE.test(body)) return reply;
   return tag + ['ага)', 'ну ок)', 'ладно)'][Math.floor(Math.random() * 3)];
+}
+
+/**
+ * «Спасибо» не за комплимент/подарок (привет / как дела) — срезаем.
+ * Пример бага: «да, нормально, спасибо)» на «Приветик, хорошо, ты как?)».
+ */
+function fixMisplacedThanks(reply, userMessage) {
+  if (!reply || !/спасибо|спс/i.test(String(reply))) return reply;
+  const msg = bare(userMessage);
+  const deserved =
+    /спасибо|благодар|мил[аяоы]|красив|умниц|нрав|😍|🥰|😘|❤|подарок|цветы|обнимаю|целую/i.test(
+      msg,
+    );
+  if (deserved) return reply;
+  const { tag, body } = stripTags(reply);
+  if (!/спасибо|спс/i.test(body)) return reply;
+  let cleaned = body
+    .replace(/,?\s*(?:большое\s+)?(?:спасибо|спс)(?![а-яёa-z0-9])\s*/gi, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^\s*[,.;]+\s*|\s*[,.;]+\s*$/g, '')
+    .trim();
+  if (cleaned.replace(/[)\s]/g, '').length < 4) {
+    if (/привет|хай|здаров|ты\s+как|как\s+дела|как\s+ты/i.test(msg)) {
+      return tag + ['хорошо)', 'норм, ты как?)', 'да нормально)'][Math.floor(Math.random() * 3)];
+    }
+    return tag + ['ага)', 'ну ок)', 'ладно)'][Math.floor(Math.random() * 3)];
+  }
+  if (!/[)….!?]$/.test(cleaned)) cleaned += ')';
+  return tag + cleaned;
 }
 
 function fixFormalPlease(reply) {
@@ -316,6 +345,7 @@ function applyThinPostfilters(reply, userMessage, history = null, systemPrompt =
   out = fixCoachSpeak(out);
   out = fixEditorialTone(out);
   out = fixServiceThanks(out);
+  out = fixMisplacedThanks(out, userMessage);
   out = fixFormalPlease(out);
   out = fixBrokenHedgeTail(out);
   out = fixDismissiveFriendly(out, userMessage);
@@ -333,6 +363,7 @@ module.exports = {
   fixCoachSpeak,
   fixDirectFactAsk,
   fixServiceThanks,
+  fixMisplacedThanks,
   fixMeetWeakDodge,
   fixAiAssistantMode,
 };

@@ -3477,8 +3477,19 @@ async function quotedTextOf(accountId, message) {
   }
 }
 
+/** Срезает служебные ярлыки цитаты — чтобы не было «[уточнение]: [ответ на]: текст». */
+function stripQuoteMarkers(text) {
+  return String(text || '')
+    .replace(
+      /\[(?:уточнение к твоей фразе|ответ на(?:\s+его\s+сообщение)?|ответ на твою фразу|Ответ на сообщение(?:\s+собеседника)?)[^\]]*\]:?\s*/gi,
+      '',
+    )
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function withQuote(text, quote) {
-  const body = String(text || '').trim();
+  const body = stripQuoteMarkers(text);
   const cited = String(quote || '').replace(/\s+/g, ' ').trim();
   if (!cited) return body;
   if (!body) return `[ответ на «${cited}»]`;
@@ -4948,13 +4959,13 @@ async function processBufferedMessages(
       if (repliedText) {
         // out=true → он ответил на НАШУ фразу (уточнение смысла).
         // out=false → ответил на своё же / чужое — цитата собеседника.
-        // Старый ярлык «Ответ на сообщение собеседника» путал модель:
-        // «Откуда?» на «скоро выпишут» читался как «где ты живёшь».
+        // extractIncomingText уже мог повесить [ответ на …] — снимаем и ставим один ярлык.
+        const bare = stripQuoteMarkers(text);
         const quote = repliedText.slice(0, 180).replace(/\s+/g, ' ');
         const isOurs = Boolean(repliedMessage.out);
         contextualText = isOurs
-          ? `[уточнение к твоей фразе «${quote}»]: ${text}`
-          : `[ответ на его сообщение «${quote}»]: ${text}`;
+          ? `[уточнение к твоей фразе «${quote}»]: ${bare}`
+          : `[ответ на его сообщение «${quote}»]: ${bare}`;
       }
     } catch (error) {
       console.warn(
