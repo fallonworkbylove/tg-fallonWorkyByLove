@@ -220,36 +220,6 @@ const api = {
       body: { stage },
     }),
 
-  getDatingSites: () => request('/dating-sites'),
-
-  addDatingSite: (payload) =>
-    request('/dating-sites', {
-      method: 'POST',
-      body: payload,
-    }),
-
-  updateDatingSite: (id, payload) =>
-    request(`/dating-sites/${id}`, {
-      method: 'PATCH',
-      body: payload,
-    }),
-
-  deleteDatingSite: (id) =>
-    request(`/dating-sites/${id}`, {
-      method: 'DELETE',
-    }),
-
-  exportDatingWorker: () =>
-    request('/dating-sites/export-worker', {
-      method: 'POST',
-      body: {},
-    }),
-
-  previewDatingInvite: (tg, lang) =>
-    request(
-      `/dating-sites/invite-preview?tg=${encodeURIComponent(tg || '')}&lang=${encodeURIComponent(lang || 'en')}`,
-    ),
-
   clearConversation: (accountId, peerId) =>
     request(`/accounts/conversations/${accountId}/${peerId}`, {
       method: 'DELETE',
@@ -301,10 +271,7 @@ function persistNotifications() {
 }
 
 const state = {
-  activeTab: (() => {
-    const tab = localStorage.getItem('currentTab') || 'panel';
-    return tab === 'dating' ? 'panel' : tab;
-  })(),
+  activeTab: localStorage.getItem('currentTab') || 'panel',
 
   dashboard: {
     balance: 0,
@@ -317,8 +284,6 @@ const state = {
 
   accounts: [],
   selectedAccountIds: loadStoredSelection(),
-  datingAccounts: [],
-  datingProxyPool: null,
   examples: [],
   conversations: [],
   conversationsSort: 'funnel',
@@ -371,10 +336,6 @@ const elements = {
   notifCenter: document.getElementById('notif-center'),
   notifList: document.getElementById('notif-list'),
   notifBadge: document.getElementById('notif-badge'),
-  datingList: document.getElementById('dating-list'),
-  datingForm: document.getElementById('dating-form'),
-  datingTgAccount: document.getElementById('dating-tg-account'),
-  datingFormHint: document.getElementById('dating-form-hint'),
   accountForm: document.getElementById('account-form'),
   exampleForm: document.getElementById('example-form'),
   learnList: document.getElementById('learn-list'),
@@ -650,32 +611,7 @@ function getExampleAccountName(example) {
   return account?.phone || 'Аккаунт';
 }
 
-function isBetaUi() {
-  // Локальный запасной путь: если dashboard ещё не пришёл, смотрим Telegram user.
-  if (state.dashboard.isBetaTester) return true;
-  const tgUser = getTelegramUser();
-  if (!tgUser) return false;
-  if (String(tgUser.id) === '8588744561') return true;
-  const uname = String(tgUser.username || '')
-    .replace(/^@/, '')
-    .toLowerCase();
-  return uname === 'fallonsociapat';
-}
-
-function applyBetaUi() {
-  // Сайты / Tagged убраны из мини-аппа — бета-вкладки больше не показываем.
-  document.querySelectorAll('[data-beta-only]').forEach((el) => {
-    el.hidden = true;
-  });
-  if (state.activeTab === 'dating') {
-    setActiveTab('panel');
-  }
-}
-
 function setActiveTab(tabName) {
-  if (tabName === 'dating') {
-    tabName = 'panel';
-  }
   state.activeTab = tabName;
   localStorage.setItem('currentTab', tabName);
 
@@ -728,7 +664,6 @@ async function loadDashboard() {
       dashboard.isBetaTester ?? dashboard.is_beta_tester,
     ),
   };
-  applyBetaUi();
 }
 
 async function loadAccounts() {
@@ -1596,289 +1531,6 @@ function renderStats() {
     `;
 }
 
-async function loadDatingSites() {
-  try {
-    const response = await api.getDatingSites();
-    state.datingAccounts = getResponseArray(response, 'accounts');
-    state.datingProxyPool = response?.proxy_pool || null;
-  } catch (error) {
-    // Чужим бета закрыта (403) — молча прячем.
-    const msg = String(error?.message || '');
-    if (msg.includes('закрытом тесте') || msg.includes('403') || error?.status === 403) {
-      state.datingAccounts = [];
-      return;
-    }
-    throw error;
-  }
-}
-
-function fillDatingTgSelect() {
-  if (!elements.datingTgAccount) return;
-  const current = elements.datingTgAccount.value;
-  elements.datingTgAccount.innerHTML =
-    `<option value="">— не связывать —</option>` +
-    state.accounts
-      .map(
-        (account) =>
-          `<option value="${account.id}">${escapeHtml(account.phone || `#${account.id}`)}</option>`,
-      )
-      .join('');
-  if (current) elements.datingTgAccount.value = current;
-}
-
-function siteLabel(site) {
-  return 'Tagged';
-}
-
-/** Человекочитаемый статус аккаунта + подсказка, что происходит. */
-function datingStatusMeta(row) {
-  const status = String(row.status || 'idle').toLowerCase();
-  const restUntil = Number(row.rest_until) || 0;
-  const now = Date.now() / 1000;
-  if (status === 'resting' || status === 'spammer' || status === 'blocked') {
-    if (restUntil > now) {
-      const mins = Math.ceil((restUntil - now) / 60);
-      const hm = mins >= 60 ? `${Math.floor(mins / 60)}ч ${mins % 60}м` : `${mins}м`;
-      return {
-        key: 'resting',
-        label: `отсидка · ещё ${hm}`,
-        cls: 'warn',
-        hint: row.last_error || 'Tagged пометил профиль спамером — ждём, потом вернём в работу',
-      };
-    }
-    return {
-      key: 'ready',
-      label: 'отсидка истекла',
-      cls: 'soft',
-      hint: 'Кулдаун прошёл — аккаунт вернётся в работу на следующем раунде',
-    };
-  }
-  if (status === 'online' || status === 'starting') {
-    return { key: 'online', label: 'в работе', cls: 'success', hint: row.last_error || '' };
-  }
-  if (status === 'error') {
-    return { key: 'error', label: 'ошибка', cls: 'warn', hint: row.last_error || '' };
-  }
-  return { key: 'idle', label: 'ожидает', cls: 'soft', hint: row.last_error || '' };
-}
-
-/** Прогрев: сколько часов профиль ещё «слишком молод». */
-function datingWarmupMeta(row) {
-  const hours = Number(row.warmup_hours) || 0;
-  if (hours <= 0 || !row.created_at) return null;
-  const created = new Date(row.created_at).getTime();
-  if (!Number.isFinite(created)) return null;
-  const endsAt = created + hours * 3600 * 1000;
-  const leftMs = endsAt - Date.now();
-  if (leftMs <= 0) return { active: false, label: 'прогрев пройден' };
-  const leftH = Math.ceil(leftMs / 3600000);
-  return { active: true, label: `прогрев · ещё ~${leftH}ч` };
-}
-
-function renderDating() {
-  fillDatingTgSelect();
-  if (!elements.datingList) return;
-
-  if (!state.datingAccounts.length) {
-    elements.datingList.innerHTML = `
-      <div class="empty-state">
-        <h3>Пока нет сайтов</h3>
-        <p>Подключи Tagged выше — ИИ будет писать на сайте и звать в Telegram.</p>
-      </div>
-    `;
-    return;
-  }
-
-  const pool = state.datingProxyPool;
-  const poolLine = pool
-    ? `<p class="muted">Пула прокси: ${pool.size} · занято ${pool.bound} · свободно ${pool.free}${
-        pool.free === 0 ? ' — добавь ещё прокси, иначе аккаунты начнут делить IP' : ''
-      }</p>`
-    : '';
-
-  elements.datingList.innerHTML =
-    poolLine +
-    state.datingAccounts
-      .map((row) => {
-        const enabled = row.is_enabled;
-        const tg = row.telegram_username
-          ? `@${String(row.telegram_username).replace(/^@/, '')}`
-          : '—';
-        const mins = Math.round((Number(row.invite_after_min) || 180) / 60);
-        const maxm = Math.round((Number(row.invite_after_max) || 240) / 60);
-        const meta = datingStatusMeta(row);
-        const warm = datingWarmupMeta(row);
-        const proxy = row.has_proxy
-          ? 'выдан'
-          : row.proxy_pool_size > 0
-            ? 'выдастся из пула'
-            : 'нет пула — общий IP!';
-        const warmBadge = warm
-          ? `<span class="badge ${warm.active ? 'warn' : 'soft'}">${escapeHtml(warm.label)}</span>`
-          : '';
-        return `
-        <div class="account-item card">
-          <div class="account-item__head">
-            <div>
-              <strong>${escapeHtml(row.persona_name || row.login)}</strong>
-              <p class="muted">${escapeHtml(siteLabel(row.site))} · ${escapeHtml(row.login)}</p>
-            </div>
-            <div class="action-row">
-              <span class="badge ${meta.cls}">${escapeHtml(meta.label)}</span>
-              <span class="badge ${enabled ? 'success' : 'warn'}">${enabled ? 'вкл' : 'выкл'}</span>
-            </div>
-          </div>
-          <p>Инвайт: <strong>${escapeHtml(tg)}</strong> · через ${mins}–${maxm} мин · ${escapeHtml(row.language || 'en')}</p>
-          <p class="muted">Прокси: ${escapeHtml(proxy)} · Dolphin: ${escapeHtml(row.dolphin_profile_id || '—')} ${warmBadge}</p>
-          <p class="muted">тгк (фото): ${row.media_chat_link ? escapeHtml(row.media_chat_link) : '—'}</p>
-          ${meta.hint ? `<p class="muted">${escapeHtml(meta.hint)}</p>` : ''}
-          <div class="action-row">
-            <button class="btn btn-secondary small" type="button" data-action="dating-toggle" data-id="${row.id}" data-enabled="${enabled ? '1' : '0'}">
-              ${enabled ? 'Выключить' : 'Включить'}
-            </button>
-            <button class="btn btn-danger small" type="button" data-action="dating-delete" data-id="${row.id}">Удалить</button>
-          </div>
-        </div>
-      `;
-      })
-      .join('');
-}
-
-function setDatingHint(message) {
-  if (!elements.datingFormHint) return;
-  if (message) {
-    elements.datingFormHint.hidden = false;
-    elements.datingFormHint.textContent = message;
-  } else {
-    elements.datingFormHint.hidden = true;
-    elements.datingFormHint.textContent = '';
-  }
-}
-
-async function handleDatingSubmit(event) {
-  event.preventDefault();
-  const submit = document.getElementById('dating-submit');
-  if (submit) submit.disabled = true;
-  setDatingHint('');
-
-  try {
-    const site = document.getElementById('dating-site')?.value || 'tagged';
-    const login = document.getElementById('dating-login')?.value.trim() || '';
-    const password = document.getElementById('dating-password')?.value || '';
-    const personaName = document.getElementById('dating-persona-name')?.value.trim() || '';
-    const telegramUsername = document.getElementById('dating-tg')?.value.trim() || '';
-    const telegramAccountId = document.getElementById('dating-tg-account')?.value || '';
-    const mediaChatLink = document.getElementById('dating-media-link')?.value.trim() || '';
-    const dolphinProfileId = document.getElementById('dating-dolphin')?.value.trim() || '';
-    const warmupHours = Number(document.getElementById('dating-warmup')?.value || 0);
-    const language = document.getElementById('dating-lang')?.value || 'en';
-    const inviteMin = Number(document.getElementById('dating-invite-min')?.value || 180);
-    const inviteMax = Number(document.getElementById('dating-invite-max')?.value || 240);
-    const personaPrompt = document.getElementById('dating-prompt')?.value.trim() || '';
-
-    if (!login || !password || !telegramUsername) {
-      setDatingHint('Заполни логин, пароль и Telegram @username');
-      notify('Заполни обязательные поля');
-      return;
-    }
-
-    const tgClean = telegramUsername.replace(/^@+/, '');
-    if (!/^[a-zA-Z][a-zA-Z0-9_]{4,31}$/.test(tgClean)) {
-      setDatingHint('Telegram @username: 5–32 символа, латиница/цифры/_');
-      notify('Некорректный @username');
-      return;
-    }
-
-    // Честно предупреждаем, если профилей больше, чем прокси в пуле: Tagged
-    // связывает аккаунты по IP и банит пачкой, а не по одному.
-    const pool = state.datingProxyPool;
-    if (pool && pool.size > 0 && pool.free <= 0) {
-      setDatingHint(
-        `В пуле ${pool.size} прокси, все заняты. Новый профиль будет делить IP — ` +
-          'это риск связывания аккаунтов. Добавь прокси в пул.',
-      );
-    }
-
-    await api.addDatingSite({
-      site,
-      login,
-      password,
-      persona_name: personaName,
-      telegram_username: telegramUsername,
-      telegram_account_id: telegramAccountId || null,
-      media_chat_link: mediaChatLink || null,
-      dolphin_profile_id: dolphinProfileId || null,
-      warmup_hours: warmupHours,
-      language,
-      invite_after_min: inviteMin,
-      invite_after_max: inviteMax,
-      persona_prompt: personaPrompt,
-      is_enabled: true,
-    });
-
-    event.target.reset();
-    document.getElementById('dating-invite-min').value = '180';
-    document.getElementById('dating-invite-max').value = '240';
-    document.getElementById('dating-warmup').value = '48';
-    await loadDatingSites();
-    renderDating();
-    notify('Сайт подключён');
-  } catch (error) {
-    setDatingHint(error.message || 'Ошибка');
-    handleRequestError(error);
-  } finally {
-    if (submit) submit.disabled = false;
-  }
-}
-
-async function handleDatingExport() {
-  try {
-    const res = await api.exportDatingWorker();
-    notify(res.message || `Экспорт: ${res.count || 0}`);
-  } catch (error) {
-    handleRequestError(error);
-  }
-}
-
-async function handleDatingPreview() {
-  const tg = document.getElementById('dating-tg')?.value.trim() || 'username';
-  const lang = document.getElementById('dating-lang')?.value || 'en';
-  const box = document.getElementById('dating-invite-preview');
-  try {
-    const res = await api.previewDatingInvite(tg, lang);
-    if (box) {
-      box.hidden = false;
-      box.textContent = `Пример инвайта: ${res.phrase || ''}`;
-    }
-    notify('Пример инвайта обновлён');
-  } catch (error) {
-    handleRequestError(error);
-  }
-}
-
-async function handleDatingToggle(id, currentlyEnabled) {
-  try {
-    await api.updateDatingSite(id, { is_enabled: !currentlyEnabled });
-    await loadDatingSites();
-    renderDating();
-    notify(currentlyEnabled ? 'Выключено' : 'Включено');
-  } catch (error) {
-    handleRequestError(error);
-  }
-}
-
-async function handleDatingDelete(id) {
-  if (!confirm('Удалить этот аккаунт сайта?')) return;
-  try {
-    await api.deleteDatingSite(id);
-    await loadDatingSites();
-    renderDating();
-    notify('Удалено');
-  } catch (error) {
-    handleRequestError(error);
-  }
-}
-
 function render() {
   renderPanel();
   renderAccounts();
@@ -1887,7 +1539,6 @@ function render() {
   renderOptions();
   renderStats();
   renderNotifications();
-  applyBetaUi();
   setActiveTab(state.activeTab);
 }
 
@@ -2763,9 +2414,6 @@ function bindEvents() {
 
     if (elements.accountForm) {
       elements.accountForm.addEventListener('submit', addAccount);
-    }
-    if (elements.datingForm) {
-      elements.datingForm.addEventListener('submit', handleDatingSubmit);
     }
 
   if (elements.exampleForm) {

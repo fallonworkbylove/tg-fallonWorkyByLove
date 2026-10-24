@@ -7,7 +7,6 @@ const { exec } = require('child_process');
 const OpenAI = require('openai');
 const { SocksClient } = require('socks');
 const db = require('../db');
-const datingAdmin = require('./datingAdmin');
 const opsAdmin = require('./opsAdmin');
 const operatorAccess = require('./operatorAccess');
 const { ensureAccountSeqSchema } = require('./accountCleanup');
@@ -731,11 +730,6 @@ async function handleAdminText(api, chatId, text) {
     if (await opsAdmin.handleText(api, chatId, text, sendWizard)) return true;
   }
 
-  // Мастер сайтов знакомств (добавление / смена TG / пароля)
-  if (datingAdmin.isWizardActive()) {
-    if (await datingAdmin.handleText(api, chatId, text, sendWizard)) return true;
-  }
-
   if (Date.now() > blockInputUntil) return false;
   if (text.startsWith('/')) {
     blockInputUntil = 0;
@@ -867,7 +861,6 @@ async function handleCallback(api, query) {
 
   if (query.data === 'adm:menu') {
     blockInputUntil = 0;
-    datingAdmin.clearWizard();
     opsAdmin.clearWizard();
     try {
       require('./workerConnect').clearWizard(chatId);
@@ -905,14 +898,12 @@ async function handleCallback(api, query) {
     }
     return;
   }
-  if (datingAdmin.isDatingCallback(query.data) || query.data === 'adm:dt' || query.data === 'adm:dating') {
-    datingAdmin.clearWizard();
+  if (query.data === 'adm:dt' || query.data === 'adm:dating' || String(query.data || '').startsWith('dt:')) {
     await tg(api, 'editMessageText', {
       ...target,
       text:
-        '<b>💘 Сайты знакомств</b>\n\n' +
-        'Раздел отключён: Tagged убран из проекта.\n' +
-        'Управление только через Telegram-аккаунты бота.',
+        '<b>Сайты знакомств</b>\n\n' +
+        'Раздел удалён. Управление только через Telegram-аккаунты бота.',
       reply_markup: {
         inline_keyboard: [[{ text: '« Меню', callback_data: 'adm:menu' }]],
       },

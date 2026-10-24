@@ -78,7 +78,7 @@ const HISTORY_LIMIT = 60;
 // повторное сообщение из того же диалога не должно запустить вторую отправку.
 const voiceSendInFlight = new Set();
 const accountLabels = new Map();
-/** accountId → lowercase @username (из getMe), для dating outreach */
+/** accountId → lowercase @username (из getMe) */
 const accountUsernames = new Map();
 
 function accountLabel(accountId) {

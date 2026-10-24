@@ -130,17 +130,6 @@ async function purgeAccountUnlocked(accountId, userId) {
     await deleteFrom(table, id);
   }
 
-  try {
-    await db.execute(
-      'UPDATE dating_site_accounts SET telegram_account_id = NULL WHERE telegram_account_id = ?',
-      [id],
-    );
-    await db.execute(
-      'UPDATE dating_site_accounts SET photo_reader_account_id = NULL WHERE photo_reader_account_id = ?',
-      [id],
-    );
-  } catch (_) {}
-
   const [result] = await db.execute('DELETE FROM accounts WHERE id = ?', [id]);
   if (result.affectedRows <= 0) return false;
 

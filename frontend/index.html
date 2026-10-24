@@ -16,11 +16,12 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Syne:wght@600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=37" />
+    <link rel="stylesheet" href="styles.css?v=38" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
       <div class="tg-gate__card card">
+        <p class="brand-mark">LoveRussian</p>
         <p class="eyebrow">Telegram Mini App</p>
         <h2>Откройте в Telegram</h2>
         <p class="tg-gate__text">Это приложение работает внутри Telegram. Запустите его через вашего бота, чтобы авторизоваться и загрузить данные.</p>
@@ -32,6 +33,7 @@
     <div class="workspace">
     <aside class="side-nav" aria-label="Навигация">
       <p class="side-nav__brand">LoveRussian</p>
+      <p class="side-nav__tag">операторская</p>
       <button class="side-nav__btn active" data-tab="panel" type="button">Панель</button>
       <button class="side-nav__btn" data-tab="accounts" type="button">Аккаунты TG</button>
       <button class="side-nav__btn" data-tab="leads" type="button">Лиды</button>
@@ -44,8 +46,8 @@
     <div class="app-shell">
       <header class="topbar">
         <div class="topbar__content">
-          <div>
-            <p class="eyebrow">LoveRussian</p>
+          <div class="topbar__brand">
+            <p class="brand-mark">LoveRussian</p>
             <h1 id="page-title">Панель</h1>
           </div>
           <div class="topbar__actions">
@@ -57,10 +59,12 @@
               aria-label="Центр уведомлений"
               title="Уведомления"
             >
-              🔔
+              <span class="icon-btn__glyph" aria-hidden="true">●</span>
               <span id="notif-badge" class="notif-badge" hidden>0</span>
             </button>
-            <button class="icon-btn" type="button" data-action="refresh" aria-label="Обновить" title="Обновить">↻</button>
+            <button class="icon-btn" type="button" data-action="refresh" aria-label="Обновить" title="Обновить">
+              <span class="icon-btn__glyph" aria-hidden="true">↻</span>
+            </button>
           </div>
         </div>
       </header>
@@ -78,6 +82,7 @@
           <div class="panel-hero card">
             <div class="panel-hero__icon" aria-hidden="true"></div>
             <div>
+              <p class="panel-hero__kicker">Сегодня</p>
               <h2>Главная сводка</h2>
               <p>Аккаунты, диалоги и быстрые действия — на компьютере и телефоне.</p>
             </div>
@@ -312,17 +317,17 @@
       </main>
 
       <nav class="bottom-nav" aria-label="Вкладки">
-        <button class="nav-btn active" data-tab="panel" type="button">Панель</button>
-        <button class="nav-btn" data-tab="accounts" type="button">TG</button>
-        <button class="nav-btn" data-tab="leads" type="button">Лиды</button>
-        <button class="nav-btn" data-tab="learn" type="button">Учить</button>
-        <button class="nav-btn" data-tab="options" type="button">Опции</button>
-        <button class="nav-btn" data-tab="stats" type="button">Статы</button>
+        <button class="nav-btn active" data-tab="panel" type="button"><span class="nav-btn__label">Панель</span></button>
+        <button class="nav-btn" data-tab="accounts" type="button"><span class="nav-btn__label">TG</span></button>
+        <button class="nav-btn" data-tab="leads" type="button"><span class="nav-btn__label">Лиды</span></button>
+        <button class="nav-btn" data-tab="learn" type="button"><span class="nav-btn__label">Учить</span></button>
+        <button class="nav-btn" data-tab="options" type="button"><span class="nav-btn__label">Опции</span></button>
+        <button class="nav-btn" data-tab="stats" type="button"><span class="nav-btn__label">Статы</span></button>
       </nav>
     </div>
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=34"></script>
+    <script src="app.js?v=35"></script>
     </body>
     </html>
