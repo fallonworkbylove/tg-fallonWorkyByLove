@@ -88,6 +88,11 @@ function needsReciprocalQuestion(history, userMessage) {
   // Прощание / «иду спать» — только ответить, без «чем занят?».
   if (USER_CLOSING_RE.test(msg)) return false;
 
+  // Поправка «уже утро / в смысле» — сначала признай косяк, без встречного вопроса.
+  if (USER_SAYS_DAYTIME_RE.test(msg) || /^(?:в\s+смысле|чё|че|что)\s*\??$/i.test(msg)) {
+    return false;
+  }
+
   // Прямо просит, чтобы она спрашивала.
   if (
     /ничего\s+не\s+будешь\s+спрашив|не\s+будешь\s+спрашивать|сама\s+(?:что|чё|че)-?нибудь\s+спроси|задавай\s+(?:мне\s+)?вопрос|спроси\s+(?:уже|что)/i.test(
@@ -245,12 +250,119 @@ function stripEmptyTogetherInvite(reply) {
   return out || reply;
 }
 
+/** Светлое время МСК (не ночной слот). */
+function isDaylightMsk() {
+  try {
+    const { hour } = require('./timeStyle').getMoscowTimeParts();
+    return hour >= 7 && hour < 22;
+  } catch (_) {
+    return true;
+  }
+}
+
+const USER_SAYS_DAYTIME_RE =
+  /(?:^|[^а-яёa-z0-9])(?:уже\s+утро|сейчас\s+утро|утром|уже\s+день|день\s+же|не\s+ночь|солнце(?:\s|$)|доброе\s+утро|день\s+добрый)/i;
+
+const REPLY_NIGHT_CLAIM_RE =
+  /ночь\s+же|уже\s+ночь|сейчас\s+ночь|спокойной(?:\s+ночи)?|доброй\s+ночи|споки|сладких\s+снов|пойду\s+спать|иду\s+спать/i;
+
+/**
+ * Запоздалый ответ на вчерашнее «спокойной» / утренний «ночь же» —
+ * днём не прощаемся и не спорим, что сейчас ночь.
+ */
+function fixStaleNightTalk(reply, userMessage) {
+  if (!reply || !isDaylightMsk()) return reply;
+  const text = String(reply).trim();
+  const user = String(userMessage || '');
+  const userDay = USER_SAYS_DAYTIME_RE.test(user);
+
+  // Целиком ночное прощание днём (часто ответ на вчерашний «доброй ночи»).
+  if (
+    /^(?:доброй|спокойной)(?:\s+ночи)?(?:\s*[,.]?\s*отдыхай)?\s*\)?$/i.test(text) ||
+    /^(?:споки|сладких\s+снов)(?:\s*[,.]?\s*отдыхай)?\s*\)?$/i.test(text)
+  ) {
+    return ['ой я только глянула, уже день)', 'хах доброе) я ещё сонная', 'ой уже утро) привет'][
+      Math.floor(Math.random() * 3)
+    ];
+  }
+
+  if (!REPLY_NIGHT_CLAIM_RE.test(text) && !/отдыхай\)?\s*$/i.test(text)) return reply;
+
+  // Он сказал «уже утро» — не оправдываем «ночь же» / «хорошего отдыха».
+  if (userDay && REPLY_NIGHT_CLAIM_RE.test(text)) {
+    return ['ой да, уже утро) торможу', 'хах точно, уже день)', 'ой блин да утро уже)'][
+      Math.floor(Math.random() * 3)
+    ];
+  }
+
+  // Днём вырезаем куски про «ночь же / спокойной», оставляем смысл если есть.
+  if (REPLY_NIGHT_CLAIM_RE.test(text)) {
+    let cleaned = text
+      .replace(
+        /(?:в\s+смысле\s+)?(?:хорошего\s+)?отдых\w*[,.]?\s*/gi,
+        '',
+      )
+      .replace(/ночь\s+же(?:\s+уже)?[,.]?\s*/gi, '')
+      .replace(/уже\s+ночь[,.]?\s*/gi, '')
+      .replace(/сейчас\s+ночь[,.]?\s*/gi, '')
+      .replace(/спокойной(?:\s+ночи)?[,.]?\s*/gi, '')
+      .replace(/доброй\s+ночи[,.]?\s*/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .replace(/^\s*[,.;:\-–]+/, '')
+      .trim();
+    if (cleaned.length >= 8 && !REPLY_NIGHT_CLAIM_RE.test(cleaned)) {
+      return /\)\s*$/.test(cleaned) ? cleaned : `${cleaned})`;
+    }
+    return ['ой я часы не глянула, уже день)', 'хах доброе)'][Math.floor(Math.random() * 2)];
+  }
+  return reply;
+}
+
+/**
+ * Не выдумывать «какая весна» — пример из промпта модель копировала на «солнце».
+ */
+function stripFalseSeasonCorrection(reply, userMessage) {
+  if (!reply) return reply;
+  const user = String(userMessage || '');
+  // \b в JS плохо дружит с кириллицей — граница вручную.
+  if (/(?:^|[^а-яёa-z0-9])весн/i.test(user) || /\bspring\b/i.test(user)) return reply;
+  const text = String(reply).trim();
+  if (!/(?:^|[^а-яёa-z0-9])весн/i.test(text)) return reply;
+
+  // Весь ответ — ложная поправка сезона.
+  if (
+    /какая\s+весн|не\s+весн|а\s+не\s+весн|весн[а-яё]*,?\s*осен/i.test(text) &&
+    text.split(/\s+/).length <= 14
+  ) {
+    if (USER_SAYS_DAYTIME_RE.test(user)) {
+      return ['ой да, уже утро)', 'хах точно, день уже)', 'ага, утро)'][
+        Math.floor(Math.random() * 3)
+      ];
+    }
+    return ['ну да)', 'ага)', 'хм ок)'][Math.floor(Math.random() * 3)];
+  }
+
+  const cleaned = text
+    .replace(/хах,?\s*какая\s+весна,?\s*осень\s+же\s*\)?/gi, '')
+    .replace(/ну\s+типа\s+ну\s+осень\s+же,?\s*а\s+не\s+весна\s*\)?/gi, '')
+    .replace(/осень\s+же,?\s*а\s+не\s+весна\s*\)?/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return cleaned.length >= 3 ? cleaned : reply;
+}
+
 function applySoftLite(reply, history, userMessage) {
   if (!reply) return reply;
   let out = softenCoachy(reply);
   out = softCompleteCut(out);
   out = stripEmptyTogetherInvite(out);
+  out = fixStaleNightTalk(out, userMessage);
+  out = stripFalseSeasonCorrection(out, userMessage);
   out = ensureReciprocalQuestion(out, history, userMessage);
+  out = stripQuestionAfterFarewell(out);
+  // После reciprocal снова мог прилипнуть «а ты как день?» к ночному хвосту —
+  // и ночные куски могли остаться; ещё раз подчистим днём.
+  out = fixStaleNightTalk(out, userMessage);
   out = stripQuestionAfterFarewell(out);
   return out;
 }
@@ -261,6 +373,8 @@ module.exports = {
   softenCoachy,
   softCompleteCut,
   stripEmptyTogetherInvite,
+  fixStaleNightTalk,
+  stripFalseSeasonCorrection,
   applySoftLite,
   needsReciprocalQuestion,
   shouldKeepTrailingQuestion,
