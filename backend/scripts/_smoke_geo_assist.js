@@ -48,8 +48,13 @@ const clarify = ar.fixFalseHisCityMirror(
 );
 assert(!/^да,?\s*в\s+краснодар/i.test(clarify), 'no affirm his city: ' + clarify);
 
-const hint = oh.detectHint('А давно в Краснодаре?', hist);
-assert(/ЗАПРЕЩЕНО.*а ты давно там/i.test(String(hint || '')), 'city hint');
+const hint = oh.detectHint('А давно в Краснодаре?', hist, {
+  systemPrompt: prompt,
+});
+assert(
+  /ФАКТЫ О СЕБЕ|не зеркаль|про СЕБЯ|как давно|ещё не|географии персонажа/i.test(String(hint || '')),
+  'city hint: ' + String(hint || '').slice(0, 120),
+);
 
 const genHint = oh.detectHint('Сгенерируй текст поздравления друга со свадьбой', []);
 assert(/НЕ ассистент|не нейросеть|ChatGPT/i.test(String(genHint || '')), 'gen hint');

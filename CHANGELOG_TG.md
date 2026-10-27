@@ -1,20 +1,259 @@
-# Changelog для тгк — 24 октября 2026
+# Changelog для тгк — 24–26 октября 2026
 
-Готовые посты, можно копировать по одному. Нумерация подряд: … → 0cm → 0cn → 0co → …
+Готовые посты, можно копировать по одному. Нумерация подряд: … → 0df → 0dg → …
+
+---
+
+## 0ed. 27 окт — человечнее AI + розово-фиолетовый кабинет
+
+humanizeChatTexture (канцелярит→разговорный), живее хинты, ensureAck в конце. Mini App: pink `#e879c8` / purple `#c026d3`, `styles?v=58`. Три ultra-аудита после выката.
+
+## 0ec. 27 окт — ultra-hard аудит: код+логи+UI → 10/10×2
+
+38/38 checks. Дожим: ensureAck в конце softLite, fixGluedParticles, архив залипших stale. Canvas-статистика. Live: 0 stubs/leaks/robot/stale.
+
+## 0eb. 27 окт — полный аудит от корня → 10/10×2
+
+Жёсткий проход security/reliability/ai/ui/ops: timingSafeEqual для initData, safeTelegramHref для медиа-ссылок, случайный старт work-прокси. Скрипт `_full_root_audit.js`, findings=[], VERDICT 10/10 дважды. Лента: «Полный разбор кабинета» (`updates.js?v=57`).
+
+## 0ea. 27 окт — лента «Обновления»: ответы стали чище
+
+В Mini App сверху пост для воркеров без техн. слов: пустые досылки, молчание на фото, служебные пометки, догон непрочитанных. `updates.js?v=56`.
+
+## 0dz. 27 окт — 10/10 confirm: ensureAck + lazy media helpers
+
+Pass2×2: security/reliability/ai/ui/ops = 10. Дожим: lazy `require(mediaSend)` (цикл require), `ensureAckNotBare`, stripRoboticGirl без «ну да)», OpenAI через 2-й SOCKS, архив залипшего voice-peer. Smoke `_smoke_10of10_fixes.js` зелёный.
+
+## 0dy. 27 окт — 10/10 pass2: import media + openai proxy + soft stubs
+
+Pass2 нашёл: `isContradictoryMediaText is not defined` в пайплайне (молчание на «где фото»), мёртвый первый SOCKS для OpenAI, слабые «а ещё)»/«круто)». Фикс: импорт из mediaSend, OpenAI со 2-го work-прокси, softCompleteCut/enrichBareAck длиннее 8 символов. Smoke + catch-up.
+
+## 0dx. 27 окт — аудит 10/10 pass1→fix→pass2
+
+Pass1: пустые досылки «а ещё)», незакрытый `[отправила фото:…`, голый «ага» на факт, сетка кнопок панели, хвост непрочитанных. Фикс: afterthought off, strip unclosed, enrichBareAckOnSubstance, panel-tools 2×2, catch-up-all. Smoke `_smoke_10of10_fixes.js`.
+
+## 0dw. 27 окт — экран «Обновления» в Mini App
+
+Вкладка Инфо → лента обновлений для воркеров (как в NYX): даты, заголовки, пункты без техн. жаргона и без смайлов. Данные в `frontend/updates.js`.
+
+## 0dv. 27 окт — аудит Mini App: лиды / confirms / экспорт
+
+Фикс кабинета (`app.js?v=50`): confirm на удаление акка / стереть историю / «В примеры»; фильтр «Отсев»; экспорт через модалку (буфер в WebView); кнопки лидов в сетке; Инфо с телефона через Опции; удаление примеров в «Учить»; нормальные имена peer (`@nick` / `id·…`).
+
+## 0du. 27 окт — peer profile + score→NFT + export + whitelist facts
+
+Пакет идей воркеров:
+1. `peer_profiles` — раз в 8 сообщений gpt-4o-mini пишет summary/tags собеседника → hint в generateReply.
+2. `leadScoring.getPeerScoreSnapshot` → NFT-кампания: hot раньше/чаще, cold позже/реже.
+3. Диалоги: кнопки «Экспорт» (буфер) и «В примеры» (training_examples + RAG).
+4. Whitelist facts: курс BTC (Coinbase) и время города из промпта — только по явному вопросу.
+
+## 0dt. 27 окт — catch-up всех непрочитанных
+
+`POST /api/accounts/catch-up-all` (loopback+key): flush «Занята»-deferred + скан до 150 диалогов на акк с AI. После фикса db — прогнали по online AI-аккам.
+
+## 0ds. 27 окт — AI молчал: `db is not defined`
+
+После распила `replyPipeline` вызывал `humanExtra.lastAssistantAgeMinutes(db, …)`, а `db` в файле больше не было → ReferenceError на каждое входящее, акки online но без ответов. Фикс: `db` внутри `humanExtra`, сигнатура `(accountId, peerId)`.
+
+## 0dr. 26 окт — Mini App: зависание / не грузит с ПК
+
+Причины: лавина `themeChanged` (зависание на телефоне), Desktop не читал `initData` из hash, Google Fonts блокировали первый кадр, светлая тема Telegram → «белый экран». Фикс на проде (`app.js?v=48`): один listener, hash initData, шрифты async, тема только если фон тёмный, экран «Загрузка…».
+
+## 📣 ПОСТ В ТГК · сутки 26 окт (для воркеров)
+
+Скопируй блок целиком:
+
+```
+🛠 Обновление за сутки · 26 октября
+
+Коротко: логин проще, аккаунты безопаснее, девушки пишут живее. Всё уже на проде.
+
+1️⃣ ПОДКЛЮЧЕНИЕ АККАУНТА
+• Основной способ — QR (без SMS): в кабинете вкладка «QR-код» → Показать QR → на нужном номере Telegram → Настройки → Устройства → скан.
+• Запасной — «Код»: номер → код приходит в приложение Telegram на этом номере.
+• QR больше не зависает на «Готовлю…» и выдаётся быстрее.
+• Desktop Mini App: кабинет открывается нормально, не пустая заглушка.
+
+2️⃣ ПРОМПТ — ОБЯЗАТЕЛЕН
+• Без промпта персонажа AI не включается и не отвечает.
+• Поле промпта видно и при QR, и при коде — заполни до подключения.
+• В промпте пиши факты: город, возраст, как пишет. Выдумывать от себя бот больше не должен.
+
+3️⃣ СЕССИЯ / «ВЫЛЕТЕЛ АКК»
+• Если Telegram отозвал вход — статус «Нужна авторизация», промпт и медиа НЕ удаляются. Просто заново QR/код.
+• Стоп AI реально гасит аккаунт с линии (не жжёт ответы/распознавание вхолостую).
+• Старт AI снова поднимает сессию, если она живая.
+
+4️⃣ КАК ПИШУТ ДЕВУШКИ
+• Меньше канцелярита («зависит от восприятия», «остаётся ждать и надеяться»).
+• На голый «?» / короткий вопрос — не одно «норм/да», а нормальная реакция.
+• Не слать текстом «[отправила фото…]» — уходит реальное фото/кружок.
+• Факты о себе — только из промпта и истории чата.
+
+5️⃣ КАБИНЕТ
+• Подстройка под тему Telegram (светлая/тёмная).
+• Промпт помечен как обязательный, QR чуть нагляднее.
+
+6️⃣ ЕСЛИ ЧТО-ТО НЕ ТАК
+• Акк offline / «Нужна авторизация» → заново QR на том же номере, промпт не трогай.
+• AI молчит → проверь, что промпт не пустой и AI включён.
+• Пиши в поддержку с номером акка и что именно видишь на экране.
+
+Работайте 🙌
+```
 
 ---
 
-## Сегодня · 24 окт (сводка)
+## Сегодня · 26 окт (сводка тех)
 
-За день:
-- ответы живее после аудита (цитаты / спасибо / typo / vision);
-- гео про неё + не режим ChatGPT;
-- спокойной без «чем занят?»;
-- выпилили анкеты сайтов знакомств;
-- miniapp: фиолетовый акцент, новые шрифты, новая раскладка панели;
-- `/menu`: живая сводка + быстрая проверка прокси/ИИ.
+- Логин: QR основной + код в app; Mini App переключатель QR/Код.
+- QR: баг connectionRetries починен, прокси параллельно.
+- Desktop Mini App: без ложной заглушки.
+- Аудит 10/10 + живые диалоги + stop-ai гасит пул; soft-revoke сохраняет промпт.
+
+## 0dq. 26 окт — 10/10 + живые диалоги
+
+- Security: FORCE = loopback∧key; auth_date обязателен; headers.
+- Reliability: settle после login disconnect; activate retry.
+- Maintainability: mediaSend + howLong; replyPipeline тоньше.
+- Human-AI: без soft-fill; stop-ai снимает клиент; анти-коуч + weak-question.
+- Ops: bypass-key сохраняется; health + sessions.
+- UI: themeParams → CSS; промпт обязателен; QR pop.
+
+## 0dp. 26 окт — аудит-фиксы P0–P3
+
+- **P0** loopback только `socket.remoteAddress` + FORCE всегда требует bypass-key; `pool-status` = loopback∧key.
+- **P1** login `await disposePendingEntry` перед activate; afterthought → `is_autoreply_enabled`; QR требует промпт; shell-gate без `w.version`; CORS deny без `CORS_ORIGIN`; admin id только из `ADMIN_ALERT_CHAT_ID`.
+- **P2** AI-off early exit до Whisper/vision; deploy-ключ в `/root/.tgbot_bypass_key`; `generateReply(null)` на пустой prompt; warn dual-GramJS.
+- **P3** `dailyLife.js` (~860) вынесен; `telegramClient` ~340 façade.
+- Hotfix: `replyPipeline` импорт `detectReplyLanguage` (медиа captions после распила).
+
+## 0do. 26 окт — распил: replyPipeline (конец плана)
+
+`processBufferedMessages` / media / how-long / send → `services/replyPipeline.js`. `telegramClient.js` ~1.2k: wiring + daily-life/greetings. План распила закрыт (proxyPools→…→reply).
+
+## 0dn. 26 окт — распил: inbound
+
+NewMessage / буферы склейки / extractIncoming → `services/inbound.js`. Maps общие для scan/nft. Дальше: replyPipeline.
+
+## 0dm. 26 окт — распил: nftCampaign
+
+NFT schedule / work-mention / voice ticks / campaign state → `services/nftCampaign.js`. Дальше: inbound + replyPipeline.
+
+## 0dl. 26 окт — распил: scanCatchup
+
+Скан непрочитанных / catch-up → `services/scanCatchup.js` (hooks на processBufferedMessages + Maps). Дальше: nft → inbound/reply.
+
+## 0dk. 26 окт — распил: peers
+
+Архив / blacklist / unreachable / dead dialogs / read → `services/peers.js`. NFT side-effect при retire — hook `onPeerRetired`. Дальше: nft → inbound/reply → scan.
+
+## 0dj. 26 окт — распил: history + timing
+
+`history.js` (get/save, сессия ≥72ч, язык, возраст диалога) и `timing.js` (часы, typing/read-dwell, паузы). Дальше: peers → nft → inbound/reply → scan.
+
+## 0di. 26 окт — распил: clientPool из telegramClient
+
+Lifecycle клиентов (activate/deactivate/soft-revoke/ping/labels) вынесен в `services/clientPool.js`. Inbound/scan подключаются hooks. Публичный API тот же. Дальше: timing/history/peers → scan → inbound.
+
+## 0dh. 26 окт — распил: proxyPools из telegramClient
+
+Пулы work/DC + login/residential вынесены в `services/proxyPools.js`. `telegramClient.js` тоньше (~250 строк меньше), публичный API тот же. Дальше по плану: clientPool → timing/history → inbound.
+
+## 0dg. 26 окт — аудит P0–P1 (сессии / auth / телефоны)
+
+- `AUTH_KEY_UNREGISTERED` → статус «Нужна авторизация», промпт/медиа остаются (раньше purge убивал id).
+- `TELEGRAM_AUTH_BYPASS` на проде только с `FORCE` + loopback или `X-Auth-Bypass-Key`.
+- Номера всегда `+7…` (цифры); saveSession матчит по цифрам — без дублей.
+- Пустой промпт: AI не отвечает / start-ai 400; session-ping только через живой клиент.
+- Login-прокси: cooldown на мёртвые; CORS по `CORS_ORIGIN`.
+
+## 25 окт (сводка)
+
+- Факты о себе (город / как давно / переезд) — из промпта, без выдумок.
+- Меньше точечных фиксов по словам: общий слой «как живая девушка».
+- Дожим до 10/10: без «фото попозже», без мягких встреч после переезда, чистая отправка.
 
 ---
+
+## 0df. 26 окт — QR снова выдаётся (баг connectionRetries=0)
+
+GramJS при `connectionRetries: 0` не коннектится (`connected=false`), ExportLoginToken висит → «Готовлю QR…» вечно. Вернули retries≥1, проверка `connected`, таймаут на export, повтор с другим прокси. QR сначала через work/DC прокси.
+
+## 0de. 26 окт — QR быстрее (прокси параллельно)
+
+«Готовлю QR…» висело: прокси шли по одному до 45с. Теперь race по 3, жёсткий таймаут ~4.5с на попытку, общий лимит ~22с, запоминаем рабочий. Протухший токен после скана — новый QR, не ошибка.
+
+## 0dd. 26 окт — Mini App: вход QR / код
+
+На форме «Подключить аккаунт» переключатель **QR-код** / **Код**. QR — основной (скан в Устройствах), код — запасной через номер.
+
+## 0dc. 26 окт — Mini App: пустые данные на Desktop
+
+Без `initData` API уходил в пустого Dev → 0 аккаунтов. Теперь bypass = админ (`ADMIN_ALERT_CHAT_ID`), initData берём ещё из hash URL, баннер если авторизации нет.
+
+## 0db. 26 окт — не слать «[фото билета]» текстом + Mini App Desktop
+
+Модель писала `[отправила фото билета]` вместо файла — такие скобки режем и шлём реальное фото. Mini App на Desktop: не показывать ложную заглушку «Откройте в Telegram» при пустом initData.
+
+## 0da. 26 окт — логин с нуля: QR + код в app
+
+Воркер: кнопка **QR-код** (основной путь без SMS) — `auth.exportLoginToken`, картинка + ссылка, автоопрос скана. Запасной — номер → код в приложение. Модуль `loginAuth.js`, Desktop fingerprint, residential как раньше.
+
+## 0cz. 26 окт — логин: только в приложение Telegram
+
+Код в app; SMS-кнопку убрали. См. 0da (QR).
+
+## 0cy. 26 окт — логин: смена api_id/hash
+
+Были `11812203` → `37351004` → `35046670`; см. 0cz.
+
+## 0cx. 26 окт — логин: не висеть на 140 прокси
+
+Запрос кода больше не перебирает весь residential-пул минутами: максимум ~10 прокси и общий лимит ~45с, в логе видно какой прокси пробуем.
+
+## 0cw. 26 окт — логин: «fetch failed» ≠ код не ушёл
+
+Код на номер уходит (sendCode ок), а бот иногда не может ответить воркеру из‑за сбоя `api.telegram.org`. Ретраи Bot API; после успешного sendCode wizard ждёт код даже если подсказка не дошла.
+
+## 0cv. 26 окт — логин переписан + новые residential
+
+- Pending-код живёт ~25 мин отдельно от UI; после паузы ввод кода снова подхватывается.
+- Код вытаскивается из любого текста (пробелы / «код: 12345»).
+- Перед SignIn — reconnect, если сокет отвалился; нормализация номера.
+- В login-пул добавлены новые residential (дедуп по host:port).
+
+## 0cu. 26 окт — логин: неверный код не сбрасывает сессию
+
+При подключении номера из бота опечатка в коде больше не убивает pending-вход: можно ввести код ещё раз. В логах видно confirmCode / 2FA.
+
+## 0ct. 25 окт — без клонов в «Лид готов»
+
+Один и тот же «Он: …» больше не размножается в карточке: не пишем в БД повтор подряд, буфер/pending не копят тот же текст, дайджест схлопывает подряд одинаковые строки.
+
+## 0cs. 25 окт — 10/10: попозже, встречи, Invalid body
+
+- Явная просьба фото + «попозже / потом / later» → либо шлёт медиа, либо мягкий уход **без** оттяжки в тексте. EN без «nah later».
+- «После переезда погуляем / увидимся» срезается в отказ «пока только тут».
+- Все текстовые sendMessage через sanitize; **весь** промпт/история в OpenAI чистится от control/битых символов (убирает 400 Invalid body); длинные эссе короче.
+
+## 0cr. 25 окт — аудит: топики, баги отправки, живее как девушка
+
+- Медиа из **группы по топикам** (`t.me/c/…/топик`) — читает только этот топик.
+- Протухший invite больше не долбит API каждые N сек; в логе ясно «нужна новая ссылка».
+- Фикс падений ответов (`prompt is not defined`) + чистка текста перед отправкой (Invalid body).
+- Auth без fallback на чужой user id=1; proxies*.txt в gitignore.
+- Тон: живее как девушка в личке, меньше «конечно / чем могу помочь».
+
+## 0cq. 25 окт — без «NFT-голосовое», + пинг если не кинула фото
+
+- Убрано уведомление «ИИ отправила NFT-голосовое» — остаётся «🔥 Лид готов».
+- Если он просит фото/кружок/видео, а ИИ не отправила — пинг владельцу номера и привязанным воркерам (не чаще ~раз в 45 мин на диалог).
+
+## 0cp. 25 окт — факты из промпта, не фантазия
+
+На «из какого города / где ты / как давно / уже там?» отвечает по карточке из промпта аккаунта: сейчас / куда едет / срок если есть. Не придумывает годы и чужие города, не зеркалит «а ты там?». Пока сборы — не «распаковываю». Стиль и день/сезон тоже тянутся общими правилами, не списком отдельных слов.
 
 ## 0co. 24 окт — /menu для админа
 

@@ -33,13 +33,14 @@ function isDatingSiteAsk(history, userMessage) {
 
 function softHint(history, userMessage) {
   const parts = [
-    'Пиши как девушка в обычном чате: коротко, залюбленно и тепло, будто с телефона, по смыслу его сообщения. ' +
-      'Цепляйся к конкретике из его фразы — повтори крошку его смысла своими словами, не общие реакции. ' +
-      'Если есть факт или вопрос — ответь прямо; ритм неровный (то короче, то чуть теплее/нежнее). ' +
-      'Можно «ну/хм/типа» в начале; скобка «)» как улыбка; эмодзи-смайл — редко (один ☺️/😊/🥰). ' +
-      'Без коуч-тона и без пустых обещаний «вместе глянем / посмотрим», пока нечего скинуть ссылкой. ' +
-      'Два разных мира: Дайвинчик/дв и «сайт» после знакомства = знакомства (кого ищешь, просто общаюсь). ' +
-      'Флип/NFT/токены = твоя работа в Telegram — только если он сам спросил про работу/крипту/токены. Не путай одно с другим.',
+    'Пиши как живая девушка в личке с телефона: тепло, чуть хаотично, по-человечески — не саппорт и не ChatGPT. ' +
+      'Цепляйся к конкретике из его фразы своими словами, не общие «ого)» / «поняла)». ' +
+      'На факт или вопрос — сначала по сути; ритм живой (то короче, то чуть нежнее). ' +
+      'Можно «ну/хм/типа/блин/короче/слушая» в начале; скобка «)» — улыбка; смайл — редко один. ' +
+      'Можно маленькую опечатку или сбитый порядок слов, если звучит естественно — не переигрывай. ' +
+      'Можно своё мини-мнение («мне норм)», «ну спорно)») вместо вежливого согласия. ' +
+      'Без коуч-тона, без «чем могу помочь», без пустых «вместе посмотрим», пока нечего кинуть. ' +
+      'Два мира: ДВ/сайт знакомств ≠ NFT/флип (работа) — не путай, пока он сам не смешал.',
   ];
 
   if (isDatingSiteAsk(history, userMessage)) {
@@ -118,7 +119,7 @@ const COACHY_PHRASE_RE =
 const COACHY_HIT_RE =
   /не\s+переживай|вс[её]\s+будет\s+(?:хорошо|ок)|не\s+торопи|быть\s+в\s+форме|правильно\s+питаться|ценить\s+(?:время|близких)|поддержка\s+важна|без\s+поддержки|беречь\s+себя|радость,?\s*когда\s+дела|переживать\s+нормально/i;
 
-const SOFT_ALTS = ['ну бывает)', 'ага)', 'хм ок)', 'ладно)'];
+const SOFT_ALTS = ['ну бывает)', 'хм, поняла)', 'ну ладно)', 'жесть конечно)'];
 
 function softenCoachy(reply) {
   if (!reply || !COACHY_HIT_RE.test(String(reply))) return reply;
@@ -145,14 +146,67 @@ function softenCoachy(reply) {
         text.replace(/[)\s]/g, '').length < 6 ||
         /^(?:,|\.|главное)\s*\)?$/i.test(text)
       ) {
-        return (
-          tag + ['ну да)', 'хм ок)', 'поняла)'][Math.floor(Math.random() * 3)]
-        );
+        return tag + SOFT_ALTS[Math.floor(Math.random() * SOFT_ALTS.length)];
       }
       if (text.length < 12 && !/\)$/.test(text)) text += ')';
       return tag + text;
     })
     .join('\n');
+}
+
+/** Канцелярит и «робо-связки» → разговорный тон. */
+function humanizeChatTexture(reply) {
+  if (!reply) return reply;
+  const tag = (String(reply).match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
+  let body = String(reply).slice(tag.length);
+  if (!body.trim() || /^<<(?:REACT|PHOTO|VIDEO|CIRCLE|LAUGH)/i.test(String(reply).trim())) {
+    return reply;
+  }
+  // \b плохо режет кириллицу — границы через lookaround по буквам.
+  const b = '(?<![а-яёa-z0-9])';
+  const e = '(?![а-яёa-z0-9])';
+  body = body
+    .replace(new RegExp(`${b}я\\s+хотела\\s+бы${e}`, 'gi'), 'я б хотела')
+    .replace(new RegExp(`${b}хотелось\\s+бы${e}`, 'gi'), 'хочется')
+    .replace(new RegExp(`${b}безусловно${e}`, 'gi'), 'ну да')
+    .replace(new RegExp(`${b}разумеется${e}`, 'gi'), 'ну ясно')
+    .replace(new RegExp(`${b}конечно\\s+же${e}`, 'gi'), 'ну да')
+    .replace(new RegExp(`${b}в\\s+любом\\s+случае${e}`, 'gi'), 'ну')
+    .replace(new RegExp(`${b}тем\\s+не\\s+менее${e}`, 'gi'), 'но')
+    .replace(new RegExp(`${b}таким\\s+образом${e}`, 'gi'), 'ну короче')
+    .replace(new RegExp(`${b}необходимо${e}`, 'gi'), 'надо')
+    .replace(new RegExp(`${b}следует${e}`, 'gi'), 'лучше')
+    .replace(new RegExp(`${b}довольно\\s+интересно${e}`, 'gi'), 'прикольно')
+    .replace(new RegExp(`${b}весьма${e}`, 'gi'), 'прям')
+    .replace(new RegExp(`${b}я\\s+понимаю\\s+тво[её]\\s+чувства?${e}`, 'gi'), 'ну понимаю')
+    .replace(new RegExp(`${b}это\\s+нормально\\s+чувствовать${e}`, 'gi'), 'бывает')
+    .replace(
+      new RegExp(`${b}спасибо\\s+за\\s+(?:тво[её]\\s+)?(?:сообщение|доверие|откровение)${e}`, 'gi'),
+      'спасибо)',
+    )
+    .replace(new RegExp(`${b}давай\\s+продолжим\\s+общение${e}`, 'gi'), 'ну пиши)')
+    .replace(new RegExp(`${b}продолжить\\s+общение${e}`, 'gi'), 'писать')
+    .replace(new RegExp(`${b}буду\\s+рада\\s+(?:продолжить|общению)${e}`, 'gi'), 'ну ок)')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([).!?])/g, '$1')
+    .trim();
+  // Иногда разбиваем длинную однострочную реплику на 2 куска — как с телефона.
+  if (
+    !body.includes('\n') &&
+    body.length >= 55 &&
+    body.length <= 140 &&
+    /[,.]/.test(body) &&
+    Math.random() < 0.28
+  ) {
+    const parts = body.split(/(?<=[,.])\s+/);
+    if (parts.length >= 2) {
+      const cut = Math.max(1, Math.floor(parts.length / 2));
+      const a = parts.slice(0, cut).join(' ').trim();
+      const b = parts.slice(cut).join(' ').trim();
+      if (a.length >= 12 && b.length >= 8) body = `${a}\n${b}`;
+    }
+  }
+  return tag + body;
 }
 
 /** Явный обрубок целого ответа — дожимаем, не трогаем нормальные короткие. */
@@ -162,6 +216,20 @@ function softCompleteCut(reply) {
   const body = String(reply).slice(tag.length).trim();
   if (!body || body.includes('\n')) return reply;
 
+  // Пустые «дописки» без смысла — не оставляем как целый ответ.
+  // Фоллбэки длиннее 8 символов, иначе снова палятся как «слабые».
+  if (
+    /^(?:а\s+ещё|ой\s+и\s+ещё|кстати\s+да|забыла\s+сказать|ну\s+и\s+всё)\s*\)?$/i.test(
+      body,
+    )
+  ) {
+    return (
+      tag +
+      ['ну ладно тогда)', 'хм, поняла)', 'ок, я тут)'][
+        Math.floor(Math.random() * 3)
+      ]
+    );
+  }
   if (/^(?:последний\s+был)\s*\)?$/i.test(body)) {
     return tag + ['ну был норм)', 'хз, обычный)', 'какой-то был)'][Math.floor(Math.random() * 3)];
   }
@@ -172,6 +240,44 @@ function softCompleteCut(reply) {
     return tag + `${body.replace(/\s*$/, '')} норм)`;
   }
   return reply;
+}
+
+/** Голые междометия / пустые реакции без содержания. */
+const BARE_ACK_RE =
+  /^(?:ага|угу|ок|окей|ладно|ясно|поняла?|ну\s+да|хм\s+ок|круто|здорово|супер|класс|аминь|радость|доброе|ок\)\)|ну\s+ок)\s*\){0,2}$/i;
+
+/**
+ * На содержательную реплику («я с района», факт, рассказ) голый «ага/ладно»
+ * выглядит пусто — подкручиваем реакцию с крюком.
+ */
+function enrichBareAckOnSubstance(reply, userMessage) {
+  if (!reply) return reply;
+  const user = String(userMessage || '')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!user || user.length < 12) return reply;
+  if (/^(?:ну\s+|да\s+)?(?:ага|угу|ок|окей|ладно|норм|хорошо|ясно|понял[а]?|спс|спасибо)\b/i.test(user)) {
+    return reply;
+  }
+  if (/\?/.test(user) && user.length < 40) return reply;
+
+  const tag = (String(reply).match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
+  const body = String(reply).slice(tag.length).trim();
+  if (!BARE_ACK_RE.test(body)) {
+    return reply;
+  }
+  // Есть конкретика у него — короткая реакция с отсылкой, не голое «ага».
+  const words = user.split(/\s+/).filter((w) => w.length > 3).slice(0, 3);
+  const hook = words[0] ? words[0].replace(/[^\p{L}\p{N}-]/gu, '') : '';
+  const variants = hook
+    ? [
+        `ого, ${hook.toLowerCase()})`,
+        `а, про ${hook.toLowerCase()})`,
+        `ну ясно, интересно)`,
+      ]
+    : ['ну ясно)', 'интересн)', 'ого, расскажи)'];
+  return tag + variants[Math.floor(Math.random() * variants.length)];
 }
 
 const RECIPROCAL_QS = [
@@ -319,51 +425,161 @@ function fixStaleNightTalk(reply, userMessage) {
 }
 
 /**
- * Не выдумывать «какая весна» — пример из промпта модель копировала на «солнце».
+ * Не поправлять сезон «от себя», если он не про сезон и сейчас другая пора года.
+ * Общий принцип (не только «весна»), якорь — timeStyle.getSeasonInfo().
  */
 function stripFalseSeasonCorrection(reply, userMessage) {
   if (!reply) return reply;
   const user = String(userMessage || '');
-  // \b в JS плохо дружит с кириллицей — граница вручную.
-  if (/(?:^|[^а-яёa-z0-9])весн/i.test(user) || /\bspring\b/i.test(user)) return reply;
   const text = String(reply).trim();
-  if (!/(?:^|[^а-яёa-z0-9])весн/i.test(text)) return reply;
 
-  // Весь ответ — ложная поправка сезона.
-  if (
-    /какая\s+весн|не\s+весн|а\s+не\s+весн|весн[а-яё]*,?\s*осен/i.test(text) &&
-    text.split(/\s+/).length <= 14
-  ) {
+  let season;
+  try {
+    season = require('./timeStyle').getSeasonInfo();
+  } catch (_) {
+    season = { id: 'autumn', nameRu: 'осень' };
+  }
+  const seasonRe = {
+    winter: /(?:^|[^а-яёa-z0-9])зим/i,
+    spring: /(?:^|[^а-яёa-z0-9])весн/i,
+    summer: /(?:^|[^а-яёa-z0-9])лет[оа]/i,
+    autumn: /(?:^|[^а-яёa-z0-9])осен/i,
+  };
+  const enRe = {
+    winter: /\bwinter\b/i,
+    spring: /\bspring\b/i,
+    summer: /\bsummer\b/i,
+    autumn: /\b(?:autumn|fall)\b/i,
+  };
+  // Он сам назвал текущий/любой сезон — не лезем.
+  const userMentionsAnySeason =
+    Object.values(seasonRe).some((re) => re.test(user)) ||
+    Object.values(enRe).some((re) => re.test(user));
+  if (userMentionsAnySeason) return reply;
+
+  // Ответ поправляет сезон («какая весна, осень же») или называет НЕ текущий.
+  const wrongIds = Object.keys(seasonRe).filter((id) => id !== season.id);
+  const mentionsWrong = wrongIds.some((id) => seasonRe[id].test(text) || enRe[id].test(text));
+  if (!mentionsWrong) return reply;
+
+  const correctsSeason =
+    /какая\s+(?:весн|зим|осен|лет)|не\s+(?:весн|зим|осен|лет)|а\s+не\s+(?:весн|зим|осен|лет)|(?:весн|зим|осен|лет)[а-яё]*,?\s*(?:осен|зим|весн|лет)/i.test(
+      text,
+    );
+
+  if (correctsSeason && text.split(/\s+/).length <= 16) {
     if (USER_SAYS_DAYTIME_RE.test(user)) {
       return ['ой да, уже утро)', 'хах точно, день уже)', 'ага, утро)'][
         Math.floor(Math.random() * 3)
       ];
     }
-    return ['ну да)', 'ага)', 'хм ок)'][Math.floor(Math.random() * 3)];
+    return ['ну ладно)', 'хм, поняла)', 'ага, ясно)'][Math.floor(Math.random() * 3)];
   }
 
-  const cleaned = text
-    .replace(/хах,?\s*какая\s+весна,?\s*осень\s+же\s*\)?/gi, '')
-    .replace(/ну\s+типа\s+ну\s+осень\s+же,?\s*а\s+не\s+весна\s*\)?/gi, '')
-    .replace(/осень\s+же,?\s*а\s+не\s+весна\s*\)?/gi, '')
+  // Вырезаем чужие сезоны из ответа, оставляя смысл.
+  let cleaned = text;
+  for (const id of wrongIds) {
+    cleaned = cleaned
+      .replace(new RegExp(`хах,?\\s*какая\\s+${id === 'spring' ? 'весна' : id === 'winter' ? 'зима' : id === 'summer' ? 'лето' : 'осень'}[,.]?\\s*`, 'gi'), '')
+      .replace(seasonRe[id], ' ')
+      .replace(enRe[id], ' ');
+  }
+  cleaned = cleaned
     .replace(/\s{2,}/g, ' ')
+    .replace(/^\s*[,.;:\-–]+/, '')
     .trim();
+  if (cleaned.length >= 8 && !wrongIds.some((id) => seasonRe[id].test(cleaned))) {
+    return /\)\s*$/.test(cleaned) ? cleaned : `${cleaned})`;
+  }
+  if (USER_SAYS_DAYTIME_RE.test(user)) {
+    return ['ой да, уже утро)', 'хах точно, день уже)'][Math.floor(Math.random() * 2)];
+  }
   return cleaned.length >= 3 ? cleaned : reply;
+}
+
+/** Режет канцелярит / «режим ассистента», оставляя живой тон. */
+function stripRoboticGirl(reply) {
+  if (!reply) return reply;
+  const tag = (String(reply).match(/^\s*<<[^>]+>>\s*/) || [''])[0];
+  let body = String(reply).slice(tag.length).trim();
+  if (!body) return reply;
+  const before = body;
+  body = body
+    .replace(
+      /^(?:конечно(?:\s+же)?|разумеется|с\s+удовольствием|безусловно)[,!]?\s*/i,
+      '',
+    )
+    .replace(/чем\s+могу\s+помочь[^.!?\n]*/gi, '')
+    .replace(
+      /я\s+(?:здесь|тут),?\s+чтобы[^.!?\n]*/gi,
+      '',
+    )
+    .replace(
+      /как\s+(?:искусственный\s+интеллект|нейросеть|ассистент)\b[^.!?\n]*/gi,
+      '',
+    )
+    .replace(/\bдавайте\s+разберёмся\b/gi, 'хм')
+    .replace(/\bв\s+любом\s+случае\b/gi, 'ну')
+    .replace(/\bвс[её]\s+зависит\s+от\s+(?:восприятия|ситуации|тебя)\b/gi, '')
+    .replace(/\bтакое\s+может\s+сильно\s+расстроить\b/gi, 'жесть')
+    .replace(/\bоценить\s+ситуацию\s+на\s+месте\b/gi, '')
+    .replace(/\bоста[её]тся\s+только\s+ждать\s+и\s+надеяться\b/gi, 'ну ждём)')
+    .replace(/\bможно\s+попробовать\s+подумать\s+о\b/gi, 'можно подумать про')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^\s*[,.;:\-–]+/, '')
+    .trim();
+  if (!body || body.length < 3) {
+    return (
+      tag +
+      ['ну ладно)', 'хм, ок)', 'поняла)'][Math.floor(Math.random() * 3)]
+    );
+  }
+  if (body !== before && !/[)….!?]$/.test(body)) body += ')';
+  return tag + body;
+}
+
+/** Финальный гейт: голые короткие ack не уходят в чат. */
+function ensureAckNotBare(reply) {
+  if (!reply) return reply;
+  const tag = (String(reply).match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
+  const body = String(reply).slice(tag.length).trim();
+  if (!body || body.includes('\n')) return reply;
+  if (!BARE_ACK_RE.test(body)) return reply;
+  const variants = [
+    'ну ладно)',
+    'хм, поняла)',
+    'ага, ясно)',
+    'ок, я тут)',
+  ];
+  return tag + variants[Math.floor(Math.random() * variants.length)];
+}
+
+function fixGluedParticles(reply) {
+  if (!reply) return reply;
+  // «да нетсейчас?» / «несейчас» — модель слипает частицы.
+  return String(reply)
+    .replace(/\b(да\s+)?нетсейчас\b/gi, (_, p) => `${p || ''}нет, сейчас`)
+    .replace(/\bнесейчас\b/gi, 'не сейчас');
 }
 
 function applySoftLite(reply, history, userMessage) {
   if (!reply) return reply;
   let out = softenCoachy(reply);
+  out = stripRoboticGirl(out);
   out = softCompleteCut(out);
+  out = enrichBareAckOnSubstance(out, userMessage);
   out = stripEmptyTogetherInvite(out);
   out = fixStaleNightTalk(out, userMessage);
   out = stripFalseSeasonCorrection(out, userMessage);
-  out = ensureReciprocalQuestion(out, history, userMessage);
+  // Взаимный вопрос — только хинтом модели (buildThinHumanHint / softHint).
+  // Не дописываем «а ты как день?» здесь: иначе перебиваем stripHabitualTrailingQuestion.
   out = stripQuestionAfterFarewell(out);
-  // После reciprocal снова мог прилипнуть «а ты как день?» к ночному хвосту —
-  // и ночные куски могли остаться; ещё раз подчистим днём.
   out = fixStaleNightTalk(out, userMessage);
   out = stripQuestionAfterFarewell(out);
+  out = fixGluedParticles(out);
+  out = humanizeChatTexture(out);
+  // Финальный гейт после всех правок — иначе season/robot снова вернут «ага)».
+  out = ensureAckNotBare(out);
   return out;
 }
 
@@ -372,7 +588,12 @@ module.exports = {
   isDatingSiteAsk,
   softenCoachy,
   softCompleteCut,
+  enrichBareAckOnSubstance,
+  ensureAckNotBare,
+  fixGluedParticles,
+  humanizeChatTexture,
   stripEmptyTogetherInvite,
+  stripRoboticGirl,
   fixStaleNightTalk,
   stripFalseSeasonCorrection,
   applySoftLite,

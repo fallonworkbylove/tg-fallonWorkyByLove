@@ -31,6 +31,27 @@ const TELEGRAM_API = NOTIFY_BOT_TOKEN
   ? `https://api.telegram.org/bot${NOTIFY_BOT_TOKEN}`
   : null;
 
+/** fetch к api.telegram.org с ретраями — на VPS часто мигает «fetch failed». */
+async function botFetch(url, options = {}, { retries = 3, timeoutMs = 35000 } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...options, signal: ctrl.signal });
+      clearTimeout(timer);
+      return res;
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, 500 * attempt * attempt));
+      }
+    }
+  }
+  throw lastErr || new Error('botFetch failed');
+}
+
 let scorerClient = null;
 function getScorerClient() {
   if (!scorerClient) {
@@ -185,60 +206,101 @@ async function recordVoiceSent(accountId, peerId, peerUsername, voiceFile, accou
       [accountId, peerId, peerUsername || null, voiceFile],
     );
 
-    await notifyVoiceSent({
-      accountId,
-      accountPhone,
-      accountName,
-      peerId,
-      peerUsername,
-      voiceFile,
-    });
+    // Уведомление «ИИ отправила NFT-голосовое» убрано — остаётся только «Лид готов»
+    // (leadScoring.onLeadBecameReady после паузы ИИ).
   } catch (err) {
     console.error('[helpRequestNotifier] Не удалось зафиксировать отправку голосового:', err.message);
   }
 }
 
-async function notifyVoiceSent({ accountId, accountPhone, accountName, peerId, peerUsername, voiceFile }) {
-  if (!TELEGRAM_API) {
-    console.error('[helpRequestNotifier] BOT_TOKEN не задан — уведомление об отправке не отправлено.');
-    return;
-  }
+/** Антиспам: одно уведомление «не кинула медиа» на пару аккаунт+peer за окно. */
+const MEDIA_MISS_COOLDOWN_MS = 45 * 60 * 1000;
+const mediaMissNotifiedAt = new Map();
 
-  const owner = await getAccountOwner(accountId);
-  const subscribers = owner?.telegramUserId
-    ? await getAccountNotificationSubscribers(accountId, owner.telegramUserId)
-    : [];
+function mediaMissKindLabel(kind) {
+  const k = String(kind || 'photo').toLowerCase();
+  if (k === 'circle' || k === 'video_note') return 'кружок';
+  if (k === 'video') return 'видео';
+  return 'фото';
+}
+
+/**
+ * Собеседник просил фото/кружок/видео, а ИИ в этом ходе ничего не отправила —
+ * пинг владельцу номера и привязанным воркерам (делегатам).
+ */
+async function notifyMediaMissed({
+  accountId,
+  accountPhone,
+  accountName,
+  peerId,
+  peerUsername,
+  mediaKind,
+  reason,
+  userText,
+}) {
+  if (!TELEGRAM_API) return false;
+  const key = `${accountId}:${peerId}`;
+  const prev = mediaMissNotifiedAt.get(key) || 0;
+  if (Date.now() - prev < MEDIA_MISS_COOLDOWN_MS) return false;
+
+  const subscribers = await getLeadNotifyChatIds(accountId);
   if (subscribers.length === 0) {
-    console.error(
-      `[helpRequestNotifier] Для аккаунта №${accountId} не найден подписанный владелец — уведомление не отправлено.`,
+    console.log(
+      `[helpRequestNotifier] Медиа не ушло (аккаунт №${accountId}), но нет подписчиков (владелец/делегаты).`,
     );
-    return;
+    return false;
   }
 
-  const normalizedUsername = String(peerUsername || '').trim().replace(/^@/, '');
-  const peerLabel = normalizedUsername
-    ? `@${normalizedUsername} (id ${peerId})`
+  const peerLabel = peerUsername
+    ? `@${String(peerUsername).replace(/^@/, '')} (id ${peerId})`
     : `id ${peerId}`;
   const accountLabel = formatAccountLabel(accountId, accountPhone, accountName);
-  const text =
-    '<b>ИИ отправила NFT-голосовое</b>\n\n' +
+  const kindRu = mediaMissKindLabel(mediaKind);
+  const why =
+    reason === 'no_media_chat'
+      ? 'нет привязанного медиа-чата'
+      : reason === 'suppressed'
+        ? 'ИИ подавила отправку'
+        : reason === 'send_failed'
+          ? 'отправка не удалась'
+          : reason === 'deflect'
+            ? 'ИИ отнекивается текстом'
+            : 'файл не ушёл';
+  const snippet = String(userText || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180);
+
+  const card =
+    `<b>📷 Просит ${escapeHtml(kindRu)} — ИИ не отправила</b>\n\n` +
     `<b>Аккаунт:</b> ${escapeHtml(accountLabel)}\n` +
     `<b>Собеседник:</b> ${escapeHtml(peerLabel)}\n` +
-    `<b>Голосовое:</b> ${escapeHtml(voiceFile)}\n\n` +
-    'ИИ больше не отвечает в этом диалоге — дальше переписку ведёт оператор';
+    `<b>Причина:</b> ${escapeHtml(why)}` +
+    (snippet ? `\n<b>Он написал:</b> «${escapeHtml(snippet)}»` : '') +
+    '\n\nМожно кинуть вручную из чата.';
 
-  try {
-    const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: subscribers[0].chat_id, text, parse_mode: 'HTML' }),
-    });
-    if (!response.ok) {
-      console.error('[helpRequestNotifier] Ошибка отправки уведомления о голосовом:', await response.text());
+  let ok = false;
+  for (const { chat_id } of subscribers) {
+    try {
+      const res = await botFetch(`${TELEGRAM_API}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id, text: card, parse_mode: 'HTML' }),
+      });
+      if (!res.ok) {
+        console.error(
+          `[helpRequestNotifier] mediaMiss failed для ${chat_id}:`,
+          await res.text(),
+        );
+      } else {
+        ok = true;
+      }
+    } catch (err) {
+      console.error(`[helpRequestNotifier] mediaMiss error ${chat_id}:`, err.message);
     }
-  } catch (err) {
-    console.error('[helpRequestNotifier] Не удалось отправить уведомление о голосовом:', err.message);
   }
+  if (ok) mediaMissNotifiedAt.set(key, Date.now());
+  return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -504,7 +566,16 @@ async function isNotificationSubscriber(chatId) {
 }
 
 function formatAccountLabel(accountId, accountPhone, accountName) {
-  const name = String(accountName || '').trim();
+  let name = String(accountName || '').trim();
+  // «аккаунт» / «ID 12» — не имена; дотягиваем из кэша getMe юзербота.
+  if (!name || /^аккаунт$/i.test(name) || /^ID\s*\d+$/i.test(name)) {
+    try {
+      const { accountDisplayName } = require('./telegramClient');
+      name = accountDisplayName(accountId) || '';
+    } catch (_) {
+      name = '';
+    }
+  }
   const phone = accountPhone ? ` (${accountPhone})` : '';
   return name ? `${name}${phone}` : `аккаунт${phone}`;
 }
@@ -535,7 +606,7 @@ async function notifyOperators({ accountId, accountPhone, accountName, peerId, p
 
   for (const { chat_id } of subscribers) {
     try {
-      const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+      const res = await botFetch(`${TELEGRAM_API}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id, text: card, parse_mode: 'HTML' }),
@@ -603,7 +674,7 @@ async function notifyLeadReady({
   let ok = false;
   for (const { chat_id } of subscribers) {
     try {
-      const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+      const res = await botFetch(`${TELEGRAM_API}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id, text: card, parse_mode: 'HTML' }),
@@ -670,7 +741,7 @@ async function handleUpdate(update) {
     try {
       await workerConnect.startWizard(TELEGRAM_API, chatId, from);
     } catch (err) {
-      await fetch(`${TELEGRAM_API}/sendMessage`, {
+      await botFetch(`${TELEGRAM_API}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -691,7 +762,7 @@ async function handleUpdate(update) {
       if (await workerConnect.canConnectAccounts(chatId, from?.username)) {
         await workerConnect.sendWorkerMenu(TELEGRAM_API, chatId);
       } else {
-        await fetch(`${TELEGRAM_API}/sendMessage`, {
+        await botFetch(`${TELEGRAM_API}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -701,7 +772,7 @@ async function handleUpdate(update) {
         });
       }
     } catch (err) {
-      await fetch(`${TELEGRAM_API}/sendMessage`, {
+      await botFetch(`${TELEGRAM_API}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -719,7 +790,7 @@ async function handleUpdate(update) {
       [chatId],
     );
     if (blocked) {
-      await fetch(`${TELEGRAM_API}/sendMessage`, {
+      await botFetch(`${TELEGRAM_API}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_id: chatId, text: 'Доступ закрыт.' }),
@@ -754,7 +825,7 @@ async function handleUpdate(update) {
       keyboard.push([{ text: 'Открыть приложение', web_app: { url: MINIAPP_URL } }]);
     }
     if (keyboard.length) payload.reply_markup = { inline_keyboard: keyboard };
-    await fetch(`${TELEGRAM_API}/sendMessage`, {
+    await botFetch(`${TELEGRAM_API}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -762,7 +833,7 @@ async function handleUpdate(update) {
     if (isAdmin) await adminMenu.sendMenu(TELEGRAM_API, chatId);
   } else if (text === '/stop') {
     await db.execute('DELETE FROM notification_subscribers WHERE chat_id = ?', [chatId]);
-    await fetch(`${TELEGRAM_API}/sendMessage`, {
+    await botFetch(`${TELEGRAM_API}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text: 'Уведомления отключены.' }),
@@ -771,9 +842,11 @@ async function handleUpdate(update) {
 }
 
 async function pollOnce() {
-  const res = await fetch(
+  const res = await botFetch(
     `${TELEGRAM_API}/getUpdates?timeout=25&offset=${pollingOffset}` +
       `&allowed_updates=${encodeURIComponent(JSON.stringify(['message', 'callback_query']))}`,
+    {},
+    { retries: 2 },
   );
   if (!res.ok) throw new Error(`getUpdates HTTP ${res.status}`);
   const data = await res.json();
@@ -843,7 +916,10 @@ function startNotificationBot() {
 
 const OPENAI_ALERT_REPEAT_MS = 30 * 60 * 1000;
 // Только админу (@fallonsociapat). По chat_id: username в Telegram меняется.
-const ADMIN_ALERT_CHAT_ID = process.env.ADMIN_ALERT_CHAT_ID || '8588744561';
+const ADMIN_ALERT_CHAT_ID = String(process.env.ADMIN_ALERT_CHAT_ID || '').trim();
+if (!ADMIN_ALERT_CHAT_ID) {
+  console.warn('[helpRequestNotifier] ADMIN_ALERT_CHAT_ID не задан — алерты админу отключены.');
+}
 const openAiAlert = { active: false, kind: null, sentAt: 0, lost: 0 };
 
 // Счётчики ошибок ответов с момента запуска процесса — для админ-меню.
@@ -879,9 +955,13 @@ async function sendAdminAlert(text) {
     console.error('[helpRequestNotifier] BOT_TOKEN не задан — тревога OpenAI не отправлена.');
     return;
   }
+  if (!ADMIN_ALERT_CHAT_ID) {
+    console.warn('[helpRequestNotifier] ADMIN_ALERT_CHAT_ID пуст — тревога не отправлена.');
+    return;
+  }
   const chatId = ADMIN_ALERT_CHAT_ID;
   try {
-    const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+    const res = await botFetch(`${TELEGRAM_API}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML', disable_web_page_preview: true }),
@@ -953,6 +1033,7 @@ module.exports = {
   isAutoreplyDisabledForPeer,
   enableAutoreplyForPeer,
   notifyLeadReady,
+  notifyMediaMissed,
   getLeadNotifyChatIds,
   listNotifyDelegates,
   addNotifyDelegate,

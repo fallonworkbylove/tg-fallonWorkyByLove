@@ -2,28 +2,38 @@ const express = require('express');
 const db = require('../db');
 const {
   startLogin,
+  startQrLogin,
+  pollQrLogin,
   resendLoginCode,
   confirmCode,
   confirmPassword,
+  extractLoginCode,
+  normalizeLoginPhone,
+  qrImageUrl,
+  QR_MARKER,
   isActive,
   activateAccount,
   deactivateAccount,
+  pingActiveSession,
   scanUnansweredDialogs,
+  flushAllDeferredNow,
 } = require('../services/telegramClient');
 const { purgeAccount, renumberAccountSeq } = require('../services/accountCleanup');
 const leadScoring = require('../services/leadScoring');
+const ragExamples = require('../services/ragExamples');
+const { getDialogAgeHours } = require('../services/history');
 
 const router = express.Router();
-function getUserId(req) { return req.dbUser ? req.dbUser.id : 1; }
+const getUserId = require('../lib/getUserId');
 
 // iPhone вставляет номер как «+7 958 738 14 82» или «8 (958) 738-14-82».
 // Telegram принимает только цифры с плюсом, иначе код не уходит.
 function normalizePhone(raw) {
-  let digits = String(raw || '').replace(/\D/g, '');
-  if (!digits) return '';
-  if (digits.length === 11 && digits.startsWith('8')) digits = `7${digits.slice(1)}`;
-  if (digits.length === 10) digits = `7${digits}`;
-  return `+${digits}`;
+  return normalizeLoginPhone(raw);
+}
+
+function phoneDigits(raw) {
+  return String(raw || '').replace(/\D/g, '');
 }
 
 function readPhone(raw) {
@@ -33,7 +43,7 @@ function readPhone(raw) {
 
 async function ownedAccount(req, id) {
   const [[row]] = await db.execute(
-    'SELECT id, session_string FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
+    'SELECT id, session_string, prompt FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
     [id, getUserId(req)],
   );
   return row || null;
@@ -44,7 +54,9 @@ async function connectOwnedAccount(account) {
   if (!account.session_string) return false;
   const online = await activateAccount(account.id, account.session_string);
   if (online === 'revoked') {
-    const error = new Error('Сессия отозвана, аккаунт удалён из базы');
+    const error = new Error(
+      'Сессия отозвана — аккаунт сохранён, нужна повторная авторизация (QR/код)',
+    );
     error.statusCode = 410;
     throw error;
   }
@@ -99,6 +111,114 @@ router.get('/', async (req, res) => {
   } catch (error) {
     console.error('Get accounts error:', error);
     res.status(500).json({ success: false, error: 'Не удалось получить аккаунты' });
+  }
+});
+
+function requireOpsLoopback(req, res) {
+  const { isLoopback } = require('../middleware/telegramAuth');
+  const expected = String(process.env.TELEGRAM_AUTH_BYPASS_KEY || '').trim();
+  const got = String(req.get('X-Auth-Bypass-Key') || '').trim();
+  if (!expected || got !== expected || !isLoopback(req)) {
+    res.status(403).json({ success: false, error: 'Forbidden' });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Ops: дочитать ВСЕ непрочитанные + сразу слить «Занята»-deferred.
+ * Loopback + bypass key. Не ждёт окончания сканов — стартует фоном.
+ */
+router.post('/catch-up-all', async (req, res) => {
+  try {
+    if (!requireOpsLoopback(req, res)) return;
+    const deferredFlushed = flushAllDeferredNow();
+    const [rows] = await db.execute(
+      `SELECT id, phone, is_autoreply_enabled,
+              CASE WHEN session_string IS NULL OR session_string = '' THEN 0 ELSE 1 END AS has_session
+       FROM accounts
+       ORDER BY id`,
+    );
+    const started = [];
+    const skipped = [];
+    for (const row of rows) {
+      if (!Number(row.is_autoreply_enabled)) {
+        skipped.push({ id: row.id, reason: 'ai_off' });
+        continue;
+      }
+      if (!isActive(row.id)) {
+        skipped.push({ id: row.id, reason: row.has_session ? 'offline' : 'no_session' });
+        continue;
+      }
+      started.push(row.id);
+      scanUnansweredDialogs(row.id, 0, {
+        catchUp: true,
+        maxReplies: 150,
+        dialogsLimit: 500,
+      }).catch((e) =>
+        console.error(`[catch-up-all ${row.id}]`, e.message),
+      );
+    }
+    console.log(
+      `[catch-up-all] started=${started.length} deferred=${deferredFlushed} skipped=${skipped.length}`,
+    );
+    return res.json({
+      success: true,
+      started,
+      deferredFlushed,
+      skipped,
+    });
+  } catch (error) {
+    console.error('catch-up-all error:', error);
+    return res.status(500).json({ success: false, error: 'catch-up-all failed' });
+  }
+});
+
+// Ops: статус ВСЕХ живых клиентов в процессе (не только аккаунты текущего user).
+// Только socket-loopback + X-Auth-Bypass-Key (без XFF-spoof).
+router.get('/pool-status', async (req, res) => {
+  try {
+    if (!requireOpsLoopback(req, res)) return;
+    const [rows] = await db.execute(
+      `SELECT id, phone, status, is_autoreply_enabled,
+              CASE WHEN session_string IS NULL OR session_string = '' THEN 0 ELSE 1 END AS has_session
+       FROM accounts
+       ORDER BY id`,
+    );
+    const accounts = [];
+    for (const row of rows) {
+      const active = isActive(row.id);
+      let ping = { ok: false, reason: row.has_session ? 'offline' : 'no_session' };
+      if (active) {
+        ping = await pingActiveSession(row.id);
+      } else if (!row.has_session) {
+        ping = { ok: false, reason: 'no_session' };
+      }
+      accounts.push({
+        id: row.id,
+        phone: row.phone,
+        status: row.status,
+        ai: Number(row.is_autoreply_enabled) === 1,
+        has_session: !!row.has_session,
+        is_online: active,
+        ping_ok: !!ping.ok,
+        ping_reason: ping.ok ? undefined : ping.reason,
+        username: ping.username || null,
+        firstName: ping.firstName || null,
+      });
+    }
+    const online = accounts.filter((a) => a.is_online).length;
+    const pingOk = accounts.filter((a) => a.ping_ok).length;
+    return res.json({
+      success: true,
+      online,
+      pingOk,
+      total: accounts.length,
+      accounts,
+    });
+  } catch (error) {
+    console.error('pool-status error:', error);
+    return res.status(500).json({ success: false, error: 'pool-status failed' });
   }
 });
 
@@ -202,6 +322,175 @@ router.post('/conversations/:accountId/:peerId/funnel', async (req, res) => {
   }
 });
 
+/**
+ * Экспорт переписки: JSON + plaintext для оператора.
+ * ?format=text → text/plain; иначе JSON { messages, text }.
+ */
+router.get('/conversations/:accountId/:peerId/export', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const accountId = Number(req.params.accountId);
+    const peerId = String(req.params.peerId || '');
+    if (!accountId || !peerId) {
+      return res.status(400).json({ success: false, error: 'Нужны accountId и peerId' });
+    }
+    const [[account]] = await db.execute(
+      'SELECT id, phone FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
+      [accountId, userId],
+    );
+    if (!account) {
+      return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
+    }
+
+    const [rows] = await db.execute(
+      `SELECT role, content, created_at
+       FROM conversation_messages
+       WHERE account_id = ? AND peer_id = ?
+       ORDER BY id ASC
+       LIMIT 500`,
+      [accountId, peerId],
+    );
+    const messages = (rows || []).map((r) => ({
+      role: r.role,
+      content: String(r.content || ''),
+      at: r.created_at,
+    }));
+    const text = messages
+      .map((m) => {
+        const who = m.role === 'assistant' ? 'Она' : 'Он';
+        return `${who}: ${m.content}`;
+      })
+      .join('\n');
+
+    if (String(req.query.format || '').toLowerCase() === 'text') {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="chat-${accountId}-${peerId}.txt"`,
+      );
+      return res.send(text || '(пусто)');
+    }
+
+    return res.json({
+      success: true,
+      accountId,
+      peerId,
+      phone: account.phone,
+      count: messages.length,
+      messages,
+      text,
+    });
+  } catch (error) {
+    console.error('Export conversation error:', error);
+    res.status(500).json({ success: false, error: 'Не удалось экспортировать диалог' });
+  }
+});
+
+/**
+ * Последние пары user→assistant → training_examples (+ опционально RAG).
+ * body: { limit?: number, toRag?: boolean, day?: 1|2 }
+ */
+router.post('/conversations/:accountId/:peerId/to-examples', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const accountId = Number(req.params.accountId);
+    const peerId = String(req.params.peerId || '');
+    if (!accountId || !peerId) {
+      return res.status(400).json({ success: false, error: 'Нужны accountId и peerId' });
+    }
+    const [[account]] = await db.execute(
+      'SELECT id FROM accounts WHERE id = ? AND user_id = ? LIMIT 1',
+      [accountId, userId],
+    );
+    if (!account) {
+      return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
+    }
+
+    const limit = Math.max(1, Math.min(30, Number(req.body?.limit) || 8));
+    const toRag = req.body?.toRag !== false && req.body?.toRag !== 0 && req.body?.toRag !== '0';
+    let day = Number(req.body?.day) === 2 ? 2 : 1;
+    if (req.body?.day == null) {
+      try {
+        const age = await getDialogAgeHours(accountId, peerId);
+        day = ragExamples.dialogDayFromAgeHours(age);
+      } catch (_) {
+        /* default day 1 */
+      }
+    }
+
+    const [rows] = await db.execute(
+      `SELECT role, content
+       FROM conversation_messages
+       WHERE account_id = ? AND peer_id = ?
+       ORDER BY id DESC
+       LIMIT 120`,
+      [accountId, peerId],
+    );
+    const chronological = (rows || []).slice().reverse();
+    const pairs = [];
+    for (let i = 0; i < chronological.length - 1; i++) {
+      const a = chronological[i];
+      const b = chronological[i + 1];
+      if (a?.role !== 'user' || b?.role !== 'assistant') continue;
+      const client = String(a.content || '')
+        .replace(/\[реакция:[^\]]*\]/gi, '')
+        .trim()
+        .slice(0, 800);
+      const bot = String(b.content || '').trim().slice(0, 800);
+      if (!client || !bot || client.length < 2 || bot.length < 2) continue;
+      pairs.push({ client, bot });
+    }
+    const selected = pairs.slice(-limit);
+
+    let trainingAdded = 0;
+    let ragAdded = 0;
+    for (const p of selected) {
+      try {
+        await db.execute(
+          `INSERT INTO training_examples
+             (user_id, account_id, client_message, correct_answer, note)
+           VALUES (?, ?, ?, ?, ?)`,
+          [
+            userId,
+            accountId,
+            p.client,
+            p.bot,
+            `export peer=${peerId}`,
+          ],
+        );
+        trainingAdded += 1;
+      } catch (err) {
+        console.warn('[to-examples] training insert:', err.message);
+      }
+      if (toRag) {
+        try {
+          await ragExamples.upsertExample({
+            day,
+            clientMessage: p.client,
+            botReply: p.bot,
+            source: `export:${accountId}:${peerId}`,
+          });
+          ragAdded += 1;
+        } catch (err) {
+          console.warn('[to-examples] rag upsert:', err.message);
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      pairsFound: pairs.length,
+      trainingAdded,
+      ragAdded,
+      day,
+      toRag,
+    });
+  } catch (error) {
+    console.error('To-examples error:', error);
+    res.status(500).json({ success: false, error: 'Не удалось сохранить примеры' });
+  }
+});
+
 // Стереть историю переписки с конкретным собеседником.
 router.delete('/conversations/:accountId/:peerId', async (req, res) => {
   try {
@@ -254,7 +543,9 @@ router.post('/', async (req, res) => {
       'SELECT id, phone FROM accounts WHERE user_id = ?',
       [getUserId(req)],
     );
-    const existingAccount = owned.find((row) => normalizePhone(row.phone) === phone);
+    const existingAccount = owned.find(
+      (row) => phoneDigits(row.phone) === phoneDigits(phone),
+    );
 
     if (existingAccount) {
       return res.status(409).json({
@@ -344,6 +635,83 @@ router.post('/connect/start', async (req, res) => {
   }
 });
 
+// QR-вход: старт (токен + картинка).
+router.post('/connect/qr/start', async (req, res) => {
+  try {
+    const result = await startQrLogin(getUserId(req));
+    if (result.status === 'ok' && result.sessionString) {
+      const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+      const accountId = await saveSession(
+        getUserId(req),
+        result.phone,
+        result.sessionString,
+        prompt,
+      );
+      await deactivateAccount(accountId);
+      const online = (await activateAccount(accountId, result.sessionString)) === true;
+      return res.json({
+        success: true,
+        status: 'connected',
+        phone: result.phone,
+        is_online: online,
+      });
+    }
+    if (result.status === 'needPassword') {
+      return res.json({ success: true, status: 'needPassword', phone: QR_MARKER });
+    }
+    return res.json({
+      success: true,
+      status: 'pending',
+      loginUrl: result.loginUrl,
+      expires: result.expires,
+      qrImage: result.loginUrl ? qrImageUrl(result.loginUrl) : null,
+    });
+  } catch (error) {
+    console.error('Connect QR start error:', error);
+    return res.status(500).json({ success: false, error: connectCodeErrorMessage(error) });
+  }
+});
+
+// QR-вход: опрос скана.
+router.post('/connect/qr/poll', async (req, res) => {
+  try {
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    const result = await pollQrLogin(getUserId(req));
+    if (result.status === 'needPassword') {
+      return res.json({ success: true, status: 'needPassword', phone: QR_MARKER });
+    }
+    if (result.status === 'ok' && result.sessionString) {
+      const accountId = await saveSession(
+        getUserId(req),
+        result.phone,
+        result.sessionString,
+        prompt,
+      );
+      await deactivateAccount(accountId);
+      const online = (await activateAccount(accountId, result.sessionString)) === true;
+      return res.json({
+        success: true,
+        status: 'connected',
+        phone: result.phone,
+        is_online: online,
+      });
+    }
+    return res.json({
+      success: true,
+      status: 'pending',
+      loginUrl: result.loginUrl || null,
+      expires: result.expires || null,
+      qrImage: result.loginUrl ? qrImageUrl(result.loginUrl) : null,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ success: false, error: error.message });
+    }
+    console.error('Connect QR poll error:', error);
+    return res.status(500).json({ success: false, error: connectCodeErrorMessage(error) });
+  }
+});
+
 // Повтор кода (часто SMS), пока жива pending-сессия после /connect/start.
 router.post('/connect/resend', async (req, res) => {
   try {
@@ -398,7 +766,9 @@ router.post('/connect/code', async (req, res) => {
 // Шаг 3 (если включена 2FA): пользователь ввёл облачный пароль.
 router.post('/connect/password', async (req, res) => {
   try {
-    const phone = readPhone(req.body.phone);
+    const rawPhone = typeof req.body.phone === 'string' ? req.body.phone.trim() : '';
+    const phone =
+      rawPhone === QR_MARKER || rawPhone === 'qr' ? QR_MARKER : readPhone(req.body.phone);
     const password = typeof req.body.password === 'string' ? req.body.password : '';
     const prompt = typeof req.body.prompt === 'string' ? req.body.prompt.trim() : '';
     if (!phone || !password) {
@@ -407,7 +777,11 @@ router.post('/connect/password', async (req, res) => {
 
     const result = await confirmPassword(getUserId(req), phone, password);
 
-    const accountId = await saveSession(getUserId(req), phone, result.sessionString, prompt);
+    const savePhone = result.phone && result.phone !== QR_MARKER ? result.phone : phone;
+    if (!savePhone || savePhone === QR_MARKER) {
+      return res.status(500).json({ success: false, error: 'Не удалось определить номер после 2FA' });
+    }
+    const accountId = await saveSession(getUserId(req), savePhone, result.sessionString, prompt);
     await deactivateAccount(accountId);
     const online = (await activateAccount(accountId, result.sessionString)) === true;
     return res.json({ success: true, status: 'connected', is_online: online });
@@ -436,17 +810,33 @@ router.post('/bulk/start-ai', async (req, res) => {
       where += ` AND id IN (${ids.map(() => '?').join(',')})`;
       params.push(...ids);
     }
+    // Не включаем AI на аккаунтах без промпта / без сессии.
+    const [eligible] = await db.execute(
+      `SELECT id FROM accounts
+       WHERE ${where}
+         AND LENGTH(TRIM(COALESCE(prompt,''))) > 0
+         AND LENGTH(COALESCE(session_string,'')) > 50`,
+      params,
+    );
+    if (!eligible.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'Нет аккаунтов с промптом и живой сессией',
+      });
+    }
+    const eligibleIds = eligible.map((r) => r.id);
     const [result] = await db.execute(
       `UPDATE accounts
        SET status = 'AI включен', is_autoreply_enabled = TRUE
-       WHERE ${where}`,
-      params,
+       WHERE ${where} AND id IN (${eligibleIds.map(() => '?').join(',')})`,
+      [...params, ...eligibleIds],
     );
     const [accounts] = await db.execute(
-      `SELECT id, session_string
+      `SELECT id, session_string, prompt
        FROM accounts
-       WHERE ${where} AND is_autoreply_enabled = TRUE`,
-      params,
+       WHERE ${where} AND is_autoreply_enabled = TRUE
+         AND id IN (${eligibleIds.map(() => '?').join(',')})`,
+      [...params, ...eligibleIds],
     );
     let offline = 0;
     for (const account of accounts) {
@@ -480,12 +870,20 @@ router.post('/bulk/stop-ai', async (req, res) => {
       where += ` AND id IN (${ids.map(() => '?').join(',')})`;
       params.push(...ids);
     }
+    // Снимаем клиентов с пула — иначе AI-off всё равно жрёт прокси/сканы.
+    const [toStop] = await db.execute(
+      `SELECT id FROM accounts WHERE ${where}`,
+      params,
+    );
     const [result] = await db.execute(
       `UPDATE accounts
        SET status = 'Остановлен', is_autoreply_enabled = FALSE
        WHERE ${where}`,
       params,
     );
+    for (const row of toStop) {
+      await deactivateAccount(row.id).catch(() => {});
+    }
     return res.json({ success: true, affectedRows: result.affectedRows, is_autoreply_enabled: false });
   } catch (error) {
     console.error('Bulk stop AI error:', error);
@@ -498,6 +896,20 @@ router.post('/:id/start-ai', async (req, res) => {
     const account = await ownedAccount(req, req.params.id);
     if (!account) {
       return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
+    }
+
+    if (!account.prompt || !String(account.prompt).trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Сначала задай промпт аккаунта — без него AI не включаем',
+      });
+    }
+
+    if (!account.session_string) {
+      return res.status(410).json({
+        success: false,
+        error: 'Нет сессии — подключи аккаунт заново (QR или код)',
+      });
     }
 
     await db.execute(
@@ -530,6 +942,21 @@ router.post('/:id/start-ai', async (req, res) => {
   }
 });
 
+/** Здоровье сессии только через живой клиент в процессе (без второго GramJS). */
+router.get('/:id/session-ping', async (req, res) => {
+  try {
+    const account = await ownedAccount(req, req.params.id);
+    if (!account) {
+      return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
+    }
+    const ping = await pingActiveSession(account.id);
+    return res.json({ success: true, ...ping, is_online: isActive(account.id) });
+  } catch (error) {
+    console.error('session-ping error:', error);
+    return res.status(500).json({ success: false, error: 'Не удалось проверить сессию' });
+  }
+});
+
 router.post('/:id/stop-ai', async (req, res) => {
   try {
     const account = await ownedAccount(req, req.params.id);
@@ -544,10 +971,14 @@ router.post('/:id/stop-ai', async (req, res) => {
       ['Остановлен', false, req.params.id, getUserId(req)],
     );
 
+    // Снимаем с пула: нет сканов/приветствий/Whisper пока AI выключен.
+    await deactivateAccount(req.params.id).catch(() => {});
+
     return res.json({
       success: true,
       status: 'Остановлен',
       is_autoreply_enabled: false,
+      is_online: false,
     });
   } catch (error) {
     console.error('Stop AI error:', error);
@@ -641,22 +1072,31 @@ router.delete('/:id', async (req, res) => {
 // prompt сохраняется только если он передан (не пустой), чтобы не затирать
 // уже заданный промпт при повторном подключении.
 async function saveSession(userId, phone, sessionString, prompt = '') {
+  const normalized = normalizePhone(phone);
+  if (!normalized || normalized.length < 11) {
+    const error = new Error('Неверный номер телефона');
+    error.statusCode = 400;
+    throw error;
+  }
+  const wantDigits = phoneDigits(normalized);
+
   const [owned] = await db.execute(
     'SELECT id, phone FROM accounts WHERE user_id = ?',
     [userId],
   );
-  const existing = owned.find((row) => normalizePhone(row.phone) === phone);
+  // Совпадение по цифрам — ловит «+7 995 930 71-73» и «+79959307173».
+  const existing = owned.find((row) => phoneDigits(row.phone) === wantDigits);
 
   if (existing) {
     if (prompt) {
       await db.execute(
-        'UPDATE accounts SET phone = ?, session_string = ?, status = ?, prompt = ? WHERE id = ? AND user_id = ?',
-        [phone, sessionString, 'Подключен', prompt, existing.id, userId],
+        'UPDATE accounts SET phone = ?, session_string = ?, status = ?, prompt = ?, is_autoreply_enabled = COALESCE(is_autoreply_enabled, 0) WHERE id = ? AND user_id = ?',
+        [normalized, sessionString, 'Подключен', prompt, existing.id, userId],
       );
     } else {
       await db.execute(
         'UPDATE accounts SET phone = ?, session_string = ?, status = ? WHERE id = ? AND user_id = ?',
-        [phone, sessionString, 'Подключен', existing.id, userId],
+        [normalized, sessionString, 'Подключен', existing.id, userId],
       );
     }
     return existing.id;
@@ -676,7 +1116,7 @@ async function saveSession(userId, phone, sessionString, prompt = '') {
   const [result] = await db.execute(
     `INSERT INTO accounts (user_id, phone, session_string, status, is_autoreply_enabled, prompt)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [userId, phone, sessionString, 'Подключен', false, prompt || ''],
+    [userId, normalized, sessionString, 'Подключен', false, prompt || ''],
   );
   try {
     await renumberAccountSeq(userId);

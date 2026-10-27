@@ -11,7 +11,10 @@ const opsAdmin = require('./opsAdmin');
 const operatorAccess = require('./operatorAccess');
 const { ensureAccountSeqSchema } = require('./accountCleanup');
 
-const ADMIN_CHAT_ID = String(process.env.ADMIN_ALERT_CHAT_ID || '8588744561');
+const ADMIN_CHAT_ID = String(process.env.ADMIN_ALERT_CHAT_ID || '').trim();
+if (!ADMIN_CHAT_ID) {
+  console.warn('[adminMenu] ADMIN_ALERT_CHAT_ID не задан — админ-меню суперадмина недоступно.');
+}
 const PING_MODEL = 'gpt-4o-mini';
 const BILLING_URL = 'https://platform.openai.com/settings/organization/billing';
 const TG_PROBE_HOST = '149.154.167.50';

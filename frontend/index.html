@@ -10,13 +10,22 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>LoveRussian</title>
+    <!-- Шрифты не блокируют первый кадр: в Telegram WebView googleapis часто тормозит. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
       rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
+      media="print"
+      onload="this.media='all'"
     />
-    <link rel="stylesheet" href="styles.css?v=44" />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
+      />
+    </noscript>
+    <link rel="stylesheet" href="styles.css?v=58" />
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -40,7 +49,7 @@
       <button class="side-nav__btn" data-tab="stats" type="button">Статы</button>
       <button class="side-nav__btn" data-tab="learn" type="button">Учить</button>
       <button class="side-nav__btn" data-tab="options" type="button">Опции</button>
-      <button class="side-nav__btn" data-tab="info" type="button">Инфо</button>
+      <button class="side-nav__btn" data-tab="info" type="button">Обновления</button>
     </aside>
 
     <div class="app-shell">
@@ -103,6 +112,7 @@
             <div class="panel-tools">
               <button class="btn btn-secondary" data-action="open-accounts" type="button">+ Аккаунт</button>
               <button class="btn btn-secondary" data-action="open-leads" type="button">К лидам</button>
+              <button class="btn btn-secondary" data-action="open-info" type="button">Обновления</button>
               <button class="btn btn-danger" data-action="logout" type="button">Выйти</button>
             </div>
           </div>
@@ -149,9 +159,28 @@
           <div class="section-card card">
             <h2>Подключить аккаунт</h2>
             <form id="account-form" class="form-grid">
-              <label>
+              <div class="connect-method" role="group" aria-label="Способ входа">
+                <button type="button" class="btn btn-secondary connect-method__btn is-active" data-connect-method="qr">
+                  QR-код
+                </button>
+                <button type="button" class="btn btn-secondary connect-method__btn" data-connect-method="code">
+                  Код
+                </button>
+              </div>
+
+              <div id="connect-qr-panel" class="connect-qr-panel">
+                <p class="form-hint" style="display:block;margin:0">
+                  Открой Telegram на нужном номере → Настройки → Устройства → Подключить устройство → скан QR. Без SMS.
+                </p>
+                <div id="connect-qr-box" class="connect-qr-box" hidden>
+                  <img id="connect-qr-img" alt="QR для входа" width="240" height="240" />
+                  <p id="connect-qr-link" class="form-hint" style="display:block;word-break:break-all;margin:0"></p>
+                </div>
+              </div>
+
+              <label id="account-phone-field">
                 <span>Телефон</span>
-                <input id="account-phone" type="text" placeholder="+79990000000" required />
+                <input id="account-phone" type="text" placeholder="+79990000000" />
               </label>
 
               <label id="account-code-field" hidden>
@@ -164,14 +193,20 @@
                 <input id="account-password" type="password" placeholder="Ваш пароль двухфакторной защиты" />
               </label>
 
-              <label>
-                <span>Промпт аккаунта</span>
-                <textarea id="account-prompt" rows="3" placeholder="Ты отвечаешь спокойно, уверенно и по делу."></textarea>
+              <label id="account-prompt-field" class="prompt-field">
+                <span>Промпт персонажа <em class="req-mark">обязательно</em></span>
+                <textarea
+                  id="account-prompt"
+                  rows="4"
+                  required
+                  placeholder="Кто она, город, возраст, как пишет. Без промпта AI не отвечает."
+                ></textarea>
+                <span class="field-hint">Нужен и для QR, и для входа по коду — иначе аккаунт молчит.</span>
               </label>
 
               <p id="account-form-hint" class="form-hint" hidden></p>
 
-              <button id="account-submit" class="btn btn-primary full" type="submit">Получить код</button>
+              <button id="account-submit" class="btn btn-primary full" type="submit">Показать QR</button>
             </form>
           </div>
 
@@ -236,23 +271,28 @@
         </section>
 
         <section class="tab-panel" data-panel="info">
-          <div class="section-card card">
-            <h2>О сервисе</h2>
-            <p>Это Telegram Mini App для управления AI-ассистентами и обучением сценариев ответов для аккаунтов.</p>
-            <h3>Blacklist</h3>
-            <p>Blacklist — это список Telegram User ID, которым AI-автоответчик не будет отвечать. Если человек находится в blacklist, система увидит входящее сообщение, но не отправит его в AI и не будет писать ответ. Это удобно для блокировки нежелательных пользователей, спама или людей, которым должен отвечать только человек.</p>
-            <h3>Инструкция</h3>
-            <ul class="list">
-              <li>Добавляйте аккаунты с промптом и проверяйте лимиты.</li>
-              <li>Сохраняйте проверенные сценарии в разделе Учить.</li>
-              <li>Настройте задержку и черный список в разделе Опции.</li>
-            </ul>
-          </div>
+          <p class="updates-feed-note">Лента с сентября 2026 · КРУПНОЕ и МАЛЕНЬКОЕ. Записей за июль–август в архиве нет.</p>
+          <div id="updates-list" class="updates-feed" aria-label="Обновления"></div>
+          <details class="updates-about card">
+            <summary>О сервисе и blacklist</summary>
+            <div class="updates-about__body">
+              <p>Кабинет для управления аккаунтами и обучения ответов.</p>
+              <p><strong>Blacklist</strong> — список Telegram User ID, которым AI не отвечает. Входящее видно системе, но ответа не будет. Удобно для спама или людей, с которыми пишет только оператор.</p>
+              <ul class="list">
+                <li>Добавляйте аккаунты с промптом и проверяйте лимиты.</li>
+                <li>Удачные сценарии сохраняйте в «Учить».</li>
+                <li>Задержку и чёрный список — в «Опции».</li>
+              </ul>
+            </div>
+          </details>
         </section>
 
         <section class="tab-panel" data-panel="options">
           <div class="section-card card options-block">
-            <h2>Задержка ответов</h2>
+            <div class="section-card__header">
+              <h2>Задержка ответов</h2>
+              <button class="btn btn-secondary small" type="button" data-action="open-info">Обновления</button>
+            </div>
             <div class="form-grid options-fields">
               <label>
                 <span>Задержка (сек)</span>
@@ -339,6 +379,7 @@
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="app.js?v=35"></script>
+    <script src="updates.js?v=58"></script>
+    <script src="app.js?v=58"></script>
     </body>
     </html>

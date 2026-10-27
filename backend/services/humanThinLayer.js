@@ -56,18 +56,30 @@ function buildThinHumanHint(userMessage, history) {
   const hasQ =
     /\?/.test(msg) ||
     /^(?:сколько|скок|где|откуда|когда|почему|зачем|как\s+тебя|ты\s+замуж)/i.test(msg);
+  const selfFactQ =
+    /(?:из\s+какого|откуда\s+ты|ты\s+откуда|где\s+ты|ты\s+где|в\s+каком\s+город|как\s+давно|скол[ьк]ко(?:\s+уже)?\s+в\s+)/i.test(
+      msg,
+    );
   const hooks = pickHookWords(msg);
   const parts = [
-    'Пиши как девушка в обычном Telegram: коротко, залюбленно и тепло, будто печатаешь с телефона. ' +
-      'Цепляйся к его словам — повтори крошку смысла своими словами, не общий кивок. ' +
-      'Ритм живой: иногда одна обрубленная фраза, иногда два коротких куска; можно «ну/хм/типа» в начале, если к месту. ' +
-      'Лёгкая нежность в формулировках ок («мне приятно)», «ну ты милый)»). ' +
-      'Скобка «)» — улыбка; эмодзи-смайл (☺️😊🥰) — редко, максимум один. Без коуч-тона и без «эссе про жизнь».',
+    'Ты — живая девушка в личке Telegram, не ассистент и не коуч. ' +
+      'Пиши как с телефона: коротко, тепло, иногда чуть лениво или с лёгкой вредностью. ' +
+      'Цепляйся к его словам своими словами. Ритм неровный: то одна обрубленная фраза, то два коротких куска. ' +
+      'Можно «ну/хм/типа/блин/короче/слушая» в начале, если к месту. Нежность ок («мне приятно)», «ну ты милый)»). ' +
+      'Скобка «)» — улыбка; смайл ☺️😊🥰 — редко, максимум один. ' +
+      'Можно своё мини-мнение вместо вежливого «согласна со всем». Иногда лёгкая ирония. ' +
+      'Не пиши гладко как эссе: лучше чуть сбивчиво и по-человечески. ' +
+      'Своё мнение можно. Не обязана поддакивать. Женский род о себе. ' +
+      'Факты о себе (город, срок, переезд, имя, возраст) — только из промпта и истории, никогда не выдумывай.',
   ];
   if (hooks.length) {
     parts.push(`Якорь из его сообщения: ${hooks.map((w) => `«${w}»`).join(', ')} — обыграй хотя бы одно.`);
   }
-  if (hasQ) {
+  if (selfFactQ) {
+    parts.push(
+      'Вопрос про тебя (город / откуда / как давно) — одна короткая правда по промпту, без зеркала «а ты?» и без новых городов.',
+    );
+  } else if (hasQ) {
     parts.push('У него вопрос — сначала прямой короткий ответ по сути, потом уже болтовня если хочется.');
   } else if (msg.length >= 35) {
     parts.push(
@@ -83,7 +95,7 @@ function buildThinHumanHint(userMessage, history) {
     parts.push(
       'Диалог односторонний — после короткого ответа один живой вопрос про него (день / чем занят / настроение), без зеркала «а ты откуда».',
     );
-  } else if (softHumanLite.USER_CLOSING_RE.test(bare)) {
+  } else if (softHumanLite.USER_CLOSING_RE.test(msg)) {
     parts.push(
       'Он прощается / идёт спать — только тёплое спокойной ночи, БЕЗ вопроса «чем занят / как день».',
     );
@@ -183,11 +195,11 @@ function fixRelationshipAsk(reply, userMessage) {
   return tag + RELATIONSHIP_ALTS[Math.floor(Math.random() * RELATIONSHIP_ALTS.length)];
 }
 
-const MOM_AGE_ALTS = ['за 50 уже)', 'около 52)', 'ну за пятьдесят)', 'хм 51 вроде)'];
+const MOM_AGE_ALTS = ['за 50 уже)', 'ну за пятьдесят)', 'хм за пятьдесят)', 'около пятидесяти)'];
 const BOUQUET_ALTS = ['сама взяла)', 'с рынка)', 'подруга дала)', 'ну купила по пути)'];
 const LIVE_WITH_ALTS = ['ага, с родителями пока)', 'ну да, с мамой)', 'пока с родителями)'];
 
-function fixDirectFactAsk(reply, userMessage) {
+function fixDirectFactAsk(reply, userMessage, prompt) {
   if (!reply) return reply;
   const msg = bare(userMessage);
   const { tag, body } = stripTags(reply);
@@ -202,14 +214,45 @@ function fixDirectFactAsk(reply, userMessage) {
   if (/(?:ты\s+)?одна\s+жив|с\s+кем\s+жив/i.test(msg)) {
     return tag + LIVE_WITH_ALTS[Math.floor(Math.random() * LIVE_WITH_ALTS.length)];
   }
-  if (/^(?:где\s+ты|а\s+ты\s+где|ты\s+где)\b/i.test(msg.trim()) && isWeak(body)) {
-    return tag + ['ещё тут, собираюсь)', 'пока дома)', 'ну дома пока)'][Math.floor(Math.random() * 3)];
+  // Слабый ответ на «где / из какого / как давно» — подставить из промпта, не шаблон-городом.
+  if (
+    isWeak(body) &&
+    /(?:где\s+ты|ты\s+где|откуда\s+ты|ты\s+откуда|из\s+какого|как\s+давно|скол[ьк]ко(?:\s+уже)?\s+в\s+)/i.test(
+      msg,
+    )
+  ) {
+    try {
+      const pf = require('./personaFacts');
+      const card = pf.parsePersonaCard(prompt);
+      if (card.fromCity && card.toCity && card.packing) {
+        if (/как\s+давно|скол[ьк]ко/.test(msg) && card.howLongHere) {
+          return tag + `ну ${card.howLongHere} примерно)`;
+        }
+        if (/откуда|из\s+какого/i.test(msg)) {
+          return tag + `из ${card.fromCity})`;
+        }
+        return tag + `пока в ${card.fromCity}, в ${card.toCity} еду)`;
+      }
+      if (card.fromCity) {
+        return tag + `в ${card.fromCity})`;
+      }
+    } catch (_) {
+      /* optional */
+    }
+    return tag + ['пока дома)', 'ну дома пока)', 'ещё тут)'][Math.floor(Math.random() * 3)];
   }
   return reply;
 }
 
 const COACH_RE =
-  /хороший\s+подход|зависит\s+от\s+восприятия|нужно\s+остановиться\s+и\s+подумать|каждому\s+сво[её]|интересный\s+поворот|занятыми\s+становимся|бывает,?\s+что\s+занят|главное,?\s*не\s+торопи|добавить\s+что-то\s+более\s+нежн/i;
+  /хороший\s+подход|зависит\s+от\s+восприятия|вс[её]\s+зависит\s+от\s+(?:восприятия|ситуации|тебя)|нужно\s+остановиться\s+и\s+подумать|каждому\s+сво[её]|интересный\s+поворот|занятыми\s+становимся|бывает,?\s+что\s+занят|главное,?\s*не\s+торопи|добавить\s+что-то\s+более\s+нежн|такое\s+может\s+сильно\s+расстроить|оценить\s+ситуацию\s+на\s+месте|оста[её]тся\s+только\s+ждать\s+и\s+надеяться|можно\s+попробовать\s+подумать\s+о\s+поездке|восприятия\s+ситуации/i;
+
+const COACH_FALLBACKS = [
+  'жесть) а ты как вообще?',
+  'блин ну да) и что дальше?',
+  'ох) тяжело наверное',
+  'ну и дела) ты как держишься?',
+];
 
 function fixCoachSpeak(reply) {
   if (!reply) return reply;
@@ -221,12 +264,56 @@ function fixCoachSpeak(reply) {
     if (!m) break;
     cleaned = cleaned.replace(m[0], ' ').replace(/\s{2,}/g, ' ').trim();
   }
-  cleaned = cleaned.replace(/^[\s,.;:]+|[\s,.;:]+$/g, '').trim();
-  if (cleaned.length >= 8 && !COACH_RE.test(cleaned) && !isWeak(cleaned)) {
+  cleaned = cleaned
+    .replace(/(?:^|[^а-яёa-z0-9])но\s+вс[её](?![а-яёa-z0-9])/gi, ' ')
+    .replace(/(?:^|[^а-яёa-z0-9])(?:ситуации|ситуацию|восприятия)(?![а-яёa-z0-9])/gi, ' ')
+    .replace(/^\s*жесть\s*\)?\s*/i, '')
+    .replace(/^[\s,.;:]+|[\s,.;:]+$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  const bareClean = cleaned.replace(/[)\s,.!?«»"']/g, '');
+  // После вырезания коуча часто остаётся мусор («, но ситуации») — порог жёстче.
+  if (
+    bareClean.length >= 14 &&
+    !COACH_RE.test(cleaned) &&
+    !isWeak(cleaned) &&
+    !/^(?:но|и|а|да)\s/i.test(cleaned)
+  ) {
     return tag + (/\)\s*$/.test(cleaned) ? cleaned : `${cleaned})`);
   }
-  // Не сводим к «ага)» — оставляем исходник, если вычистить нечего осмысленного.
-  return reply;
+  return tag + COACH_FALLBACKS[Math.floor(Math.random() * COACH_FALLBACKS.length)];
+}
+
+/**
+ * На реальный вопрос («?» / сколько / где) не оставляем голое «да/ок/норм».
+ */
+function fixWeakQuestionReply(reply, userMessage) {
+  if (!reply) return reply;
+  const msg = bare(userMessage);
+  const asked =
+    /\?/.test(msg) ||
+    /^(?:\?+|сколько|скок|где|откуда|когда|почему|зачем|как\s+(?:тебя|дела|ты)|ты\s+(?:как|где|откуда))/i.test(
+      msg,
+    );
+  if (!asked) return reply;
+  const { tag, body } = stripTags(reply);
+  if (!isWeak(body)) return reply;
+  // Одно «?» без контекста — уточнить, а не «норм».
+  if (/^\?+$/.test(msg.replace(/\s/g, ''))) {
+    return (
+      tag +
+      ['в смысле?)', 'а?)', 'что именно?)', 'хм?)'][Math.floor(Math.random() * 4)]
+    );
+  }
+  return (
+    tag +
+    [
+      'хм а подробнее?)',
+      'ну смотря что имеешь в виду)',
+      'ахах уточни)',
+      'не совсем поняла, раскрой)',
+    ][Math.floor(Math.random() * 4)]
+  );
 }
 
 const EDITORIAL_RE =
@@ -333,16 +420,16 @@ function fixAiAssistantMode(reply, userMessage) {
  * Единая точка: safety → sense → style. Без ASK_DODGE / pickAskFallback.
  */
 function applyThinPostfilters(reply, userMessage, history = null, systemPrompt = null) {
-  void systemPrompt;
   if (!reply) return reply;
   let out = reply;
   out = fixContactLeak(out, userMessage);
   out = fixRecruitHedge(out, userMessage);
   out = fixMeetWeakDodge(out, userMessage);
   out = fixRelationshipAsk(out, userMessage);
-  out = fixDirectFactAsk(out, userMessage);
+  out = fixDirectFactAsk(out, userMessage, systemPrompt);
   out = fixAiAssistantMode(out, userMessage);
   out = fixCoachSpeak(out);
+  out = fixWeakQuestionReply(out, userMessage);
   out = fixEditorialTone(out);
   out = fixServiceThanks(out);
   out = fixMisplacedThanks(out, userMessage);
@@ -351,6 +438,8 @@ function applyThinPostfilters(reply, userMessage, history = null, systemPrompt =
   out = fixDismissiveFriendly(out, userMessage);
   // Мягкий слой: коуч-фразы, обрубки, взаимный вопрос — без банков уклонов.
   out = softHumanLite.applySoftLite(out, history, userMessage);
+  // softLite мог снова свести к «ага)» — второй проход на вопросе.
+  out = fixWeakQuestionReply(out, userMessage);
   return out;
 }
 
@@ -361,6 +450,7 @@ module.exports = {
   fixContactLeak,
   fixRelationshipAsk,
   fixCoachSpeak,
+  fixWeakQuestionReply,
   fixDirectFactAsk,
   fixServiceThanks,
   fixMisplacedThanks,

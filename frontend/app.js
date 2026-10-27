@@ -1,43 +1,207 @@
-const tg = window.Telegram?.WebApp || null;
+/** Актуальный WebApp: Desktop иногда поднимает объект после первого тика. */
+function getTg() {
+  return window.Telegram?.WebApp || null;
+}
 
-if (tg) {
-  tg.ready();
-  tg.expand();
+let tg = getTg();
+let themeListenerBound = false;
+
+/** Яркость #RRGGBB 0..1 — чтобы не ставить светлый текст на светлый фон. */
+function cssLuma(hex) {
+  const m = String(hex || '').match(/^#?([0-9a-f]{6})$/i);
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+function applyTelegramChrome(webApp) {
+  if (!webApp) return;
   try {
-    if (typeof tg.setHeaderColor === 'function') tg.setHeaderColor('#0b0d10');
-    if (typeof tg.setBackgroundColor === 'function') tg.setBackgroundColor('#0b0d10');
+    webApp.ready();
+    webApp.expand();
+    const tp = webApp.themeParams || {};
+    const header = tp.header_bg_color || tp.bg_color || '#0b0d10';
+    const bg = tp.bg_color || '#0b0d10';
+    if (typeof webApp.setHeaderColor === 'function') webApp.setHeaderColor(header);
+    if (typeof webApp.setBackgroundColor === 'function') webApp.setBackgroundColor(bg);
+
+    // Тему Telegram подмешиваем только если фон тёмный — иначе светлая тема
+    // Telegram + наш светлый --text давали «белый экран» / «не грузит».
+    const root = document.documentElement;
+    const bgLuma = cssLuma(tp.bg_color);
+    if (bgLuma != null && bgLuma < 0.45) {
+      if (tp.bg_color) root.style.setProperty('--bg', tp.bg_color);
+      if (tp.secondary_bg_color) root.style.setProperty('--bg-elevated', tp.secondary_bg_color);
+      if (tp.section_bg_color || tp.secondary_bg_color) {
+        root.style.setProperty('--card', tp.section_bg_color || tp.secondary_bg_color);
+      }
+      if (tp.text_color) root.style.setProperty('--text', tp.text_color);
+      if (tp.hint_color) root.style.setProperty('--muted', tp.hint_color);
+      if (tp.button_color) {
+        root.style.setProperty('--primary', tp.button_color);
+        root.style.setProperty('--primary-strong', tp.button_color);
+      }
+      if (tp.destructive_text_color) root.style.setProperty('--danger', tp.destructive_text_color);
+    }
+
+    // Один раз! Повторный onEvent на каждый apply → лавина колбэков и зависание WebView.
+    if (!themeListenerBound && typeof webApp.onEvent === 'function') {
+      themeListenerBound = true;
+      webApp.onEvent('themeChanged', () => applyTelegramChrome(getTg()));
+    }
   } catch (_) {
     /* старые клиенты Telegram */
   }
 }
 
+applyTelegramChrome(tg);
+
 function isTelegramWebApp() {
-  return Boolean(tg && tg.initData);
+  // Desktop часто кладёт initData в hash, а не в WebApp.initData на первом кадре.
+  return Boolean(resolveTelegramInitData());
+}
+
+/** Есть оболочка Mini App (Desktop/Mobile), даже если initData ещё пустой. */
+function isTelegramShell() {
+  const w = getTg();
+  // Реальные признаки WebView Telegram — НЕ w.version (CDN telegram-web-app.js
+  // всегда выставляет version даже в обычном браузере → gate ломался).
+  if (w?.initData) return true;
+  if (typeof window.TelegramWebviewProxy !== 'undefined') return true;
+  try {
+    if (window.external && typeof window.external.notify === 'function') return true;
+  } catch (_) {}
+  const ua = String(navigator.userAgent || '');
+  if (/Telegram/i.test(ua)) return true;
+  const href = String(location.hash || '') + String(location.search || '');
+  if (/tgWebAppData=/i.test(href)) return true;
+  if (!w) return false;
+  const platform = String(w.platform || '').toLowerCase();
+  if (platform && platform !== 'unknown') return true;
+  return false;
 }
 
 function getTelegramUser() {
-  if (!tg?.initDataUnsafe?.user) {
+  const w = getTg();
+  if (!w?.initDataUnsafe?.user) {
     return null;
   }
 
-  return tg.initDataUnsafe.user;
+  return w.initDataUnsafe.user;
 }
 
-console.log("Telegram WebApp available:", Boolean(tg));
-console.log("Telegram initData exists:", Boolean(tg?.initData));
+/**
+ * Desktop иногда не кладёт initData в WebApp, но передаёт в hash:
+ * #tgWebAppData=user%3D%7B...%7D%26auth_date%3D...&tgWebAppVersion=...
+ */
+function initDataFromLocation() {
+  const raw = `${location.hash || ''}${location.search || ''}`;
+  if (!raw) return '';
+  const fromHash = raw.match(/[#&?]tgWebAppData=([^&]+)/i);
+  if (fromHash?.[1]) {
+    try {
+      return decodeURIComponent(fromHash[1]);
+    } catch (_) {
+      return fromHash[1];
+    }
+  }
+  // Иногда весь query уже urlencoded целиком
+  const m2 = raw.match(/tgWebAppData=([^&]+)/i);
+  if (!m2?.[1]) return '';
+  try {
+    return decodeURIComponent(m2[1]);
+  } catch (_) {
+    return m2[1];
+  }
+}
+
+function resolveTelegramInitData() {
+  const fromTg = String(getTg()?.initData || '').trim();
+  if (fromTg) return fromTg;
+  const fromUrl = String(initDataFromLocation() || '').trim();
+  if (fromUrl) return fromUrl;
+  try {
+    const cached = sessionStorage.getItem('tg_init_data');
+    if (!cached) return '';
+    const authDate = Number(new URLSearchParams(cached).get('auth_date') || 0);
+    if (authDate) {
+      const age = Math.floor(Date.now() / 1000) - authDate;
+      if (age > 20 * 3600 || age < -300) {
+        sessionStorage.removeItem('tg_init_data');
+        return '';
+      }
+    }
+    return cached;
+  } catch (_) {}
+  return '';
+}
+
+function isInitDataFresh(data) {
+  try {
+    const authDate = Number(new URLSearchParams(data).get('auth_date') || 0);
+    if (!authDate) return true;
+    const age = Math.floor(Date.now() / 1000) - authDate;
+    return age <= 20 * 3600 && age >= -300;
+  } catch (_) {
+    return true;
+  }
+}
+
+function cacheInitDataIfAny() {
+  const data = resolveTelegramInitData();
+  if (!data) return '';
+  if (!isInitDataFresh(data)) {
+    try {
+      sessionStorage.removeItem('tg_init_data');
+    } catch (_) {}
+    // Живой WebApp.initData важнее кэша — если и он протух, шлём пусто → баннер.
+    const live = String(getTg()?.initData || '').trim();
+    return live && isInitDataFresh(live) ? live : '';
+  }
+  try {
+    sessionStorage.setItem('tg_init_data', data);
+  } catch (_) {}
+  return data;
+}
+
+console.log("Telegram WebApp available:", Boolean(getTg()));
+console.log("Telegram initData exists:", Boolean(resolveTelegramInitData()));
+console.log("Telegram platform:", getTg()?.platform || '-');
 console.log("Telegram user:", getTelegramUser());
-console.log("Will send Telegram initData to backend:", Boolean(tg?.initData));
+console.log("Will send Telegram initData to backend:", Boolean(resolveTelegramInitData()));
 
 // Относительный путь: фронт и API на одном домене через Nginx.
 // Работает и локально (если открывать через тот же origin), и на проде (https://loverussian.duckdns.org/api).
 const API_BASE = "/api";
+
+function ensureAuthBanner() {
+  const hasAuth = Boolean(resolveTelegramInitData());
+  let el = document.getElementById('tg-auth-banner');
+  if (hasAuth) {
+    if (el) el.remove();
+    return;
+  }
+  if (el) return;
+  el = document.createElement('div');
+  el.id = 'tg-auth-banner';
+  el.setAttribute(
+    'style',
+    'position:sticky;top:0;z-index:9999;padding:10px 14px;background:#5c1a1a;color:#ffe8e8;font:500 13px/1.35 Figtree,system-ui,sans-serif;text-align:center',
+  );
+  el.textContent =
+    'Нет Telegram-авторизации — показан тестовый пустой профиль. Закрой Mini App и открой снова из бота (лучше с телефона).';
+  document.body.prepend(el);
+}
 
 /**
  * Универсальный запрос к backend.
  * Объекты в options.body автоматически преобразуются в JSON.
  */
 async function request(path, options = {}) {
-  const telegramInitData = tg?.initData || "";
+  const telegramInitData = cacheInitDataIfAny();
 
   const requestOptions = {
     method: options.method || "GET",
@@ -94,6 +258,18 @@ const api = {
     request('/accounts/connect/start', {
       method: 'POST',
       body: { phone },
+    }),
+
+  connectQrStart: (prompt) =>
+    request('/accounts/connect/qr/start', {
+      method: 'POST',
+      body: { prompt: prompt || '' },
+    }),
+
+  connectQrPoll: (prompt) =>
+    request('/accounts/connect/qr/poll', {
+      method: 'POST',
+      body: { prompt: prompt || '' },
     }),
 
   connectCode: (phone, code, prompt) =>
@@ -193,6 +369,11 @@ const api = {
       body: data,
     }),
 
+  deleteExample: (id) =>
+    request(`/examples/${id}`, {
+      method: 'DELETE',
+    }),
+
   getConversations: (opts = {}) => {
     const params = new URLSearchParams();
     if (opts.sort) params.set('sort', opts.sort);
@@ -223,6 +404,18 @@ const api = {
   clearConversation: (accountId, peerId) =>
     request(`/accounts/conversations/${accountId}/${peerId}`, {
       method: 'DELETE',
+    }),
+
+  exportConversation: (accountId, peerId) =>
+    request(`/accounts/conversations/${accountId}/${peerId}/export`),
+
+  conversationToExamples: (accountId, peerId, opts = {}) =>
+    request(`/accounts/conversations/${accountId}/${peerId}/to-examples`, {
+      method: 'POST',
+      body: {
+        limit: opts.limit ?? 8,
+        toRag: opts.toRag !== false,
+      },
     }),
 
   getStats: () => request('/stats'),
@@ -340,6 +533,7 @@ const elements = {
   exampleForm: document.getElementById('example-form'),
   learnList: document.getElementById('learn-list'),
   conversationsList: document.getElementById('conversations-list'),
+  updatesList: document.getElementById('updates-list'),
   exampleAccount: document.getElementById('example-account'),
   statsCards: document.getElementById('stats-cards'),
   statsAccounts: document.getElementById('stats-accounts'),
@@ -372,6 +566,21 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/** Только http(s) t.me / @user / +invite — не javascript: и не чужие схемы. */
+function safeTelegramHref(raw) {
+  const s = String(raw ?? '').trim();
+  if (/^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me)\/[^\s<>"']+$/i.test(s)) {
+    return s;
+  }
+  if (/^@[A-Za-z0-9_]{3,64}$/.test(s)) {
+    return `https://t.me/${s.slice(1)}`;
+  }
+  if (/^\+[A-Za-z0-9_-]{3,128}$/.test(s)) {
+    return `https://t.me/${s}`;
+  }
+  return '';
 }
 
 function toNumber(value, fallback = 0) {
@@ -620,7 +829,7 @@ function setActiveTab(tabName) {
     accounts: 'Аккаунты TG',
     leads: 'Лиды',
     learn: 'Учить',
-    info: 'Инфо',
+    info: 'Обновления',
     options: 'Опции',
     stats: 'Статы',
   };
@@ -976,7 +1185,11 @@ function openMediaGallery() {
                       <span class="media-tile__link">${escapeHtml(account.media_chat_link)}</span>
                       <div class="action-row" style="margin-top:6px;">
                         <button class="btn btn-secondary small" type="button" data-action="details" data-id="${account.id}" data-modal-close>Карточка</button>
-                        <a class="btn btn-primary small" href="${escapeHtml(account.media_chat_link)}" target="_blank" rel="noopener noreferrer">Открыть</a>
+                        ${
+                          safeTelegramHref(account.media_chat_link)
+                            ? `<a class="btn btn-primary small" href="${escapeHtml(safeTelegramHref(account.media_chat_link))}" target="_blank" rel="noopener noreferrer">Открыть</a>`
+                            : ''
+                        }
                       </div>
                     </div>
                   `,
@@ -1131,6 +1344,16 @@ function funnelStageBadge(stage, label, isAuto) {
   return `<span class="badge badge-funnel badge-funnel--${escapeHtml(String(stage || 'chat'))}" title="${isAuto ? 'авто' : 'вручную'}">${escapeHtml(text)}${isAuto ? '' : ' ✎'}</span>`;
 }
 
+function formatPeerLabel(username, peerId) {
+  const raw = String(username || '').trim();
+  if (raw && !/^\d+$/.test(raw)) {
+    return raw.startsWith('@') ? raw : `@${raw}`;
+  }
+  const id = String(peerId || raw || '').trim();
+  if (!id) return 'Собеседник';
+  return id.length > 12 ? `id·${id.slice(0, 4)}…${id.slice(-4)}` : `id·${id}`;
+}
+
 function renderConversations() {
   if (!elements.conversationsList) {
     return;
@@ -1141,16 +1364,16 @@ function renderConversations() {
   const stageFilter = state.conversationsStage || '';
   const counts = state.funnelCounts || {};
   const labels = state.funnelLabels || {};
-  const stages = ['hello', 'chat', 'interest', 'pitch', 'operator'];
+  const stages = ['hello', 'chat', 'interest', 'pitch', 'operator', 'filtered'];
 
   const funnelBar = `
-    <div class="funnel-bar action-row">
-      <button class="btn btn-secondary small ${!stageFilter ? 'is-active' : ''}" type="button" data-action="funnel-filter" data-stage="">Все</button>
+    <div class="funnel-bar">
+      <button class="btn btn-secondary small chip-btn ${!stageFilter ? 'is-active' : ''}" type="button" data-action="funnel-filter" data-stage="">Все</button>
       ${stages
         .map((s) => {
           const n = counts[s] || 0;
           const lab = labels[s] || s;
-          return `<button class="btn btn-secondary small ${stageFilter === s ? 'is-active' : ''}" type="button" data-action="funnel-filter" data-stage="${s}">${escapeHtml(lab)} ${n}</button>`;
+          return `<button class="btn btn-secondary small chip-btn ${stageFilter === s ? 'is-active' : ''}" type="button" data-action="funnel-filter" data-stage="${s}">${escapeHtml(lab)} ${n}</button>`;
         })
         .join('')}
     </div>
@@ -1158,11 +1381,11 @@ function renderConversations() {
 
   const toolbar = `
     ${funnelBar}
-    <div class="conversations-toolbar action-row">
-      <button class="btn btn-secondary small ${sortMode === 'funnel' ? 'is-active' : ''}" type="button" data-action="conv-sort-funnel">По воронке</button>
-      <button class="btn btn-secondary small ${sortMode === 'score' ? 'is-active' : ''}" type="button" data-action="conv-sort-score">По приоритету</button>
-      <button class="btn btn-secondary small ${sortMode === 'recent' ? 'is-active' : ''}" type="button" data-action="conv-sort-recent">По дате</button>
-      <button class="btn btn-secondary small ${hotOnly ? 'is-active' : ''}" type="button" data-action="conv-hot-only">${hotOnly ? 'Все диалоги' : 'Только горячие'}</button>
+    <div class="conversations-toolbar">
+      <button class="btn btn-secondary small chip-btn ${sortMode === 'funnel' ? 'is-active' : ''}" type="button" data-action="conv-sort-funnel">По воронке</button>
+      <button class="btn btn-secondary small chip-btn ${sortMode === 'score' ? 'is-active' : ''}" type="button" data-action="conv-sort-score">По приоритету</button>
+      <button class="btn btn-secondary small chip-btn ${sortMode === 'recent' ? 'is-active' : ''}" type="button" data-action="conv-sort-recent">По дате</button>
+      <button class="btn btn-secondary small chip-btn ${hotOnly ? 'is-active' : ''}" type="button" data-action="conv-hot-only">${hotOnly ? 'Все диалоги' : 'Только горячие'}</button>
     </div>
   `;
 
@@ -1183,8 +1406,10 @@ function renderConversations() {
       .map((item) => {
         const accountId = item.accountId ?? item.account_id ?? '';
         const peerId = item.peerId ?? item.peer_id ?? '';
-        const peerName =
-          item.peerUsername ?? item.peer_username ?? peerId ?? 'Собеседник';
+        const peerName = formatPeerLabel(
+          item.peerUsername ?? item.peer_username,
+          peerId,
+        );
         const messageCount =
           item.messageCount ?? item.message_count ?? 0;
         const userMsgs = item.userMsgs ?? item.user_msgs ?? null;
@@ -1226,7 +1451,7 @@ function renderConversations() {
         return `
         <div class="lesson-item ${focused ? 'lesson-item--focus' : ''} ${tier === 'hot' ? 'lesson-item--hot' : ''} ${funnelStage === 'filtered' ? 'lesson-item--filtered' : ''} lesson-item--${escapeHtml(String(funnelStage))}">
           <div class="lesson-item__head">
-            <strong>${escapeHtml(peerName)}</strong>
+            <strong class="lesson-item__title">${escapeHtml(peerName)}</strong>
             <span class="badge-row">
               ${funnelStageBadge(funnelStage, funnelLabel, funnelAuto)}
               ${leadTierBadge(tier, score)}
@@ -1236,10 +1461,10 @@ function renderConversations() {
             </span>
           </div>
 
-          <p><strong>Аккаунт:</strong> ${escapeHtml(accountPhone)}${lastLabel ? ` · писал ${escapeHtml(lastLabel)}` : ''}</p>
+          <p class="lesson-item__meta"><strong>Аккаунт:</strong> ${escapeHtml(accountPhone)}${lastLabel ? ` · писал ${escapeHtml(lastLabel)}` : ''}</p>
 
-          <div class="action-row" style="margin-top:10px;">
-            <label class="funnel-select-wrap">
+          <div class="lead-actions">
+            <label class="funnel-select-wrap lead-actions__stage">
               <span class="visually-hidden">Этап</span>
               <select
                 class="funnel-select"
@@ -1269,13 +1494,31 @@ function renderConversations() {
               ${focused ? 'Снять фокус' : 'В фокус'}
             </button>
             <button
+              class="btn btn-secondary small"
+              data-action="export-chat"
+              data-account="${escapeHtml(String(accountId))}"
+              data-peer="${escapeHtml(String(peerId))}"
+              type="button"
+            >
+              Экспорт
+            </button>
+            <button
+              class="btn btn-secondary small"
+              data-action="to-examples"
+              data-account="${escapeHtml(String(accountId))}"
+              data-peer="${escapeHtml(String(peerId))}"
+              type="button"
+            >
+              В примеры
+            </button>
+            <button
               class="btn btn-danger small"
               data-action="clear-history"
               data-account="${escapeHtml(String(accountId))}"
               data-peer="${escapeHtml(String(peerId))}"
               type="button"
             >
-              Стереть историю
+              Стереть
             </button>
           </div>
         </div>
@@ -1314,11 +1557,20 @@ function renderLearn() {
         item.reply ??
         '';
 
+      const exampleId = item.id ?? item.example_id ?? '';
+
       return `
         <div class="lesson-item">
           <div class="lesson-item__head">
-            <strong>${escapeHtml(getExampleAccountName(item))}</strong>
-            <span class="badge badge-soft">Пример</span>
+            <strong class="lesson-item__title">${escapeHtml(getExampleAccountName(item))}</strong>
+            <span class="badge-row">
+              <span class="badge badge-soft">Пример</span>
+              ${
+                exampleId
+                  ? `<button class="btn btn-danger small" type="button" data-action="delete-example" data-id="${escapeHtml(String(exampleId))}">Удал.</button>`
+                  : ''
+              }
+            </span>
           </div>
 
           <p>
@@ -1331,10 +1583,11 @@ function renderLearn() {
             ${escapeHtml(correctAnswer)}
           </p>
 
-          <p>
-            <strong>Заметка:</strong>
-            ${escapeHtml(item.note || 'Без заметки')}
-          </p>
+          ${
+            item.note
+              ? `<p><strong>Заметка:</strong> ${escapeHtml(item.note)}</p>`
+              : ''
+          }
         </div>
       `;
     })
@@ -1537,11 +1790,47 @@ function renderStats() {
     `;
 }
 
+function renderUpdates() {
+  if (!elements.updatesList) return;
+  const entries = Array.isArray(window.LOVERUSSIAN_UPDATES)
+    ? window.LOVERUSSIAN_UPDATES
+    : [];
+  if (!entries.length) {
+    elements.updatesList.innerHTML =
+      '<div class="empty-state"><p>Обновлений пока нет.</p></div>';
+    return;
+  }
+  elements.updatesList.innerHTML = entries
+    .map((entry) => {
+      const date = escapeHtml(entry.date || '');
+      const tag = entry.tag ? escapeHtml(String(entry.tag)) : '';
+      const title = escapeHtml(entry.title || '');
+      const lead = escapeHtml(entry.lead || '');
+      const items = Array.isArray(entry.items) ? entry.items : [];
+      const list = items
+        .map((item) => `<li>${escapeHtml(item)}</li>`)
+        .join('');
+      const isSmall = String(entry.tag || '').toUpperCase().includes('МАЛЕН');
+      return `
+        <article class="update-block${isSmall ? ' update-block--small' : ''}">
+          <p class="update-block__date">${date}${
+            tag ? ` <span class="update-block__date-tag">· ${tag}</span>` : ''
+          }</p>
+          <h2 class="update-block__title">${title}</h2>
+          ${lead ? `<p class="update-block__lead">${lead}</p>` : ''}
+          ${list ? `<ul class="update-block__list">${list}</ul>` : ''}
+        </article>
+      `;
+    })
+    .join('');
+}
+
 function render() {
   renderPanel();
   renderAccounts();
   renderConversations();
   renderLearn();
+  renderUpdates();
   renderOptions();
   renderStats();
   renderNotifications();
@@ -1579,13 +1868,24 @@ function startBackgroundRefresh() {
 
 /**
  * Состояние многошагового подключения аккаунта.
- * step: 'phone' -> 'code' -> 'password' -> сброс после успеха.
+ * method: 'qr' | 'code'
+ * step: 'phone' | 'code' | 'password' | 'qr'
  */
 const connectState = {
-  step: 'phone',
+  method: 'qr',
+  step: 'qr',
   phone: '',
   prompt: '',
+  qrPollTimer: null,
+  qrStartedAt: 0,
 };
+
+function stopQrPoll() {
+  if (connectState.qrPollTimer) {
+    clearInterval(connectState.qrPollTimer);
+    connectState.qrPollTimer = null;
+  }
+}
 
 function setConnectHint(message) {
   const hint = document.getElementById('account-form-hint');
@@ -1600,25 +1900,101 @@ function setConnectHint(message) {
   }
 }
 
+function showQrVisual(loginUrl, qrImage) {
+  const box = document.getElementById('connect-qr-box');
+  const img = document.getElementById('connect-qr-img');
+  const link = document.getElementById('connect-qr-link');
+  if (box) box.hidden = false;
+  if (img && qrImage) {
+    img.src = qrImage;
+    img.hidden = false;
+  }
+  if (link) {
+    link.textContent = loginUrl || '';
+    link.hidden = !loginUrl;
+  }
+}
+
+function clearQrVisual() {
+  const box = document.getElementById('connect-qr-box');
+  const img = document.getElementById('connect-qr-img');
+  const link = document.getElementById('connect-qr-link');
+  if (box) box.hidden = true;
+  if (img) {
+    img.removeAttribute('src');
+    img.hidden = true;
+  }
+  if (link) {
+    link.textContent = '';
+    link.hidden = true;
+  }
+}
+
+function setConnectMethod(method) {
+  connectState.method = method === 'code' ? 'code' : 'qr';
+  stopQrPoll();
+  clearQrVisual();
+
+  document.querySelectorAll('[data-connect-method]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.getAttribute('data-connect-method') === connectState.method);
+  });
+
+  if (connectState.method === 'qr') {
+    connectState.step = 'qr';
+    connectState.phone = '';
+    setConnectStep('qr');
+    setConnectHint('');
+  } else {
+    connectState.step = 'phone';
+    setConnectStep('phone');
+    setConnectHint('Код придёт в приложение Telegram на этом номере (не SMS).');
+  }
+}
+
 /**
  * Переключает форму между шагами: показывает нужные поля и меняет кнопку.
  */
 function setConnectStep(step) {
   connectState.step = step;
 
+  const method = connectState.method;
+  const qrPanel = document.getElementById('connect-qr-panel');
+  const phoneWrap = document.getElementById('account-phone-field');
   const codeField = document.getElementById('account-code-field');
   const passwordField = document.getElementById('account-password-field');
+  const promptField = document.getElementById('account-prompt-field');
   const phoneField = document.getElementById('account-phone');
   const submitButton = document.getElementById('account-submit');
 
-  if (codeField) codeField.hidden = step !== 'code';
-  if (passwordField) passwordField.hidden = step !== 'password';
+  // QR: инструкция/картинка; 2FA — когда Telegram просит.
+  // Код: телефон + код + пароль + промпт всегда на виду (как раньше), шаги меняют кнопку.
+  const showQr = method === 'qr' && step !== 'password';
+  const showPhone = method === 'code';
+  const showCode = method === 'code';
+  const showPassword = method === 'code' || step === 'password';
+  // Промпт нужен и для QR — иначе AI молчит (пустой prompt).
+  const showPrompt = true;
 
-  // Телефон нельзя менять после отправки кода.
-  if (phoneField) phoneField.readOnly = step !== 'phone';
+  if (qrPanel) qrPanel.hidden = !showQr;
+  if (phoneWrap) phoneWrap.hidden = !showPhone;
+  if (codeField) codeField.hidden = !showCode;
+  if (passwordField) passwordField.hidden = !showPassword;
+  if (promptField) promptField.hidden = !showPrompt;
+
+  if (phoneField) {
+    phoneField.readOnly = method === 'code' && step !== 'phone' && step !== 'code';
+    phoneField.required = method === 'code' && step === 'phone';
+  }
+
+  // На шаге phone код/пароль ещё не обязательны; на code — код; на password — пароль.
+  const codeInput = document.getElementById('account-code');
+  const passInput = document.getElementById('account-password');
+  if (codeInput) codeInput.required = method === 'code' && step === 'code';
+  if (passInput) passInput.required = step === 'password';
 
   if (submitButton) {
     const labels = {
+      qr: 'Показать QR',
       phone: 'Получить код',
       code: 'Подтвердить код',
       password: 'Подтвердить пароль',
@@ -1631,9 +2007,11 @@ function setConnectStep(step) {
  * Сбрасывает форму подключения в начальное состояние.
  */
 function resetConnectForm() {
-  connectState.step = 'phone';
+  stopQrPoll();
+  clearQrVisual();
   connectState.phone = '';
   connectState.prompt = '';
+  connectState.qrStartedAt = 0;
 
   const phoneField = document.getElementById('account-phone');
   const codeField = document.getElementById('account-code');
@@ -1648,7 +2026,7 @@ function resetConnectForm() {
   if (passwordField) passwordField.value = '';
   if (promptField) promptField.value = '';
 
-  setConnectStep('phone');
+  setConnectMethod(connectState.method || 'qr');
   setConnectHint('');
 }
 
@@ -1656,6 +2034,7 @@ function resetConnectForm() {
  * Завершение подключения: обновляем данные и сбрасываем форму.
  */
 async function finishConnect() {
+  stopQrPoll();
   await Promise.all([
     loadDashboard(),
     loadAccounts(),
@@ -1666,9 +2045,32 @@ async function finishConnect() {
   notify('Аккаунт подключён');
 }
 
+async function handleQrPollTick() {
+  try {
+    const st = await api.connectQrPoll(connectState.prompt);
+    if (st.status === 'pending') {
+      if (st.loginUrl) showQrVisual(st.loginUrl, st.qrImage);
+      return;
+    }
+    if (st.status === 'needPassword') {
+      stopQrPoll();
+      connectState.phone = 'qr';
+      setConnectStep('password');
+      setConnectHint('Аккаунт защищён паролем. Введите облачный пароль (2FA).');
+      return;
+    }
+    if (st.status === 'connected') {
+      await finishConnect();
+    }
+  } catch (error) {
+    stopQrPoll();
+    handleRequestError(error);
+    setConnectStep('qr');
+  }
+}
+
 /**
- * Обработчик формы подключения. Ведёт пользователя по шагам:
- * телефон -> код -> (пароль 2FA) -> успех.
+ * Обработчик формы подключения. QR или телефон → код → (2FA).
  */
 async function addAccount(event) {
   event.preventDefault();
@@ -1677,19 +2079,48 @@ async function addAccount(event) {
   if (submitButton) submitButton.disabled = true;
 
   try {
+    const promptField = document.getElementById('account-prompt');
+    connectState.prompt = promptField?.value.trim() || connectState.prompt || '';
+    if (!connectState.prompt) {
+      setConnectHint('Сначала вставь промпт персонажа — без него AI не отвечает.');
+      notify('Нужен промпт');
+      return;
+    }
+
+    if (connectState.step === 'qr') {
+      if (submitButton) submitButton.textContent = 'Готовлю QR…';
+      setConnectHint('Подключаюсь через прокси (обычно 3–8 сек)…');
+      stopQrPoll();
+      const started = await api.connectQrStart(connectState.prompt);
+      if (started.status === 'connected') {
+        await finishConnect();
+        return;
+      }
+      if (started.status === 'needPassword') {
+        connectState.phone = 'qr';
+        setConnectStep('password');
+        setConnectHint('Аккаунт защищён паролем. Введите облачный пароль (2FA).');
+        return;
+      }
+      showQrVisual(started.loginUrl, started.qrImage);
+      connectState.qrStartedAt = Date.now();
+      setConnectHint('Отсканируй QR в Telegram → Устройства. Код обновляется сам, пока не отсканируешь.');
+      notify('QR готов — сканируй');
+      stopQrPoll();
+      // Без лимита по времени/количеству — токен крутится, пока не скан или смена вкладки.
+      connectState.qrPollTimer = setInterval(handleQrPollTick, 3500);
+      setTimeout(handleQrPollTick, 2000);
+      return;
+    }
+
     if (connectState.step === 'phone') {
       const phoneField = document.getElementById('account-phone');
       const phone = phoneField?.value.trim() || '';
-      const promptField = document.getElementById('account-prompt');
 
       if (!phone) {
         notify('Введите номер телефона');
         return;
       }
-
-      // Запоминаем промпт, введённый в форме, чтобы сохранить его
-      // вместе с аккаунтом на финальном шаге подключения.
-      connectState.prompt = promptField?.value.trim() || '';
 
       if (submitButton) submitButton.textContent = 'Отправляю…';
       const startResult = await api.connectStart(phone);
@@ -1737,7 +2168,7 @@ async function addAccount(event) {
       }
 
       await api.connectPassword(
-        connectState.phone,
+        connectState.phone || 'qr',
         password,
         connectState.prompt,
       );
@@ -1753,10 +2184,22 @@ async function addAccount(event) {
   }
 }
 
+function bindConnectMethodButtons() {
+  document.querySelectorAll('[data-connect-method]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setConnectMethod(btn.getAttribute('data-connect-method'));
+    });
+  });
+}
+
 /**
  * Удаление Telegram-аккаунта.
  */
 async function handleDelete(accountId) {
+  if (!accountId) return;
+  if (!window.confirm('Удалить аккаунт и его сессию? Это нельзя отменить.')) {
+    return;
+  }
   try {
     await api.deleteAccount(accountId);
 
@@ -2008,6 +2451,9 @@ async function handleClearHistory(accountId, peerId) {
   if (!accountId || !peerId) {
     return;
   }
+  if (!window.confirm('Стереть историю этого диалога? ИИ забудет переписку.')) {
+    return;
+  }
 
   try {
     await api.clearConversation(accountId, peerId);
@@ -2015,6 +2461,115 @@ async function handleClearHistory(accountId, peerId) {
 
     render();
     notify('История переписки стёрта');
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
+function openExportModal(text, count) {
+  closeAccountModal();
+  const overlay = document.createElement('div');
+  overlay.id = 'account-modal';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card export-modal" role="dialog" aria-modal="true" aria-label="Экспорт диалога">
+      <div class="modal-card__header">
+        <div>
+          <p class="modal-card__eyebrow">Экспорт</p>
+          <h3 class="modal-card__title">${escapeHtml(String(count || 0))} сообщ.</h3>
+        </div>
+        <button class="modal-close" type="button" aria-label="Закрыть" data-modal-close>×</button>
+      </div>
+      <textarea class="export-modal__text" readonly rows="14">${escapeHtml(text)}</textarea>
+      <div class="modal-actions">
+        <button class="btn btn-primary full" type="button" data-action="copy-export">Копировать</button>
+        <button class="btn btn-secondary full" type="button" data-modal-close>Закрыть</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.classList.add('modal-open');
+  document.addEventListener('keydown', onModalKeydown);
+
+  const area = overlay.querySelector('.export-modal__text');
+  overlay.addEventListener('click', async (event) => {
+    if (event.target === overlay || event.target.closest('[data-modal-close]')) {
+      closeAccountModal();
+      return;
+    }
+    const copyBtn = event.target.closest('[data-action="copy-export"]');
+    if (!copyBtn) return;
+    const value = area?.value || text;
+    try {
+      await navigator.clipboard.writeText(value);
+      notify('Скопировано');
+    } catch (_) {
+      try {
+        area?.focus();
+        area?.select();
+        document.execCommand('copy');
+        notify('Скопировано');
+      } catch (err) {
+        notify('Выдели текст вручную и скопируй');
+      }
+    }
+  });
+}
+
+async function handleExportChat(accountId, peerId) {
+  if (!accountId || !peerId) return;
+  try {
+    const data = await api.exportConversation(accountId, peerId);
+    const text = data?.text || '';
+    if (!text.trim()) {
+      notify('Диалог пустой');
+      return;
+    }
+    openExportModal(text, data.count || 0);
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
+async function handleToExamples(accountId, peerId) {
+  if (!accountId || !peerId) return;
+  if (
+    !window.confirm(
+      'Сохранить последние пары ответов в «Учить» и RAG? Повтор добавит дубликаты.',
+    )
+  ) {
+    return;
+  }
+  try {
+    const data = await api.conversationToExamples(accountId, peerId, {
+      limit: 8,
+      toRag: true,
+    });
+    const t = Number(data?.trainingAdded) || 0;
+    const r = Number(data?.ragAdded) || 0;
+    if (!t && !r) {
+      notify('Нет пар user→assistant для сохранения');
+      return;
+    }
+    try {
+      await loadExamples();
+    } catch (_) {
+      /* вкладка Учить может быть не открыта */
+    }
+    notify(`В примеры: ${t}, в RAG: ${r}`);
+  } catch (error) {
+    handleRequestError(error);
+  }
+}
+
+async function handleDeleteExample(id) {
+  if (id === null || id === undefined || id === '') return;
+  if (!window.confirm('Удалить этот пример?')) return;
+  try {
+    await api.deleteExample(id);
+    await loadExamples();
+    render();
+    notify('Пример удалён');
   } catch (error) {
     handleRequestError(error);
   }
@@ -2420,6 +2975,8 @@ function bindEvents() {
 
     if (elements.accountForm) {
       elements.accountForm.addEventListener('submit', addAccount);
+      bindConnectMethodButtons();
+      setConnectMethod('qr');
     }
 
   if (elements.exampleForm) {
@@ -2478,8 +3035,9 @@ function bindEvents() {
     }
 
     if (action === 'logout') {
-      if (tg && typeof tg.close === 'function') {
-        tg.close();
+      const webApp = getTg();
+      if (webApp && typeof webApp.close === 'function') {
+        webApp.close();
       }
 
       return;
@@ -2555,13 +3113,33 @@ function bindEvents() {
       return;
     }
 
+    if (action === 'delete-example') {
+      handleDeleteExample(id);
+      return;
+    }
+
     if (action === 'delete-photo-exception') {
       deletePhotoExceptionItem(id);
       return;
     }
 
+    if (action === 'open-info') {
+      setActiveTab('info');
+      return;
+    }
+
     if (action === 'clear-history') {
       handleClearHistory(target.dataset.account, target.dataset.peer);
+      return;
+    }
+
+    if (action === 'export-chat') {
+      handleExportChat(target.dataset.account, target.dataset.peer);
+      return;
+    }
+
+    if (action === 'to-examples') {
+      handleToExamples(target.dataset.account, target.dataset.peer);
       return;
     }
 
@@ -2648,9 +3226,16 @@ function bindEvents() {
  * и подтягиваем реальные данные из backend.
  */
 async function startApp() {
+  cacheInitDataIfAny();
+  ensureAuthBanner();
   bindEvents();
   render();
-  await loadAllData();
+  setBootStatus('Загружаем данные…');
+  try {
+    await loadAllData();
+  } finally {
+    setBootStatus('');
+  }
   startBackgroundRefresh();
 }
 
@@ -2716,13 +3301,88 @@ function watchMobileKeyboard() {
   sync();
 }
 
-function initializeApp() {
-  watchMobileKeyboard();
+/**
+ * Desktop WebView иногда отдаёт WebApp без initData на первом кадре —
+ * ждём hash/WebApp.initData, иначе ложная заглушка «Откройте в Telegram».
+ */
+function waitForTelegramInitData(maxMs = 3000) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const tick = () => {
+      tg = getTg();
+      if (tg) applyTelegramChrome(tg);
+      if (resolveTelegramInitData()) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() - started >= maxMs) {
+        resolve(Boolean(resolveTelegramInitData()));
+        return;
+      }
+      setTimeout(tick, 50);
+    };
+    tick();
+  });
+}
 
-  if (isTelegramWebApp()) {
-    startApp();
-  } else {
+function setBootStatus(text) {
+  let el = document.getElementById('tg-boot-status');
+  if (!text) {
+    if (el) el.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'tg-boot-status';
+    el.setAttribute(
+      'style',
+      'position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:24px;background:#0b0d10;color:#f2f0ea;font:500 14px/1.4 Figtree,system-ui,sans-serif;text-align:center',
+    );
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+}
+
+async function initializeApp() {
+  watchMobileKeyboard();
+  setBootStatus('Загрузка…');
+
+  // Сразу прячем заглушку, если похоже на Telegram — иначе Desktop мигает
+  // «Откройте в Telegram» из‑за пустого initData / кэша старого JS.
+  const gateEl = document.getElementById('tg-gate');
+  if (isTelegramShell() && gateEl) gateEl.hidden = true;
+
+  try {
+    if (isTelegramWebApp()) {
+      await startApp();
+      return;
+    }
+
+    if (isTelegramShell()) {
+      const ok = await waitForTelegramInitData(4000);
+      console.log('Telegram initData after wait:', ok, 'platform:', getTg()?.platform);
+      await startApp();
+      return;
+    }
+
+    // Ещё раз подождём — CDN telegram-web-app.js мог подгрузиться позже.
+    const late = await waitForTelegramInitData(1500);
+    if (late || isTelegramShell()) {
+      await startApp();
+      return;
+    }
+
+    setBootStatus('');
     showTelegramGate();
+  } catch (err) {
+    console.error('initializeApp failed:', err);
+    setBootStatus('Не удалось загрузить кабинет. Закрой Mini App и открой снова из бота.');
+  } finally {
+    // Убираем «Загрузка…» если startApp уже отрисовал UI.
+    if (document.querySelector('.app-shell')?.style.display !== 'none') {
+      const gate = document.getElementById('tg-gate');
+      if (!gate || gate.hidden) setBootStatus('');
+    }
   }
 }
 

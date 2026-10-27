@@ -5,6 +5,7 @@ const humanizeSpeech = require('./humanizeSpeech');
 const lifeTexture = require('./lifeTexture');
 const humanThinLayer = require('./humanThinLayer');
 const humanExtra = require('./humanExtra');
+const personaFacts = require('./personaFacts');
 
 // ---------------------------------------------------------------------------
 // ПРОКСИ для OpenAI.
@@ -13,24 +14,47 @@ const humanExtra = require('./humanExtra');
 // OpenAI SDK v6 использует глобальный fetch (undici), поэтому обычный http.Agent
 // не работает — нужен undici-диспетчер. Его делает пакет fetch-socks.
 // ---------------------------------------------------------------------------
-function firstSocks5FromEnv() {
+function socks5ListFromEnv() {
+  const out = [];
   const raw = process.env.PROXY_LIST || '';
   for (const entry of raw.split(';')) {
     const parts = entry.trim().split(':').map((s) => s.trim());
     const type = (parts[0] || '').toLowerCase();
-    if (type === 'socks5' || type === 'socks') {
-      const [, host, port, user, pass] = parts;
-      if (!host || !port) continue;
-      const cfg = { type: 5, host, port: Number(port) };
-      if (user) cfg.userId = user;
-      if (pass) cfg.password = pass;
-      return cfg;
-    }
+    if (type !== 'socks5' && type !== 'socks') continue;
+    const [, host, port, user, pass] = parts;
+    if (!host || !port) continue;
+    const cfg = { type: 5, host, port: Number(port) };
+    if (user) cfg.userId = user;
+    if (pass) cfg.password = pass;
+    out.push(cfg);
   }
-  return null;
+  // Work-пул Telegram (файл) — те же DC-прокси, часто свежее первого в PROXY_LIST.
+  try {
+    const { PROXY_POOL } = require('./proxyPools');
+    for (const p of PROXY_POOL || []) {
+      if (!p || p.MTProxy || !p.ip || !p.port) continue;
+      const cfg = { type: 5, host: p.ip, port: Number(p.port) };
+      if (p.username) cfg.userId = p.username;
+      if (p.password) cfg.password = p.password;
+      if (!out.some((x) => x.host === cfg.host && x.port === cfg.port)) out.push(cfg);
+    }
+  } catch (_) {
+    /* proxyPools может тянуть dotenv позже — ок */
+  }
+  return out;
 }
 
-function buildOpenAIOptions() {
+function firstSocks5FromEnv() {
+  const list = socks5ListFromEnv();
+  if (!list.length) return null;
+  // Первый в PROXY_LIST иногда мёртвый (ECONNREFUSED) — стартуем со 2-го, если есть.
+  const prefer = Number(process.env.OPENAI_PROXY_INDEX);
+  if (Number.isFinite(prefer) && prefer >= 0 && prefer < list.length) return list[prefer];
+  if (list.length > 1) return list[1];
+  return list[0];
+}
+
+function buildOpenAIOptions(socksOverride = null) {
   const opts = { apiKey: process.env.OPENAI_API_KEY };
   // Позволяет переключить провайдера (напр. freemodel) без правки кода:
   // задай OPENAI_BASE_URL=https://api.freemodel.dev/v1 в .env.
@@ -38,7 +62,7 @@ function buildOpenAIOptions() {
     opts.baseURL = process.env.OPENAI_BASE_URL;
     console.log(`[openai] Базовый URL переопределён: ${process.env.OPENAI_BASE_URL}`);
   }
-  const socks = firstSocks5FromEnv();
+  const socks = socksOverride || firstSocks5FromEnv();
   if (socks) {
     try {
       const { socksDispatcher } = require('fetch-socks');
@@ -303,20 +327,17 @@ function collectAssistantGeoFacts(history, limit = 4) {
 }
 
 /**
- * Из промпта персонажа: «сейчас в A, переезжаешь в B (к маме)» —
- * жёстко фиксируем, что мама в B, иначе модель пишет «мама в A, еду в B к ней».
+ * Из промпта: текущий город / куда едешь / мама — через personaFacts, не под один шаблон.
  */
 function buildCharacterGeoReminder(systemPrompt) {
   const p = String(systemPrompt || '');
-  const m = p.match(
-    /жив[её]шь\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+).{0,120}?переезжаешь\s+в\s+([А-ЯЁA-Za-z][\wА-Яа-яёЁ\-]+)/i,
-  );
-  if (!m) return null;
-  const fromCity = m[1];
-  const toCityRaw = m[2];
-  if (!fromCity || !toCityRaw || fromCity.toLowerCase() === toCityRaw.toLowerCase()) return null;
-
-  // Для «живёт в …» нужна форма места; для переезда оставляем как в промпте.
+  const card = personaFacts.parsePersonaCard(p);
+  if (!card.fromCity) return null;
+  if (!card.toCity || !card.packing) {
+    return `ГЕО: сейчас ты в ${card.fromCity}. Не выдумывай другой город и не меняй место.`;
+  }
+  const toCityRaw = card.toCity;
+  const fromCity = card.fromCity;
   const locative = {
     Прагу: 'Праге',
     Прага: 'Праге',
@@ -325,20 +346,22 @@ function buildCharacterGeoReminder(systemPrompt) {
     Архангельск: 'Архангельске',
     Курган: 'Кургане',
     Тимашевск: 'Тимашевске',
+    Анапу: 'Анапе',
+    Анапа: 'Анапе',
+    Москву: 'Москве',
+    Москва: 'Москве',
   };
   const toLive = locative[toCityRaw] || toCityRaw;
-
   const momNearMove = /мама|мам[ауе]/i.test(p) && /поддержк|рядом|боле|плох/i.test(p);
   let extra = '';
   if (momNearMove) {
     extra =
-      `Мама живёт в ${toLive} (туда ты и едешь, чтобы быть рядом с ней). ` +
-      `ЗАПРЕЩЕНО писать «мама в ${fromCity}, а я переезжаю в ${toCityRaw}, чтобы быть рядом» — это противоречие. ` +
-      `Правильно: сейчас ты в ${fromCity}, мама уже в ${toLive}. `;
+      `Мама живёт в ${toLive} (туда ты и едешь). ` +
+      `Не пиши «мама в ${fromCity}, а я еду в ${toCityRaw} к ней» — противоречие. `;
   }
   return (
-    `ГЕОГРАФИЯ ПЕРСОНАЖА (строго): сейчас ты в ${fromCity}, переезжаешь в ${toCityRaw} НАСОВСЕМ (будешь там жить, не временно). ${extra}` +
-    `Не путай эти два города местами.`
+    `ГЕО ПЕРСОНАЖА: сейчас ${fromCity}, переезжаешь в ${toCityRaw} насовсем (ещё не там — сборы/коробки). ${extra}` +
+    `Не путай города. На «из какого / где / как давно» — только эти факты, без выдумок.`
   );
 }
 
@@ -426,7 +449,13 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const humanize = humanizeSpeech.getHumanizeProfile(options.accountId);
   const restraint = pickRestraintReaction(userMessage, history, options, humanize);
   if (restraint) return restraint;
-  const finalPrompt = systemPrompt?.trim() || DEFAULT_PROMPT;
+  const trimmedPrompt = String(systemPrompt || '').trim();
+  // Пустой промпт — не подставляем DEFAULT_PROMPT (иначе чужой персонаж).
+  if (!trimmedPrompt) {
+    console.warn('[aiResponder] generateReply: пустой systemPrompt — отказ');
+    return null;
+  }
+  const finalPrompt = trimmedPrompt;
   let contextualUserMessage = enrichShortFollowUp(history, userMessage);
   contextualUserMessage = enrichGeoFollowUp(history, contextualUserMessage);
   const quoteSenseReminder = buildQuoteSenseReminder(contextualUserMessage);
@@ -437,6 +466,9 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const characterGeoReminder = quoteSenseReminder
     ? null
     : buildCharacterGeoReminder(finalPrompt);
+  const personaFactHint = quoteSenseReminder
+    ? null
+    : personaFacts.buildFactHint(finalPrompt, contextualUserMessage, history);
 
   // Reminder намеренно МИНИМАЛЬНЫЙ: он НЕ навязывает свои правила (длину,
   // вопросы и т.п.), чтобы не перебивать промпт из панели — все стилевые
@@ -465,20 +497,12 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Свяжи ответ с последним своим сообщением. Не пиши «не поняла» / «о чём речь», пока в истории есть к чему привязать его слова. ' +
     '«Откуда?» после твоей фразы про выписку/больничный = «откуда выпишут?», НЕ «в каком городе ты» — город не называй. ' +
     'Если во входящем есть пометка [уточнение к твоей фразе «...»] или [ответ на его сообщение «...»], отвечай именно про эту фразу/цитату. ' +
-    'ГЕОГРАФИЯ И ФАКТЫ О СЕБЕ: города, «где я сейчас», «куда переезжаю», где мама/семья — раз сказала в этом диалоге, держи строго. ' +
-    'Никогда не меняй местами «сейчас живу/нахожусь» и «переезжаю/еду». ' +
-    'Если переезжаешь к маме — мама живёт В городе переезда. ' +
-    'ПЕРЕЕЗД НАВСЕГДА: ты переезжаешь насовсем, будешь там жить. НЕ «ненадолго», НЕ «временно», НЕ «только помочь маме и назад». ' +
-    'Мама — одна из причин, но остаёшься жить там. На «надолго?» — «насовсем». На «в каком районе будешь жить» — сначала у мамы, потом снимешь своё / ещё выбираешь район. ' +
-    'ПОЧЕМУ ПЕРЕЕЗЖАЕШЬ: раньше переехала с парнем, он изменил — расстались; ты уже обустроилась и не хотела снова срываться, ' +
-    'но с мамой беда — приходится ехать. ' +
-    'КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: «нашла работу», «устроилась», «новая работа в городе», «работа там» как причина переезда — ' +
-    'твоя работа (флипинг токенов / онлайн) удалённая, город для неё не нужен, из любого места. ' +
-    'НЕЛЬЗЯ: «мама в Липецке, а я еду в Прагу/Донецк/… чтобы быть рядом с ней» — это противоречие. ' +
-    'Правильно: сейчас ты в одном городе, мама уже там, куда едешь. ' +
-    'Если собеседник уточняет («так ты в X переезжаешь?», «а щас в каком городе?», «мама как здесь?») — перечитай СВОИ прошлые ответы про города и ответь в том же смысле, без перестановки городов. ' +
-    'Город из промпта персонажа бери только если в ЭТОМ диалоге ты ещё не называла другой город/переезд. ' +
-    'Если во входящем есть [геоконтекст ...], отвечай строго согласованно с перечисленными там твоими фразами. ' +
+    'ФАКТЫ О СЕБЕ: города, сроки «как давно», куда едешь, мама/семья — только из промпта и из того, что УЖЕ сказала в этом диалоге. Не выдумывай. ' +
+    'Не путай «сейчас живу» и «переезжаю». Пока не приехала — сборы/коробки, не распаковка. ' +
+    'Переезд насовсем (не «ненадолго»). К маме — мама уже в городе переезда. ' +
+    'Причина переезда — из промпта/легенды; не «нашла работу в городе» (работа онлайн). ' +
+    'На «из какого города / где ты / как давно» — короткий ответ по фактам, без зеркала «а ты там?». ' +
+    'Если есть [геоконтекст ...] — согласуй с ним. ' +
     'Продолжай последнюю тему естественно; новую тему начинай только если текущая завершена. ' +
     'Если последнее сообщение относится к недавно присланному фото, изображению или медиа, это имеет приоритет над старыми темами. ' +
     'Отвечай именно на вопрос о последнем изображении и не возвращайся к спорту, хобби или другой прежней теме, если собеседник её не поднял. ' +
@@ -521,13 +545,11 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
 
   // Сжатый стиль (thin): без простыни запретов — детали в humanThinLayer.buildThinHumanHint.
   const humanStyleReminder =
-    'Стиль: живая девушка в Telegram, будто с телефона — коротко, залюбленно и тепло, по его теме. ' +
-    'Цепляйся к конкретике из его фразы своими словами. Ритм неровный: то короче, то чуть нежнее. ' +
-    'На медиа которое ОН прислал — реагируй на содержимое, не проси «покажи». ' +
-    'На прямой вопрос — сначала короткий ответ, без зеркального «а ты?». ' +
-    '«Спасибо» только на комплимент/подарок, не на «ок/молодец». Без лести и морали. ' +
-    'Иногда мелочь из своего дня; иногда «ну/хм/типа/блин» перед фразой, если звучит естественно. ' +
-    'Своё мнение и лёгкая вредность ок. Не обязана поддакивать. Женский род о себе. ДВ = Дайвинчик — знаешь. ' +
+    'Стиль: ты девушка в личке, не бот и не саппорт — коротко, тепло, иногда с ленцой или лёгкой вредностью. ' +
+    'Цепляйся к его словам своими. Ритм неровный. На медиа от него — реакция на содержимое, не «покажи ещё». ' +
+    'На вопрос — сначала короткий ответ, без зеркального «а ты?». ' +
+    '«Спасибо» только на комплимент/подарок. Без лести, морали и «чем могу помочь». ' +
+    'Иногда мелочь из своего дня; «ну/хм/типа/блин» — если к месту. Мнение своё ок. Женский род. ДВ = Дайвинчик. ' +
     'Текст: чаще «)», редко один смайл ☺️/😊/🥰. Реакции TG: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
 
   const answerFirstReminder =
@@ -570,6 +592,9 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
 
   if (characterGeoReminder) {
     messages.push({ role: 'system', content: characterGeoReminder });
+  }
+  if (personaFactHint && personaFactHint !== characterGeoReminder) {
+    messages.push({ role: 'system', content: personaFactHint });
   }
 
   // Обучение на прошлом опыте (без fine-tuning): если telegramClient передал
@@ -695,6 +720,12 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   if (options.hisDetailHint) {
     messages.push({ role: 'system', content: options.hisDetailHint });
   }
+  if (options.peerProfileHint) {
+    messages.push({ role: 'system', content: options.peerProfileHint });
+  }
+  if (options.externalFactHint) {
+    messages.push({ role: 'system', content: options.externalFactHint });
+  }
 
   // Memory Triggers: бот сама возвращается к факту / помнит что уже говорила.
   if (options.memoryContextHint) {
@@ -798,6 +829,21 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     }
   }
 
+  const sanitizeForModel = (s, maxLen = 2500) => {
+    let t = String(s ?? '')
+      // Управляющие + нули ломают JSON у шлюза («Invalid body: failed to parse»).
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+      .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+      .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
+      .replace(/\uFEFF/g, '');
+    try {
+      t = t.normalize('NFC');
+    } catch (_) {
+      /* ignore */
+    }
+    if (t.length > maxLen) t = t.slice(0, maxLen);
+    return t;
+  };
   for (const h of history || []) {
     if (!h || !h.content) continue;
     const role = h.role === 'assistant' ? 'assistant' : 'user';
@@ -811,9 +857,21 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
         )
         .replace(/^\[медиа:#\d+\]\s*/i, '[ты отправила медиа] ');
     }
+    content = sanitizeForModel(content);
+    if (!content.trim()) continue;
     messages.push({ role, content });
   }
-  messages.push({ role: 'user', content: contextualUserMessage });
+  messages.push({ role: 'user', content: sanitizeForModel(contextualUserMessage) });
+
+  // Добиваем ВСЕ system/user/assistant куски (промпт аккаунта тоже) —
+  // иначе битый символ в system даёт 400 Invalid body на весь чат.
+  for (let i = 0; i < messages.length; i += 1) {
+    const m = messages[i];
+    if (!m || typeof m.content !== 'string') continue;
+    const max = m.role === 'system' ? 12000 : 2500;
+    m.content = sanitizeForModel(m.content, max);
+  }
+  const cleanMessages = messages.filter((m) => m && m.content && String(m.content).trim());
 
   // [v0] ВРЕМЕННЫЙ ЛОГ: печатает реально используемую модель и endpoint.
   console.log(
@@ -821,7 +879,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   );
 
   const requestOptions = {
-    messages,
+    messages: cleanMessages,
     // Технический потолок длины: даже если модель проигнорирует текстовое
     // правило про 1-2 предложения, ответ физически не может растянуться в
     // длинный текст. ~120 токенов хватает на 2 нормальных русских
@@ -843,6 +901,14 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     // fine-tuned версия) недоступна, не роняем ответ бота, а пробуем
     // запасную модель. Срабатывает только когда CHAT_MODEL и FALLBACK_MODEL
     // реально разные — иначе смысла в повторе нет.
+      if (/Invalid body|failed to parse JSON/i.test(String(err && err.message))) {
+        const sample = cleanMessages
+          .slice(0, 3)
+          .map((m) => `${m.role}:${String(m.content).slice(0, 40).replace(/\n/g, ' ')}`);
+        console.error(
+          `[openai] Invalid body diag msgs=${cleanMessages.length} sample=${JSON.stringify(sample)}`,
+        );
+      }
       if (CHAT_MODEL === FALLBACK_MODEL || notifier.classifyOpenAiError(err)) throw err;
     console.error(
       `[openai] Модель "${CHAT_MODEL}" вернула ошибку (${err.message}), пробую запасную "${FALLBACK_MODEL}".`,
@@ -886,8 +952,19 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
       history,
       finalPrompt,
     );
-    const strippedHisCity = fixFalseHisCityMirror(
+    const groundedFacts = personaFacts.groundReply(
       strippedGeoSwap,
+      contextualUserMessage,
+      history,
+      finalPrompt,
+    );
+    const strippedUnpack = fixUnpackBeforeArrive(
+      groundedFacts,
+      contextualUserMessage,
+      history,
+    );
+    const strippedHisCity = fixFalseHisCityMirror(
+      strippedUnpack,
       contextualUserMessage,
       history,
       finalPrompt,
@@ -1170,7 +1247,80 @@ const DAY_DETAILS_RU = [
 ];
 const DAY_ASK_RE = /(как\s+(твой\s+)?день|как\s+дела|как\s+ты|что\s+делаешь|чем\s+занята|чем\s+(ты\s+)?занимаешься|что\s+нового|как\s+прошёл|как\s+прошел|чё\s+делаешь|че\s+делаешь|что\s+у\s+тебя|чем\s+занят[аы]?)/i;
 const MOVE_SPAM_RE =
-  /(переезд|переезжа|коробк|собира(ю|юсь|емся|ться)\s+(вещи|чемодан)|упаковыва|сборы|к\s+маме\s+пере)/i;
+  /(переезд|переезжа|коробк|собира(ю|юсь|емся|ться)\s+(вещи|чемодан)|упаковыва|распаков|разлажив|сборы|к\s+маме\s+пере)/i;
+
+/** «Распаковываю» = уже на месте. Пока сборы / ещё в старом городе — нельзя. */
+const UNPACK_ARRIVED_RE =
+  /распаков\w*|разлажив\w*|разбираю\s+(?:вещи|короб)|вещи\s+разлаж|коробк\w*\s+разбира/i;
+const STILL_PACKING_RE =
+  /ещё\s+в\s+|пока\s+(?:ещё\s+)?в\s+|собираюсь\s+в\s+|не\s+приехал|не\s+доехал|собираю\s+(?:вещи|короб)|сборы|упаков\w*|переезжаю\s+в/i;
+const USER_CATCH_UNPACK_RE =
+  /зачем.{0,60}распаков|распаков.{0,50}(?:если|а\s+ещё|а\s+ты)|(?:ещё\s+)?не\s+приехал.{0,40}короб|(?:ещё\s+)?не\s+приехал.{0,40}распаков|коробк.{0,40}не\s+приехал/i;
+
+/**
+ * Не «распаковываю», пока по истории/ответу ещё сборы / не приехала.
+ * На упрёк «зачем распаковывать если не приехала» — признать оговорку, не «заранее».
+ */
+function fixUnpackBeforeArrive(reply, userMessage, history) {
+  if (!reply) return reply;
+  const text = String(reply).trim();
+  const user = String(userMessage || '');
+  const histAsst = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-10)
+    .map((h) => String(h.content || ''))
+    .join('\n');
+
+  // Он поймал противоречие — не оправдывай распаковку «заранее».
+  if (USER_CATCH_UNPACK_RE.test(user)) {
+    if (
+      /заранее|потом\s+придётся|подготов|всё\s+равно\s+придётся|распаков|разлаж/i.test(text) ||
+      text.length < 180
+    ) {
+      return [
+        'ой собираю имела в виду)',
+        'хах да собираю просто, язык заплёлся)',
+        'ну собираю коробки да)',
+      ][Math.floor(Math.random() * 3)];
+    }
+  }
+
+  if (!UNPACK_ARRIVED_RE.test(text)) return reply;
+
+  // Уже явно приехала в недавних своих словах — распаковка ок.
+  const arrived =
+    /уже\s+(?:тут|там|приехал|доехал)|переехал[аи]?\s+в|приехал[аи]?\s+в/i.test(histAsst) &&
+    !/ещё\s+в\s+|собираюсь\s+в\s+/i.test(histAsst.slice(-240));
+  if (arrived) return reply;
+
+  const stillPacking =
+    STILL_PACKING_RE.test(histAsst) ||
+    STILL_PACKING_RE.test(text) ||
+    DAY_ASK_RE.test(user) ||
+    /что\s+делаешь|чем\s+занят|какими\s*\??/i.test(user);
+
+  // Пока сборы / «что делаешь» без факта приезда — только упаковка, не распаковка.
+  if (!stillPacking) return reply;
+
+  const rewritten = text
+    .replace(/коробки\s+распаковываю/gi, 'коробки собираю')
+    .replace(/распаковываю/gi, 'собираю')
+    .replace(/распаковала/gi, 'собрала')
+    .replace(/распаковывала/gi, 'собирала')
+    .replace(/распаковк\w*/gi, 'сборы')
+    .replace(/разлаживаю/gi, 'складываю')
+    .replace(/разложила/gi, 'сложила')
+    .replace(/разбираю\s+коробк\w*/gi, 'собираю коробки');
+
+  if (rewritten !== text && !UNPACK_ARRIVED_RE.test(rewritten)) {
+    return rewritten;
+  }
+  return [
+    'собираю вещи потихоньку)',
+    'с коробками вожусь)',
+    'сборы, коробки)',
+  ][Math.floor(Math.random() * 3)];
+}
 const MOVE_SPAM_FALLBACKS = [
   'ничего особенного, кофе пью)',
   'дома сижу, сериал фоном)',
@@ -1193,6 +1343,10 @@ function softenMoveSpamOnDayAsk(reply, userMessage, history) {
   }
   const text = String(reply || '').trim();
   if (!text || !MOVE_SPAM_RE.test(text)) return reply;
+  // Не вычищаем уже поправленные «сборы/коробки» (personaFacts) — иначе снова кофе/сериал.
+  if (/собираю|сборы|коробк/i.test(text) && !/распаков|разлажив/i.test(text)) {
+    return reply;
+  }
 
   const recentBot = (Array.isArray(history) ? history : [])
     .filter((h) => h && h.role === 'assistant')
@@ -1674,8 +1828,10 @@ function fixSwappedCurrentCity(reply, userMessage, history, prompt) {
   if (!text) return reply;
 
   const stated = extractStatedCurrentCity(history);
+  const card = personaFacts.parsePersonaCard(prompt);
   const { from: promptFrom, to: promptTo } = extractPromptCities(prompt);
-  const currentCity = stated || promptFrom;
+  // Промпт/карточка важнее истории — иначе один галлюцинированный город «залипает».
+  const currentCity = card.fromCity || promptFrom || stated;
   if (!currentCity) return reply;
 
   // Явный переезд («переезжаю в B / поеду в B») — ок, города не путаем.
@@ -1703,7 +1859,9 @@ function fixSwappedCurrentCity(reply, userMessage, history, prompt) {
     return reply;
   }
 
-  const dest = promptTo && !sameCity(promptTo, currentCity) ? promptTo : badClaim;
+  const dest =
+    (card.toCity && !personaFacts.sameCity(card.toCity, currentCity) && card.toCity) ||
+    (promptTo && !sameCity(promptTo, currentCity) ? promptTo : badClaim);
   const fallbacks = [
     `в смысле? пока в ${currentCity}, в ${dest} переезжаю)`,
     `пока ещё в ${currentCity}) в ${dest} поеду`,
@@ -2583,7 +2741,7 @@ function fixIgnoredAboutHerself(reply, userMessage, prompt) {
 const MEET_AGREE_RE =
   /(?:^|[.!\s)])\s*(?:скоро\s+)?увидимся[^.!?\n]*[.!)]*/gi;
 const MEET_AGREE_EXTRA_RE =
-  /(?:жду\s+тебя\s+тоже|тоже\s+жду|жду\s+приглашени[яе]|приеду\s+(?:к\s+тебе|скоро)|давай\s+встретимся|встретимся\s+скоро|обязательно\s+увидимся|(?:будет\s+)?(?:интересно|классно|здорово|приятно)\s+(?:встретиться|увидеться|погулять)|(?:с\s+радостью|можем|могли\s+бы)\s+(?:встретимся|встретиться|увидеться|погулять|сходить)|(?:когда|как)\s+(?:приеду|перееду)\s*,?\s*(?:встретимся|увидимся|погуляем|сходим))[^.!?\n]*[.!)]*/gi;
+  /(?:жду\s+тебя\s+тоже|тоже\s+жду|жду\s+приглашени[яе]|приеду\s+(?:к\s+тебе|скоро)|давай\s+встретимся|встретимся\s+скоро|обязательно\s+увидимся|(?:будет\s+)?(?:интересно|классно|здорово|приятно)\s+(?:встретиться|увидеться|погулять)|(?:с\s+радостью|можем|могли\s+бы)\s+(?:встретимся|встретиться|увидеться|погулять|сходить)|(?:когда|как)\s+(?:приеду|перееду)\s*,?\s*(?:встретимся|увидимся|погуляем|сходим)|после\s+(?:переезда|перееду|того\s+как\s+перееду)[^.!?\n]{0,48}(?:погуля|прогуля|увиди|встрет|сходим|сходить)|(?:погуля|прогуля|увиди|встрет)\w*[^.!?\n]{0,40}после\s+(?:переезда|перееду)|можем\s+(?:будет\s+)?(?:погулять|прогуляться|увидеться|встретиться)|давай\s+(?:как-?нибудь\s+)?погуляем)[^.!?\n]*[.!)]*/gi;
 const MEET_LEFTOVER_AGREE_RE =
   /^(?:(?:эм|ну|хм|ой|короче|типо)[,\s]+)*(?:ага|угу|да|ок|окей|давай|конечно|хорошо|го|ладно|договорились|с\s+радостью)[\s,.)!]*$/i;
 const MEET_REFUSALS = [
@@ -2662,6 +2820,16 @@ function stripMeetAgreement(reply, userMessage, options = {}) {
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\s+([).!])/g, '$1')
     .trim();
+
+  // Мягкое «после переезда погуляем» без точного матча выше — целиком на отказ.
+  if (
+    before === text &&
+    /переезд/i.test(before) &&
+    /(?:погуля|прогуля|увиди|встрет|сходим)/i.test(before) &&
+    !/не\s+до\s+встреч|пока\s+только\s+(?:тут|переписк)|не\s+до\s+прогул/i.test(before)
+  ) {
+    return MEET_REFUSALS[Math.floor(Math.random() * MEET_REFUSALS.length)];
+  }
 
   if (before === text) return before;
 
@@ -2818,10 +2986,17 @@ function clipOverlongReply(reply, maxLines = 1) {
     return `\u0000TOK${tokens.length - 1}\u0000`;
   });
   const clipLine = (line) => {
-    if (line.replace(/\u0000TOK\d+\u0000/g, '').length <= 140) return line;
+    const bare = line.replace(/\u0000TOK\d+\u0000/g, '');
+    // Эссе из 3+ клауз через запятую — оставляем первую мысль.
+    const clauses = bare.split(/,\s+/).filter(Boolean);
+    if (clauses.length >= 3 && bare.length > 90) {
+      const first = clauses[0].trim().replace(/[,:;]+$/, '');
+      if (first.length >= 12) return first;
+    }
+    if (bare.length <= 110) return line;
     const cut = line.split(/(?<=[).!?])\s+/).filter(Boolean);
     if (cut.length > 1) return cut[0];
-    return line.slice(0, 140).replace(/\s+\S*$/, '').trim();
+    return line.slice(0, 110).replace(/\s+\S*$/, '').trim();
   };
   // Несколько вопросов — по строке на ответ; иначе только первая строка (не список).
   // Первая строка — голая реакция («О, круто)») — вторую не режем, в ней обычно суть.
@@ -3108,6 +3283,7 @@ Object.assign(module.exports, {
   detectReplyLanguage,
   isRussianConversation,
   fixSwappedCurrentCity,
+  fixUnpackBeforeArrive,
   fixFalseHisCityMirror,
   extractAskedCityAboutHer,
   fixBrokenChatFragments,
@@ -3116,4 +3292,6 @@ Object.assign(module.exports, {
   isBrokenChatLine,
   applyAntiDetectStyle,
   detectVisionImageMime,
+  stripMeetAgreement,
+  clipOverlongReply,
 });

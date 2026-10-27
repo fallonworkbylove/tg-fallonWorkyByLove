@@ -6,11 +6,17 @@
 const db = require('../db');
 const {
   startLogin,
-  resendLoginCode,
+  startQrLogin,
+  pollQrLogin,
   confirmCode,
   confirmPassword,
   cancelPendingLogin,
   cancelAllPendingLoginsForUser,
+  peekPendingLogin,
+  extractLoginCode,
+  normalizeLoginPhone,
+  qrImageUrl,
+  QR_MARKER,
   activateAccount,
   deactivateAccount,
   isActive,
@@ -23,10 +29,14 @@ const {
 } = require('./accountCleanup');
 const operatorAccess = require('./operatorAccess');
 
-const WIZARD_TTL_MS = 10 * 60 * 1000;
+/** UI-wizard: дольше, чем раньше — код из приложения часто ищут не сразу. */
+const WIZARD_TTL_MS = 25 * 60 * 1000;
 
 /** @type {Map<string, { until: number, step: string, phone?: string, userId?: number }>} */
 const wizards = new Map();
+
+/** Фоновый опрос QR-логина: chatId → intervalId */
+const qrPollers = new Map();
 
 function esc(value) {
   return String(value ?? '')
@@ -36,19 +46,26 @@ function esc(value) {
 }
 
 function normalizePhone(raw) {
-  let digits = String(raw || '').replace(/\D/g, '');
-  if (!digits) return '';
-  if (digits.length === 11 && digits.startsWith('8')) digits = `7${digits.slice(1)}`;
-  if (digits.length === 10) digits = `7${digits}`;
-  return `+${digits}`;
+  return normalizeLoginPhone(raw);
 }
 
-function clearWizard(chatId) {
+function stopQrPoller(chatId) {
+  const key = String(chatId);
+  const id = qrPollers.get(key);
+  if (id) {
+    clearInterval(id);
+    qrPollers.delete(key);
+  }
+}
+
+function clearWizard(chatId, { keepPending = false } = {}) {
   const key = String(chatId);
   const w = wizards.get(key);
   wizards.delete(key);
-  // Снимаем GramJS pending, иначе orphan-клиент держит phoneCodeHash часами.
-  if (w?.phone) {
+  stopQrPoller(key);
+  if (keepPending) return;
+  // Явная отмена / фатальная ошибка — снимаем GramJS pending.
+  if (w?.phone && w.phone !== QR_MARKER) {
     cancelPendingLogin(key, w.phone).catch(() => {});
   } else {
     cancelAllPendingLoginsForUser(key).catch(() => {});
@@ -59,7 +76,9 @@ function isWizardActive(chatId) {
   const w = wizards.get(String(chatId));
   if (!w) return false;
   if (Date.now() > w.until) {
-    clearWizard(chatId);
+    // Soft expire: UI сбрасываем, pending (код) оставляем — иначе ввод кода
+    // после паузы молча игнорируется.
+    wizards.delete(String(chatId));
     return false;
   }
   return true;
@@ -86,21 +105,29 @@ function cancelKeyboard() {
 function codeKeyboard() {
   return {
     inline_keyboard: [
-      [{ text: '📱 Не пришёл — прислать SMS', callback_data: 'wrk:sms' }],
+      [{ text: '📷 Лучше через QR', callback_data: 'wrk:connect:qr' }],
+      [{ text: 'Отмена', callback_data: 'wrk:cancel' }],
+    ],
+  };
+}
+
+function connectChoiceKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '📷 QR-код (рекомендуется)', callback_data: 'wrk:connect:qr' }],
+      [{ text: '📱 По номеру (код в app)', callback_data: 'wrk:connect:phone' }],
       [{ text: 'Отмена', callback_data: 'wrk:cancel' }],
     ],
   };
 }
 
 function codeHint(isCodeViaApp) {
-  if (isCodeViaApp) {
-    return (
-      'Код ушёл в <b>приложение Telegram</b> на этом номере — SMS не будет.\n\n' +
-      'Открой Telegram на телефоне <b>этого</b> номера → чат «Telegram» (служебный) → код.\n\n' +
-      'Если телефона/сессии нет — жми «Прислать SMS».'
-    );
-  }
-  return 'Код отправлен (SMS / звонок / Telegram).\n\nПришли код цифрами.';
+  void isCodeViaApp;
+  return (
+    'Код ушёл в <b>приложение Telegram</b> на этом номере (не SMS).\n\n' +
+    'Открой Telegram, где уже залогинен <b>этот</b> номер → служебный чат «Telegram» → свежий код.\n\n' +
+    'Если кода нет — жми «QR-код»: так надёжнее без SMS.'
+  );
 }
 
 function doneKeyboard(isAdmin) {
@@ -435,15 +462,24 @@ async function getAccountLimit(userId) {
 }
 
 async function saveSession(userId, phone, sessionString) {
+  const normalized = normalizePhone(phone);
+  if (!normalized || normalized.length < 11) {
+    const err = new Error('Неверный номер телефона');
+    err.statusCode = 400;
+    throw err;
+  }
+  const wantDigits = String(normalized).replace(/\D/g, '');
   const [owned] = await db.execute(
     'SELECT id, phone FROM accounts WHERE user_id = ?',
     [userId],
   );
-  const existing = owned.find((row) => normalizePhone(row.phone) === phone);
+  const existing = owned.find(
+    (row) => String(row.phone || '').replace(/\D/g, '') === wantDigits,
+  );
   if (existing) {
     await db.execute(
       'UPDATE accounts SET phone = ?, session_string = ?, status = ? WHERE id = ? AND user_id = ?',
-      [phone, sessionString, 'Подключен', existing.id, userId],
+      [normalized, sessionString, 'Подключен', existing.id, userId],
     );
     return existing.id;
   }
@@ -462,7 +498,7 @@ async function saveSession(userId, phone, sessionString) {
   const [result] = await db.execute(
     `INSERT INTO accounts (user_id, phone, session_string, status, is_autoreply_enabled, prompt)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [userId, phone, sessionString, 'Подключен', false, ''],
+    [userId, normalized, sessionString, 'Подключен', false, ''],
   );
   try {
     await renumberAccountSeq(userId);
@@ -474,6 +510,9 @@ async function saveSession(userId, phone, sessionString) {
 
 function loginErrorMessage(error) {
   const raw = `${error?.errorMessage || ''} ${error?.message || ''}`;
+  if (/fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|network/i.test(raw)) {
+    return 'Сбой связи бота с Telegram API. Код мог уже уйти в приложение — подожди 10с и пришли код, либо нажми «Подключить» ещё раз.';
+  }
   if (/FLOOD_WAIT_(\d+)/i.test(raw)) {
     const sec = Number(RegExp.$1);
     return `Telegram ограничил запросы. Подожди ~${Math.ceil(sec / 60)} мин.`;
@@ -495,6 +534,10 @@ function loginErrorMessage(error) {
   if (/timed out|Not connected|ECONN|SocksClient/i.test(raw)) {
     return 'Прокси до Telegram не отвечает. Попробуй ещё раз.';
   }
+  if (/API_ID_PUBLISHED|API_ID_INVALID/i.test(raw)) {
+    return 'api_id/hash отклонён Telegram. Нужны свои с my.telegram.org.';
+  }
+  if (/QR/i.test(raw) && error?.statusCode === 400) return error.message;
   if (error?.statusCode === 403) return 'Доступ закрыт.';
   if (error?.statusCode === 400) return error.message;
   return `Не удалось: ${error?.errorMessage || error?.message || 'ошибка'}`;
@@ -507,14 +550,31 @@ async function startWizard(api, chatId, from, { editMessageId } = {}) {
   }
 
   const user = await ensureDbUser(chatId, from);
-  touch(chatId, { step: 'phone', userId: user.id, phone: undefined });
+  touch(chatId, { step: 'choose', userId: user.id, phone: undefined });
 
   const text =
     '<b>📲 Подключение аккаунта</b>\n\n' +
-    'Пришли номер телефона в международном формате, например:\n' +
-    '<code>+79001234567</code>\n\n' +
-    'Код придёт в <b>приложение Telegram</b> на этом номере (часто не SMS).';
+    '<b>QR</b> — открой Telegram на нужном номере → Настройки → Устройства → «Подключить устройство» и отсканируй QR. Без SMS.\n\n' +
+    '<b>По номеру</b> — код в приложение Telegram (если код снова не приходит, бери QR).';
 
+  if (editMessageId) {
+    await apiEdit(api, chatId, editMessageId, text, connectChoiceKeyboard());
+  } else {
+    await apiSend(api, chatId, text, connectChoiceKeyboard());
+  }
+}
+
+async function startPhoneWizard(api, chatId, from, { editMessageId } = {}) {
+  if (!(await canConnectAccounts(chatId, from?.username))) {
+    await apiSend(api, chatId, 'Нет доступа.');
+    return;
+  }
+  const user = await ensureDbUser(chatId, from);
+  touch(chatId, { step: 'phone', userId: user.id, phone: undefined });
+  const text =
+    '<b>📱 Вход по номеру</b>\n\n' +
+    'Пришли номер, например <code>+79001234567</code>.\n' +
+    'Код придёт в <b>приложение Telegram</b> на этом номере (не SMS).';
   if (editMessageId) {
     await apiEdit(api, chatId, editMessageId, text, cancelKeyboard());
   } else {
@@ -522,11 +582,141 @@ async function startWizard(api, chatId, from, { editMessageId } = {}) {
   }
 }
 
+function qrCaption(loginUrl) {
+  return (
+    '<b>📷 QR-вход</b>\n\n' +
+    '1. Открой <b>официальный Telegram</b> на нужном номере\n' +
+    '2. Настройки → Устройства → <b>Подключить устройство</b>\n' +
+    '3. Отсканируй QR ниже\n\n' +
+    'Или открой ссылку с телефона этого аккаунта:\n' +
+    `<code>${esc(loginUrl)}</code>\n\n` +
+    'Жду сканирование. Токен обновляется сам, без лимита.'
+  );
+}
+
+async function beginQrFlow(api, chatId, from, isAdmin) {
+  const user = await ensureDbUser(chatId, from);
+  const chatKey = String(chatId);
+  stopQrPoller(chatKey);
+  await cancelAllPendingLoginsForUser(chatKey);
+
+  await apiSend(api, chatId, '⏳ Готовлю QR через residential…');
+  const started = await startQrLogin(chatKey);
+
+  if (started.status === 'ok' && started.sessionString) {
+    await finishConnect(api, chatId, user.id, started.phone, started.sessionString, isAdmin);
+    return;
+  }
+  if (started.status === 'needPassword') {
+    touch(chatId, { step: 'password', userId: user.id, phone: QR_MARKER });
+    await apiSend(
+      api,
+      chatId,
+      'На аккаунте 2FA. Пришли <b>облачный пароль</b>.',
+      cancelKeyboard(),
+    );
+    return;
+  }
+
+  const loginUrl = started.loginUrl;
+  touch(chatId, {
+    step: 'qr',
+    userId: user.id,
+    phone: QR_MARKER,
+    lastQrUrl: loginUrl,
+    qrStartedAt: Date.now(),
+  });
+
+  try {
+    await apiSendPhoto(api, chatId, qrImageUrl(loginUrl), qrCaption(loginUrl), cancelKeyboard());
+  } catch (photoErr) {
+    console.error('[workerConnect] QR photo fail:', photoErr.message);
+    await apiSend(api, chatId, qrCaption(loginUrl), cancelKeyboard());
+  }
+
+  startQrPoller(api, chatId, from, isAdmin);
+}
+
+function startQrPoller(api, chatId, from, isAdmin) {
+  const chatKey = String(chatId);
+  stopQrPoller(chatKey);
+  const tick = async () => {
+    try {
+      const w = wizards.get(chatKey);
+      if (!w || w.step !== 'qr') {
+        stopQrPoller(chatKey);
+        return;
+      }
+
+      const st = await pollQrLogin(chatKey);
+      if (st.status === 'pending') {
+        if (st.loginUrl && st.loginUrl !== w.lastQrUrl) {
+          touch(chatId, { lastQrUrl: st.loginUrl });
+          try {
+            await apiSendPhoto(
+              api,
+              chatId,
+              qrImageUrl(st.loginUrl),
+              '🔄 QR обновлён — отсканируй этот.',
+              cancelKeyboard(),
+            );
+          } catch (_) {
+            await apiSend(
+              api,
+              chatId,
+              `🔄 Новый QR:\n<code>${esc(st.loginUrl)}</code>`,
+              cancelKeyboard(),
+            );
+          }
+        }
+        return;
+      }
+
+      stopQrPoller(chatKey);
+      if (st.status === 'needPassword') {
+        touch(chatId, { step: 'password', phone: QR_MARKER, userId: w.userId });
+        await apiSend(
+          api,
+          chatId,
+          'На аккаунте 2FA. Пришли <b>облачный пароль</b>.',
+          cancelKeyboard(),
+        );
+        return;
+      }
+      if (st.status === 'ok') {
+        await finishConnect(
+          api,
+          chatId,
+          w.userId,
+          st.phone,
+          st.sessionString,
+          isAdmin,
+        );
+      }
+    } catch (err) {
+      console.error('[workerConnect] QR poll:', err.errorMessage || err.message);
+      stopQrPoller(chatKey);
+      clearWizard(chatId);
+      await apiSend(
+        api,
+        chatId,
+        `❌ ${esc(loginErrorMessage(err))}`,
+        connectChoiceKeyboard(),
+      ).catch(() => {});
+    }
+  };
+
+  const id = setInterval(tick, 3500);
+  qrPollers.set(chatKey, id);
+  // первый тик чуть позже — дать время на сканирование
+  setTimeout(tick, 2500);
+}
+
 async function finishConnect(api, chatId, userId, phone, sessionString, isAdmin) {
-  const accountId = await saveSession(userId, phone, sessionString);
+  const accountId = await saveSession(userId, normalizePhone(phone), sessionString);
   await deactivateAccount(accountId);
   const online = (await activateAccount(accountId, sessionString)) === true;
-  clearWizard(chatId);
+  clearWizard(chatId, { keepPending: true }); // pending уже снят в confirm*
   await apiSend(
     api,
     chatId,
@@ -540,13 +730,38 @@ async function finishConnect(api, chatId, userId, phone, sessionString, isAdmin)
 }
 
 async function handleText(api, chatId, text, from) {
-  if (!isWizardActive(chatId)) return false;
-  const w = wizards.get(String(chatId));
+  const chatKey = String(chatId);
+
+  // Revive: wizard UI протух, но pending ещё жив — принимаем код / пароль.
+  if (!isWizardActive(chatId)) {
+    const pending = peekPendingLogin(chatKey);
+    const maybeCode = extractLoginCode(text);
+    if (pending && maybeCode) {
+      try {
+        const user = await ensureDbUser(chatId, from);
+        touch(chatId, {
+          step: 'code',
+          phone: pending.phone,
+          userId: user.id,
+        });
+        console.log(
+          `[workerConnect] revive wizard chat=${chatKey} phone=${pending.phone} (pending ещё жив)`,
+        );
+      } catch (err) {
+        console.error('[workerConnect] revive fail:', err.message);
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+
+  const w = wizards.get(chatKey);
   if (!w) return false;
 
   if (text === '/cancel' || /^отмена$/i.test(text)) {
     const wasNotify = w.step === 'notify_bind';
-    clearWizard(chatId);
+    clearWizard(chatId, { keepPending: false });
     await apiSend(api, chatId, wasNotify ? 'Добавление отменено.' : 'Подключение отменено.');
     return true;
   }
@@ -631,6 +846,18 @@ async function handleText(api, chatId, text, from) {
   }
 
   try {
+    if (w.step === 'choose' || w.step === 'qr') {
+      await apiSend(
+        api,
+        chatId,
+        w.step === 'qr'
+          ? 'Жду сканирование QR. Не присылай номер сюда — отсканируй код в Telegram → Устройства.'
+          : 'Выбери способ кнопками: QR или «По номеру».',
+        w.step === 'qr' ? cancelKeyboard() : connectChoiceKeyboard(),
+      );
+      return true;
+    }
+
     if (w.step === 'phone') {
       const phone = normalizePhone(text);
       if (phone.length < 11) {
@@ -643,27 +870,51 @@ async function handleText(api, chatId, text, from) {
         return true;
       }
       await apiSend(api, chatId, `⏳ Запрашиваю код для <code>${esc(phone)}</code>…`);
-      const result = await startLogin(String(chatId), phone);
-      touch(chatId, { step: 'code', phone, userId: w.userId });
-      await apiSend(
-        api,
-        chatId,
-        `${codeHint(!!result?.isCodeViaApp)}\n\nПришли код цифрами.`,
-        codeKeyboard(),
-      );
+      // startLogin отдельно от ответа боту: иначе «fetch failed» к api.telegram.org
+      // выглядит как «код не ушёл», хотя sendCode уже ок.
+      const result = await startLogin(chatKey, phone);
+      const usePhone = result.phone || phone;
+      touch(chatId, { step: 'code', phone: usePhone, userId: w.userId });
+      const hint =
+        `${codeHint(!!result?.isCodeViaApp)}\n\n` +
+        'Пришли <b>только код</b> (можно с пробелами). Не запрашивай номер повторно.';
+      try {
+        await apiSend(api, chatId, hint, codeKeyboard());
+      } catch (notifyErr) {
+        console.error(
+          '[workerConnect] код запрошен, но ответ боту не ушёл:',
+          notifyErr.message,
+        );
+        // Ещё одна попытка через паузу — сеть к Bot API часто мигает.
+        await new Promise((r) => setTimeout(r, 1500));
+        try {
+          await apiSend(api, chatId, hint, codeKeyboard());
+        } catch (retryErr) {
+          console.error('[workerConnect] повторный ответ боту тоже fail:', retryErr.message);
+          // Wizard уже на step=code — воркер может просто прислать цифры.
+        }
+      }
       return true;
     }
 
     if (w.step === 'code') {
-      const code = String(text || '').replace(/\s+/g, '');
-      if (!/^\d{4,8}$/.test(code)) {
-        await apiSend(api, chatId, 'Код — только цифры (обычно 5–6 знаков).', codeKeyboard());
+      const code = extractLoginCode(text);
+      console.log(
+        `[workerConnect] code step chat=${chatKey} phone=${w.phone} raw=${JSON.stringify(String(text).slice(0, 40))} extracted=${code || '-'}`,
+      );
+      if (!code) {
+        await apiSend(
+          api,
+          chatId,
+          'Не вижу код из 4–8 цифр. Пришли код из приложения Telegram на этом номере.',
+          codeKeyboard(),
+        );
         return true;
       }
       await apiSend(api, chatId, '⏳ Проверяю код…');
-      const result = await confirmCode(String(chatId), w.phone, code);
+      const result = await confirmCode(chatKey, w.phone, code);
       if (result.status === 'needPassword') {
-        touch(chatId, { step: 'password' });
+        touch(chatId, { step: 'password', phone: result.phone || w.phone });
         await apiSend(
           api,
           chatId,
@@ -672,7 +923,14 @@ async function handleText(api, chatId, text, from) {
         );
         return true;
       }
-      await finishConnect(api, chatId, w.userId, w.phone, result.sessionString, isAdmin);
+      await finishConnect(
+        api,
+        chatId,
+        w.userId,
+        result.phone || w.phone,
+        result.sessionString,
+        isAdmin,
+      );
       return true;
     }
 
@@ -683,15 +941,35 @@ async function handleText(api, chatId, text, from) {
         return true;
       }
       await apiSend(api, chatId, '⏳ Проверяю пароль…');
-      const result = await confirmPassword(String(chatId), w.phone, password);
-      await finishConnect(api, chatId, w.userId, w.phone, result.sessionString, isAdmin);
+      const result = await confirmPassword(chatKey, w.phone, password);
+      await finishConnect(
+        api,
+        chatId,
+        w.userId,
+        result.phone || w.phone,
+        result.sessionString,
+        isAdmin,
+      );
       return true;
     }
   } catch (err) {
+    const raw = `${err.errorMessage || ''} ${err.message || ''}`;
     console.error('[workerConnect]', err.errorMessage || err.message);
     const msg = loginErrorMessage(err);
-    // На фатальных ошибках кода — можно начать заново с телефона
-    if (/PHONE_CODE|SEND_CODE|FLOOD|PHONE_NUMBER/i.test(`${err.errorMessage || ''} ${err.message || ''}`)) {
+    // Неверный код — НЕ сбрасываем wizard/pending: иначе второй ввод
+    // того же кода из приложения уже не к чему привязать (hash убит).
+    if (/PHONE_CODE_INVALID/i.test(raw) && w?.step === 'code') {
+      touch(chatId, { step: 'code' });
+      await apiSend(
+        api,
+        chatId,
+        `❌ ${esc(msg)}\n\nПришли код ещё раз (или «код SMS»). Не жми номер заново — старый код сгорит.`,
+        codeKeyboard(),
+      );
+      return true;
+    }
+    // Просрочен / лимит / номер — начинаем с телефона
+    if (/PHONE_CODE_EXPIRED|SEND_CODE|FLOOD|PHONE_NUMBER/i.test(raw)) {
       clearWizard(chatId);
       await apiSend(
         api,
@@ -740,6 +1018,27 @@ async function handleCallback(api, query) {
         query.message.message_id,
         `❌ ${esc(loginErrorMessage(err))}`,
       );
+    }
+    return true;
+  }
+
+  if (data === 'wrk:connect:qr') {
+    const isAdmin = operatorAccess.isAdminSync(chatId, from?.username);
+    try {
+      await beginQrFlow(api, chatId, from, isAdmin);
+    } catch (err) {
+      console.error('[workerConnect] QR start:', err.errorMessage || err.message);
+      clearWizard(chatId);
+      await apiSend(api, chatId, `❌ ${esc(loginErrorMessage(err))}`, connectChoiceKeyboard());
+    }
+    return true;
+  }
+
+  if (data === 'wrk:connect:phone') {
+    try {
+      await startPhoneWizard(api, chatId, from, { editMessageId: query.message.message_id });
+    } catch (err) {
+      await apiSend(api, chatId, `❌ ${esc(loginErrorMessage(err))}`, connectChoiceKeyboard());
     }
     return true;
   }
@@ -911,42 +1210,35 @@ async function handleCallback(api, query) {
     return true;
   }
 
-  if (data === 'wrk:sms') {
-    const w = wizards.get(String(chatId));
-    if (!w || w.step !== 'code' || !w.phone) {
-      await apiSend(api, chatId, 'Сначала запроси код (номер → жди код).');
-      return true;
-    }
-    try {
-      await apiSend(api, chatId, '⏳ Прошу Telegram прислать код по SMS…');
-      const result = await resendLoginCode(String(chatId), w.phone);
-      touch(chatId, { step: 'code' });
-      const via = result?.isCodeViaApp
-        ? 'Telegram снова шлёт в <b>приложение</b> (SMS недоступен сейчас). Открой Telegram на этом номере или подожди ~30 мин.'
-        : 'Должен прийти <b>SMS</b> (или звонок). Проверь телефон.';
-      await apiSend(api, chatId, `${via}\n\nПришли код цифрами.`, codeKeyboard());
-    } catch (err) {
-      console.error('[workerConnect] sms resend:', err.errorMessage || err.message);
-      await apiSend(
-        api,
-        chatId,
-        `❌ ${esc(loginErrorMessage(err))}\n\nМожно ввести код из приложения или начать заново.`,
-        codeKeyboard(),
-      );
-    }
-    return true;
-  }
-
   return false;
 }
 
-async function apiCall(apiBase, method, payload) {
-  const res = await fetch(`${apiBase}/${method}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  return res.json().catch(() => ({}));
+async function apiCall(apiBase, method, payload, { retries = 3 } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    try {
+      const res = await fetch(`${apiBase}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`Bot API ${method} HTTP ${res.status}: ${body.slice(0, 120)}`);
+      }
+      return res.json().catch(() => ({}));
+    } catch (err) {
+      lastErr = err;
+      console.error(
+        `[workerConnect] apiCall ${method} attempt ${attempt}/${retries}:`,
+        err.message,
+      );
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, 400 * attempt * attempt));
+      }
+    }
+  }
+  throw lastErr || new Error(`Bot API ${method} failed`);
 }
 
 async function apiSend(apiBase, chatId, text, reply_markup) {
@@ -958,6 +1250,17 @@ async function apiSend(apiBase, chatId, text, reply_markup) {
   };
   if (reply_markup) payload.reply_markup = reply_markup;
   return apiCall(apiBase, 'sendMessage', payload);
+}
+
+async function apiSendPhoto(apiBase, chatId, photoUrl, caption, reply_markup) {
+  const payload = {
+    chat_id: chatId,
+    photo: photoUrl,
+    caption,
+    parse_mode: 'HTML',
+  };
+  if (reply_markup) payload.reply_markup = reply_markup;
+  return apiCall(apiBase, 'sendPhoto', payload);
 }
 
 async function apiEdit(apiBase, chatId, messageId, text, reply_markup) {

@@ -11,6 +11,7 @@
  *  9) сленг-маркеры аккаунта
  * 10) callback к его мелочи (через memory / лёгкий хинт)
  */
+const db = require('../db');
 
 function hashSeed(str) {
   let h = 2166136261;
@@ -161,15 +162,12 @@ function echoLengthClip(userMessage, reply) {
   return reply;
 }
 
-const AFTERTHOUGHTS = [
-  'а ещё)',
-  'кстати да)',
-  'ой и ещё)',
-  'забыла сказать)',
-  'ну и всё)',
-];
+// Пустые досылки «а ещё)» / «забыла сказать)» без содержания палят бота
+// и засоряют чат. Выключено: либо осмысленная мысль, либо ничего.
+const AFTERTHOUGHTS = [];
 
 function pickAfterthought(prevOutText) {
+  if (!AFTERTHOUGHTS.length) return null;
   const prev = String(prevOutText || '');
   if (!prev || prev.length < 8) return null;
   if (/\?/.test(prev)) return null;
@@ -179,6 +177,7 @@ function pickAfterthought(prevOutText) {
 }
 
 function afterthoughtDelayMs(accountId) {
+  if (!AFTERTHOUGHTS.length) return null;
   const pace = getAccountPace(accountId);
   if (Math.random() > pace.afterthoughtChance) return null;
   return 20000 + Math.floor(Math.random() * 70000);
@@ -244,7 +243,8 @@ function awayReturnHint(lastAssistantAgeMin) {
   );
 }
 
-async function lastAssistantAgeMinutes(db, accountId, peerId) {
+/** Возраст последнего assistant-сообщения в минутах. db — свой, не аргумент. */
+async function lastAssistantAgeMinutes(accountId, peerId) {
   try {
     const [[row]] = await db.execute(
       `SELECT TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS age_min

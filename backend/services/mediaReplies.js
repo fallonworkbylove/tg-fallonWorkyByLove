@@ -88,23 +88,97 @@ function parseInviteHash(link) {
   return bare ? bare[1] : null;
 }
 
+/** Протухшие invite — не долбим ImportChatInvite каждые N секунд. */
+const DEAD_INVITE_TTL_MS = 6 * 60 * 60 * 1000;
+const deadInviteUntil = new Map();
+
 /**
- * Приводит публичную ссылку/@username к чистому username.
+ * Разбор ссылки: чат + опциональный топик форума.
+ * t.me/c/3983818988/2 → peer -100…, topicId 2
+ * t.me/name/42 → username + topic/msg 42
+ * t.me/+hash → invite
  */
-function parseUsername(link) {
-  let s = String(link).trim();
-  s = s.replace(/^https?:\/\//i, '');
+function parseMediaLink(link) {
+  const raw = String(link || '').trim();
+  const inviteHash = parseInviteHash(raw);
+  if (inviteHash) return { kind: 'invite', hash: inviteHash, topicId: null, peer: null };
+
+  let s = raw.replace(/^https?:\/\//i, '');
   s = s.replace(/^(?:t\.me\/|telegram\.me\/)/i, '');
   s = s.replace(/^@/, '');
-  // Ссылки вида t.me/channel/123 и t.me/c/123/456 указывают на канал,
-  // а не на username. Для /c/ Telegram API ожидает внутренний peer id.
   const parts = s.split('/').filter(Boolean);
   if (parts[0]?.toLowerCase() === 'c' && /^\d+$/.test(parts[1] || '')) {
-    return `-100${parts[1]}`;
+    const topicId = /^\d+$/.test(parts[2] || '') ? Number(parts[2]) : null;
+    return { kind: 'peer', peer: `-100${parts[1]}`, topicId, hash: null };
   }
+  const username = parts[0] || '';
+  const topicId = /^\d+$/.test(parts[1] || '') ? Number(parts[1]) : null;
+  return { kind: 'username', peer: username, topicId, hash: null };
+}
 
-  // Убираем возможный хвост вида «/123» (ссылка на сообщение).
-  return parts[0] || '' ;
+/**
+ * Приводит публичную ссылку/@username к чистому username / peer id.
+ */
+function parseUsername(link) {
+  const parsed = parseMediaLink(link);
+  if (parsed.kind === 'invite') return '';
+  return parsed.peer || '';
+}
+
+function markInviteDead(hash) {
+  if (!hash) return;
+  deadInviteUntil.set(String(hash), Date.now() + DEAD_INVITE_TTL_MS);
+}
+
+function isInviteMarkedDead(hash) {
+  const until = deadInviteUntil.get(String(hash)) || 0;
+  if (Date.now() >= until) {
+    deadInviteUntil.delete(String(hash));
+    return false;
+  }
+  return true;
+}
+
+/** Кэш: invite hash → chat id, если уже были участником. */
+const inviteChatCache = new Map();
+
+/**
+ * Когда invite протух, но аккаунт уже в канале/группе — ищем чат в диалогах.
+ * Без этого медиа умирает навсегда после ротации ссылки.
+ */
+async function findJoinedInviteChat(client, inviteHash) {
+  const cachedId = inviteChatCache.get(String(inviteHash));
+  if (cachedId != null) {
+    try {
+      return await client.getEntity(cachedId);
+    } catch (_) {
+      inviteChatCache.delete(String(inviteHash));
+    }
+  }
+  // Свежие диалоги: megagroup/channel с медиа — эвристика «есть фото в последних».
+  const dialogs = await client.getDialogs({ limit: 40 });
+  for (const d of dialogs || []) {
+    const ent = d.entity || d;
+    if (!ent) continue;
+    const isGroup =
+      ent.className === 'Channel' ||
+      ent.megagroup ||
+      ent.broadcast ||
+      ent.className === 'Chat';
+    if (!isGroup) continue;
+    try {
+      const msgs = await client.getMessages(ent, { limit: 8 });
+      const hasMedia = (msgs || []).some((m) => classifyMedia(m));
+      if (hasMedia) {
+        const id = ent.id ?? d.id;
+        if (id != null) inviteChatCache.set(String(inviteHash), id);
+        return ent;
+      }
+    } catch (_) {
+      /* next dialog */
+    }
+  }
+  return null;
 }
 
 /**
@@ -113,17 +187,33 @@ function parseUsername(link) {
  */
 async function resolveMediaChat(client, link) {
   const raw = String(link).trim();
+  const parsed = parseMediaLink(raw);
 
   // Приватная пригласительная ссылка.
-  const inviteHash = parseInviteHash(raw);
-  if (inviteHash) {
+  if (parsed.kind === 'invite') {
+    const inviteHash = parsed.hash;
+    if (isInviteMarkedDead(inviteHash)) {
+      const existing = await findJoinedInviteChat(client, inviteHash).catch(() => null);
+      if (existing) return existing;
+      const err = new Error('INVITE_HASH_EXPIRED');
+      err.errorMessage = 'INVITE_HASH_EXPIRED';
+      throw err;
+    }
     // Сначала проверяем — вдруг уже участник (тогда сразу получим сам чат).
     try {
       const checked = await client.invoke(
         new Api.messages.CheckChatInvite({ hash: inviteHash }),
       );
       if (checked.chat) return checked.chat;
-    } catch (_) {
+    } catch (e) {
+      const msg = `${e?.errorMessage || ''} ${e?.message || ''}`;
+      if (/INVITE_HASH_EXPIRED|INVITE_HASH_INVALID|INVITE_REQUEST_SENT/i.test(msg)) {
+        // Хэш мёртв, но юзербот мог уже быть в чате — ищем среди диалогов.
+        const existing = await findJoinedInviteChat(client, inviteHash).catch(() => null);
+        if (existing) return existing;
+        markInviteDead(inviteHash);
+        throw e;
+      }
       // не критично, пробуем вступить ниже
     }
     // Вступаем.
@@ -133,20 +223,33 @@ async function resolveMediaChat(client, link) {
       );
       if (res.chats && res.chats[0]) return res.chats[0];
     } catch (e) {
-      if (!String(e.message || '').includes('USER_ALREADY_PARTICIPANT')) {
+      const msg = `${e?.errorMessage || ''} ${e?.message || ''}`;
+      if (/INVITE_HASH_EXPIRED|INVITE_HASH_INVALID/i.test(msg)) {
+        const existing = await findJoinedInviteChat(client, inviteHash).catch(() => null);
+        if (existing) return existing;
+        markInviteDead(inviteHash);
         throw e;
       }
-      // Уже участник — ещё раз запрашиваем сам чат.
-      const checked = await client.invoke(
-        new Api.messages.CheckChatInvite({ hash: inviteHash }),
-      );
-      if (checked.chat) return checked.chat;
+      if (!msg.includes('USER_ALREADY_PARTICIPANT')) {
+        throw e;
+      }
+      // Уже участник — CheckChatInvite часто всё ещё отдаёт chat.
+      try {
+        const checked = await client.invoke(
+          new Api.messages.CheckChatInvite({ hash: inviteHash }),
+        );
+        if (checked.chat) return checked.chat;
+      } catch (_) {
+        /* fall through */
+      }
+      const existing = await findJoinedInviteChat(client, inviteHash).catch(() => null);
+      if (existing) return existing;
     }
     throw new Error('Не удалось получить чат по приватной ссылке');
   }
 
-  // Публичная ссылка / @username.
-  const username = parseUsername(raw);
+  // Публичная / @username / t.me/c/…
+  const username = parsed.peer;
   if (!username) throw new Error('Пустая или некорректная ссылка на медиа-чат');
   const entity = await client.getEntity(username);
   // Пытаемся вступить (для приватного чтения истории). Ошибки игнорируем —
@@ -187,16 +290,28 @@ async function getMediaItems(client, accountId, link) {
   const cached = mediaCache.get(key);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached;
 
+  const parsed = parseMediaLink(link);
   const entity = await resolveMediaChat(client, link);
-  const messages = await client.getMessages(entity, { limit: FETCH_LIMIT });
+  const fetchOpts = { limit: FETCH_LIMIT };
+  // Форум-топик / тред: replyTo = id корневого сообщения топика.
+  if (parsed.topicId && Number.isFinite(parsed.topicId) && parsed.topicId > 0) {
+    fetchOpts.replyTo = parsed.topicId;
+  }
+  let messages = await client.getMessages(entity, fetchOpts);
+
+  // Если топик указан, но API вернул пусто — не мешаем весь чат (чужие паки).
+  // Один мягкий fallback без replyTo только когда topicId не было.
+  if ((!messages || messages.length === 0) && !parsed.topicId) {
+    messages = await client.getMessages(entity, { limit: FETCH_LIMIT });
+  }
 
   const items = [];
-  for (const msg of messages) {
+  for (const msg of messages || []) {
     const type = classifyMedia(msg);
     if (type) items.push({ id: msg.id, type, msg });
   }
 
-  const record = { at: Date.now(), entity, items };
+  const record = { at: Date.now(), entity, items, topicId: parsed.topicId || null };
   mediaCache.set(key, record);
   return record;
 }
@@ -463,6 +578,10 @@ module.exports = {
   clearMediaCache,
   classifyMedia,
   resolveMediaChat,
+  parseMediaLink,
+  parseUsername,
+  parseInviteHash,
+  markInviteDead,
   tokenizeMediaContext,
   expandMediaContextTokens,
   looksLikePersonMedia,
