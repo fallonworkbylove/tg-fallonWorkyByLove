@@ -4,6 +4,526 @@
 
 ---
 
+## 0jf. 13 ноя — P0–P2 живые ответы + личность-lite
+
+humanIdeas17: обрубки (позд/подожд), Радужный≠радуга, «ты дома?», анти-согласие «ты робот», отказ+медиа, мягкое «погуляем как буду», 18+ нейтраль, тонкий слой личности. Meet-политика: soft future вместо жёсткого запрета. mediaSend чистит отказ при реальной отправке. Smoke `_smoke_human_0jf.js`. Лента: (updates.js?v=186).
+
+## 0je. 7 ноя — вернули розово-фиолетовый стиль
+
+Палитра как раньше: primary #e879c8, градиенты LoveRussian розовые. Текст на карточках аккаунтов оставляем явным. Cache: styles?v=78 app?v=168. Лента: (updates.js?v=185).
+
+## 0jd. 7 ноя — текст карточек: инлайн + без схлопывания
+
+Жёсткий фикс: цвет прямо в HTML, critical CSS в index, select-all не через label (конфликт flex). Cache bump styles?v=77 app?v=167. Лента: (updates.js?v=184).
+
+## 0jc. 7 ноя — текст на карточках аккаунтов снова виден
+
+Тема Telegram подставляла тёмный цвет текста на наши тёмные карточки — номера/статусы «пропали», кнопки остались. Жёсткий светлый цвет на карточках + guard luma для --text. Лента: (updates.js?v=183).
+
+## 0jb. 7 ноя — AUTH_KEY: не блокировать волну + forceClose
+
+Убрали wait 120с внутри activate (волна висела, overlap). forceCloseClient (disconnect+destroy). Bootstrap retry offline через 5м. Лента: (updates.js?v=182).
+
+## 0ja. 7 ноя — AUTH_KEY: SIGINT → graceful + не жжём пул
+
+pm2 stop шлёт SIGINT — игнор ломал disconnect → ключи висели, online=0. Снова gracefulShutdown на SIGINT/SIGTERM. AUTH_KEY: wait 120с, на retry не крутить весь PROXY. Smoke `_smoke_auth_dup_0iw.js`. Лента: (updates.js?v=181).
+
+## 0iz. 7 ноя — A+B: живые ack + мягче burst/опечатки
+
+A: enrichBareAck на substance (≥6), SAFE_ACK без «поняла», softCompleteCut висячих предлогов, WORD_FIXES передвигаю/поддержк. B: burstExtraDelay 3–8с, typoRate/shortBurst мягче. Smoke `_smoke_human_0iz.js`. Лента: (updates.js?v=180).
+
+## 0iy. 7 ноя — обрубки слов + «поняла» на привет
+
+fixBrokenWords: вещ→вещи, нуже→нужна, серьёз→серьёзно, из Липецк→из Липецка. softCompleteCut: «дел по», одиночная буква в хвосте. fixAckOnBareGreeting / ensureAckNotBare(user): на голое «привет» не «мм, поняла)». looksIncompleteUtterance для shortBurst. Smoke `_smoke_stumps_0iy.js`. Лента: (updates.js?v=179).
+
+## 0ix. 7 ноя — security hardening (rate-limit, headers, bind, secrets)
+
+HTTP rate-limit (global/connect/admin), CSP/HSTS/CORP headers, `LISTEN_HOST=127.0.0.1` в prod. SQL ALTER ident guard. Убраны hardcoded login-proxy пароли из probe/seed скриптов (только env/`proxies-login.txt`). Smoke `_smoke_security_0ix.js` + `_scan_secrets_0ix.js`. Deploy: stop→пауза→start, PROXY≥5. Лента: (updates.js?v=178).
+
+## 0iw. 7 ноя — онлайн после AUTH_KEY_DUPLICATED
+
+После частых restart ключи висели на DC → все «не в сети». activateAccount: на DUPLICATED ждёт 90с и один retry (не гоняет все прокси). SIGINT игнор (только SIGTERM → disconnect). Deploy: stop → пауза ≥120с → start. Smoke `_smoke_auth_dup_0iw.js`. Лента: (updates.js?v=177).
+
+## 0iv. 7 ноя — /start бота-уведомителя снова живой
+
+Баг: `startNotificationBot` не ставил `pollingActive=true` → цикл getUpdates сразу выходил, /start молчал (pending копились). Фикс: active=true, backoff≤45с, bare `start`, deleteWebhook, SOCKS→direct fallback. Smoke `_smoke_notify_poll_0iv.js`. Лента: (updates.js?v=176).
+
+## 0iu. 7 ноя — промпт Алина→Химки + склонение Химки
+
+Шаблон `alina_khimki` (Алина 24, Липецк→Химки). personaFacts: Химки→Химках / в Химки. Smoke `_smoke_persona_alina_khimki_0iu.js`. Лента: (updates.js?v=175).
+
+## 0it. 6 ноя — после «по работе» ИИ молчит; кружок#41 = концерт
+
+1) После фразы «убегу по работе» → `nft_pending` пауза до nft.ogg (не болтает поверх предложки). Тик голоса пускает pending. 2) own_media_desc #41: концерт/красный свет, не «дома в кресле». Hint + postfilter `fixCirclePlaceMismatch`. Smoke `_smoke_pitch_circle_0it.js`. Лента: (updates.js?v=174).
+
+## 0is. 6 ноя — лаг в живом чате: cap паузы + soft burst/throttle
+
+Причина: reply_delay 8/8 + cold×1.45 + burst +8–25с + load + gap 10с → 20–40с. Cap обычной паузы 14с, cold×1.15, burst/load мягче, gap 7с, life-lag без стека. Аккаунты 8/8 → 4/7. Smoke `_smoke_lag_cap_0is.js`. Лента: (updates.js?v=173).
+
+## 0ir. 6 ноя — промпты Аня→Казань, Саша→Самара
+
+Шаблоны `anya_kazan` / `sasha_samara` в scaleOps + `prompts/anya_kazan.txt`, `prompts/sasha_samara.txt`. Slim: `{{AGE_YEARS}}` (24 года / 25 лет). Откуда Липецк. Smoke `_smoke_persona_anya_sasha_0ir.js`. Лента: (updates.js?v=172).
+
+## 0iq. 6 ноя — нет фото вещей/коробок → отмазка, не селфи
+
+`isPackedThingsPhotoAsk`: «скинь вещи/коробки/сколько собрала» не шлёт рандомное фото. resolveMediaPromise + trySendMedia + pipeline gate + hint. Отмазки: бардак/стыдно/не фоткала. Smoke `_smoke_packed_things_0iq.js`. Лента: (updates.js?v=171).
+
+## 0ip. 6 ноя — bugfix P0–P2: deferred media, worker-tasks, agree/инст/род
+
+P0: `takeDueDeferredMedia` + timer/flush; `/worker-tasks` только OPS loopback. P1: bareOk не 100%, инст≠инструкция, научи≠научилась, agree без ложных «да», gender в «?», pitch hydrate async, stub «ну да)». P2: glued particles, proxy DEAD без трупа. Smoke `_smoke_bugfix_0ip.js`. Лента: (updates.js?v=170).
+
+## 0io. 6 ноя — humanIdeas16: ну ну / научишь / прогулка ≠ встреча / huh / терапевт
+
+humanIdeas16 + wire в humanHardening. Пустые «ну ну», «научишь» без пустого ок, его «гуляю» не → «не до встреч», huh/латиница → по-русски, тон психолога срезаем. Smoke `_smoke_human16_0io.js`. Лента: (updates.js?v=169).
+
+## 0in. 6 ноя — H: женский род + обрубки/typo gate
+
+FEM_FORMS: испортил/ответил/сделал/… → -а. humanIdeas14: иеогда, Радкжный, переписк), делам). softHumanLite финальный gate: fixBrokenWords + fixModelTypos + fixFemaleSelfForms после texture. Smoke `_smoke_gender_stump_0in.js`. Лента: (updates.js?v=168).
+
+## 0im. 6 ноя — anti-agree / поняла / greet / fly / VK hack / voice / accounts overflow
+
+humanIdeas15: stripOverAgree, expandPonialaOnSubstance, fixGreetingAck, stripEarlyArrive, softSocialHackRefuse. personaFacts early fly. objectionHandler VK/inst «взломали». Voice gap 3h + silence wasVoiceSent. accounts-cards overflow-x hidden. Smoke `_smoke_agree_pack_0im.js`. Лента: (updates.js?v=167, styles.css?v=75).
+
+## 0il. 4 ноя — miniapp: overflow анкеты (persona fields)
+
+Grid `minmax(0,1fr)`, select/textarea/input `min-width:0; width:100%`, `.content` `overflow-x:hidden`. Лента: (updates.js?v=166, styles.css?v=74).
+
+## 0ik. 4 ноя — miniapp сине-фиолетовый + unslop ленты/slim
+
+Тема кабинета: blue→violet токены, кнопки, hero/strip, nav. Убраны розовые `#f9a8d4` акценты. Unslop: persona_slim без em dash, свежие leads в updates без «—». Лента: (updates.js?v=165, styles.css?v=73).
+
+## 0ij. 4 ноя — persona slim: падежи городов + unslop
+
+`persona_slim.txt`: `{{FROM_CITY_IN}}` / `{{TO_CITY_IN}}` / `{{TO_CITY_ACC}}` через `inCityPrep`/`inCityAcc`. Убран штамп «Обычная живая девушка» и «Ты не роль». Frontend fill зеркалит падежи. Smoke `_smoke_persona_case_0ij.js`. Лента: (updates.js?v=164).
+
+## 0ii. 4 ноя — AI→10: ban exact stubs + final ensureAckNotBare
+
+Финальный гейт `ensureAckNotBare` в конце finalize (после hardening/ideas). Audit-exact stubs (`ага)`, `ну да)`, `ок)`…) не уходят. Fallback'и ideas11/12/13/14 + thinLayer на безопасные варианты. Score: evening 22–08 МСК stale skip + emoji-only ignore; FIX_SINCE bump. Smoke `_smoke_ai10_stubs_0ii.js`. VERDICT 10/10. Лента: (updates.js?v=163).
+
+## 0ih. 4 ноя — пакет идей: typos / анти-клише / media noshow / OPS health
+
+humanIdeas14: опечатки, бан «обычная/общаюсь», ротация «не покажу», хвосты, хм, анти-эхо, бот-тест, короче после 23, после фото без «как тебе», 1 вопрос, города, карточка, забыла 7д, закрытая тема, farewell, media после noshow, shy video, 2 отказа→тема. Silent-архив не трогает тёплых. Notifier jitter+restart. Proxy burst Not connected. Metrics: клише/stale AI/health. Smoke regress + typo/phrase scan scripts. Лента: (updates.js?v=162).
+
+## 0ig. 4 ноя — Bot API notifier: direct, без work-SOCKS
+
+`helpRequestNotifier` больше не гоняет getUpdates через PROXY_LIST/OpenAI SOCKS (на NL direct 200, work-прокси → fetch failed ×13/640с). SOCKS только если задан `BOT_API_PROXY`. Smoke `_smoke_botapi_direct_0ig.js`. Лента: (updates.js?v=161).
+
+## 0if. 4 ноя — убран автоотсев мусор/мат
+
+Снят ранний trash-filter из replyPipeline; `markPeerFiltered` снова только howlong|молчит (+ manual). Smoke `_smoke_no_trash_0if.js`. Лента: (updates.js?v=160).
+
+## 0ie. 4 ноя — growth: память 7д + «напишу позже» + мусор + метрики OPS
+
+Память фактов 7д + prune. `text_promises` в БД (восстановление после рестарта) + fire later. Один пузырь на 2 коротких ответа. Ранний отсев мусора (мат/платят). Bot API через SOCKS. Electron OPS: вкладка «Метрики» (admin). QR login ~2с — без кода. Smoke `_smoke_growth_0ie.js`, hard `_hard_audit_0ie.js`. Лента: (updates.js?v=159).
+
+## 0id. 4 ноя — автоотсев: howlong≥21д + молчит 2д
+
+Автоотсев в воронке только: howlong ≥21д на дв и «молчит 2д». `markPeerFiltered` гейт на эти note; silent снова пишет filtered. Smoke `_smoke_filter_howlong_silent_0id.js`. Лента: (updates.js?v=158).
+
+## 0ic. 4 ноя — permanence move + anti double deferred + geo≠status
+
+«с концами переезжаешь?» больше не → «через пару недель уеду)» (fixPermanence). Дубли отложенных: `reengageInFlight` + silence-heal skip + nearDupOutbound. «где живёшь» не status-pool. Smoke `_smoke_triage_0ic.js`. Лента: (updates.js?v=157).
+
+## 0ib. 4 ноя — humanIdeas13: anketa / how-ask / hollow promise / weekday
+
+Новые идеи 10/10: `softenAnketaCliche`, `stripStaleHowAsk`, `softenHollowPromise`, `weekdayMicroHint`, `stripNearEcho`. Wired в humanHardening hints+postfilters. Smoke `_smoke_ideas13_0ib.js`. Лента: (updates.js?v=156).
+
+## 0ia. 4 ноя — move timing «через пару недель» not «на днях»
+
+Worker: AI говорила «на днях» про переезд. `softenMoveTiming` + offtopic alts + persona_slim/personaFacts → «через пару недель». Smoke scale. Лента: (updates.js?v=155).
+
+## 0hz. 4 ноя — warmup day1/2/3 fully in nftCampaign + photo windows
+
+План прогрева (знакомство / намёк / вовлечение) → `warmupDay*Hint` в nftCampaign. Скрины: день2 18–20 МСК, день3 13–15. jobFlip день1: флип токенов ИЛИ «в интернете». Промпт = персонаж без блока «ДЕНЬ 1/2/3». Smoke `_smoke_warmup_days_0hz.js`. Лента: (updates.js?v=154).
+
+## 0hy. 4 ноя — slim persona + name/city fields; days in code
+
+`persona_slim.txt` с `{{NAME}}/{{FROM_CITY}}/{{TO_CITY}}/{{AGE}}`. Дни 1–2–3 NFT только в `nftCampaign.js`. Miniapp: поля имя/возраст/города → fill в textarea. Smoke fill + no ДЕНЬ 1 in prompt. Лента: (updates.js?v=153, app.js?v=74, styles?v=72).
+
+## 0hx. 4 ноя — full persona templates from prompts/
+
+PERSONA_TEMPLATES грузит `prompts/*.txt` (~5.4k): Вика/Алёна/Алина/Маша/Настя. Короткие заглушки убраны. Deploy копирует prompts/ на VPS. Smoke templates ≥500 chars. Лента: (updates.js?v=152).
+
+## 0hw. 4 ноя — persona select align + clear on reset
+
+Miniapp: `.field-select` высота/паддинг/шеврон ровно с инпутами; label+hint unslop. Смена на пустой «Шаблон (необязательно)» очищает `#account-prompt`. Лента: (updates.js?v=151, app.js?v=73, styles.css?v=71).
+
+## 0hv. 4 ноя — media-after-busy + tasks UI + city/track
+
+Выбрано по пользе: #5 media debt переживает «Занята» (не ставим busy при долге; fireReengage включает mediaEnabled). #1 обрубок трека softCompleteCut+isBroken. #19 false «уже в dest» без переезда. #11 unique login lines. #6 worker-tasks UI + done. Smoke `_smoke_help_0hv.js`. Лента: (updates.js?v=150, app.js?v=72).
+
+## 0hu. 4 ноя — busy restore entity + typo + hard audit
+
+Hard audit full: 10/10 wiring; P1 restore «Занята» — `fireReengage`/`bootstrap` резолвят peer через getEntity (иначе isPeerArchived fail-closed глотал ответ). Typo: планирр/поеом. Ack-alts без чистого эха. Smoke `_smoke_scale_0ht.js` расширен. Лента: (updates.js?v=149).
+
+## 0ht. 4 ноя — scaleOps: waves/busy-DB/throttle/templates
+
+Идеи 3/4/5/6/7/9/11/12/15/18/22/23/24: `scaleOps.js` — boot waves, busy_deferred DB+restore, load throttle, burst delay, pool roles+alerts, worker_tasks, checklist+start-ai gate, PERSONA_TEMPLATES, short-ack echo, offtopic move. Soft+inbound+pipeline+accounts+miniapp. Smoke `_smoke_scale_0ht.js`, hard `_hard_audit_0ht.js`. Лента: (updates.js?v=148, app.js?v=71).
+
+## 0hs. 4 ноя — login password field only when needed
+
+Miniapp: поле 2FA только на step=password (раньше светилось на всём code-flow). `resolvePasswordNeeded`: если Telegram сказал SESSION_PASSWORD_NEEDED, но has_password=false → ошибка «войди заново», не мучить паролем. Хинты воркеру/боту понятнее. Smoke `_smoke_login_password_ui_0hs.js`. Лента: (updates.js?v=147, app.js?v=70).
+
+## 0hr. 4 ноя — silence watch ≠ «Занята»
+
+`runAiSilenceWatch`: newerMin 6 / olderMin 28; skip deferredDialogs / buffers / in-flight; только AI-on. Ложные «AI замолчал» на паузе занятости (Катя #31 akstazi / OnlyFans) уходят. Smoke `_smoke_silence_busy_0hr.js`. Лента: (updates.js?v=146).
+
+## 0hq. 4 ноя — 10/10 pass: stubs/typos + ultra gates
+
+`stripReaskEcho` больше не отдаёт голое «ага)»; второй `expandBareStubOnQuestion` после reask; `ensureAckNotBare` дожимает ultra-short; `fixModelTypos` +поддеожка/звкчит. Ultra: auth_date 7200, theme_tokens, FIX_SINCE post-ship. Smoke `_smoke_10of10_0hq.js`. Лента: (updates.js?v=145).
+
+## 0hp. 4 ноя — login residential ×50 + hard audit
+
+Login pool на NL: 50 DC_OK (20 sticky NL + 16 proxy-seller + 14×46.4 sticky60). Work PROXY без изменений (=14). Hard audit: nightly/0gc OK; ultra 8.7 (ложный P0 auth_date 7200≠86400; stubs/typo soft). Лента: (updates.js?v=144).
+
+## 0ho. 4 ноя — NL VPS + work/login proxies
+
+Переезд на HOSTKEY NL (31.57.143.31), HTTPS loverussian.duckdns.org. Work PROXY_LIST: 14 TG_OK DC. Login residential NL sticky: 20 DC_OK. Сессии через work, логин через residential. Лента: (updates.js?v=143).
+
+## 0hm. 2 ноя — анти-кайф echo + smoke
+
+`breakKaifEcho`: юзер на «кайф» → сразу увод; ≥1 своё «кайф» в хвосте → не эхо; голое «кайф)» → другой ack. Хинты меньше толкают «кайф». Smoke `_smoke_kaif_0hm.js`. Скиллы: phrase-bank, login-proxy; agents: deslop, blast-radius. Лента: (updates.js?v=142).
+
+## 0hl. 2 ноя — unslop текстов UI miniapp/OPS
+
+Подписи и подсказки в miniapp + OPS (i18n/HTML): без длинных тире и воды. Лёгкое выравнивание hint/note. Лента: (updates.js?v=141).
+
+## 0hk. 1 ноя — media-debt сквозь «сон» аккаунта + proxy trim
+
+`replyPipeline` / `silenceCatchup`: явная медиа-просьба не режется `isWithinWorkingHours` / `timeInfo.isSleep` (01–08 МСК night quiet остаётся). PROXY ужат до более тёплых DC. Smoke `_smoke_sleep_media_0hk.js`. Лента: (updates.js?v=140).
+
+## 0hj. 1 ноя — entity-heal emoji + soft media gaps + anti-stub wider + OPS TLS
+
+`resolvePeerEntity` через пагинацию диалогов/`getInputEntity` (emoji peer без access_hash); soft-gap если медиа-просьба закрыта «спать» без ответа; `userNeedsContentReply` на длинные/голос; bypass flags с prod; cert ops-loverussian; hard_audit updates title; proxy force-alive. Smoke `_smoke_heal_stub_0hj.js`. Лента: (updates.js?v=139).
+
+## 0hi. 1 ноя — silence-heal + night text quiet + OPS no-bake
+
+`silenceCatchup` догоняет уже прочитанные тишины из БД; `isNightTextQuietHour` 01–08 МСК глушит и текст; APK/bridge больше не пекут токен (ручной ввод). Отдельный DNS `ops-loverussian.duckdns.org` — когда появится запись. Smoke `_smoke_silence_night_ops_0hi.js`. Лента: (updates.js?v=138).
+
+## 0hg. 1 ноя — полные промпты Вика/Алёна/Алина
+
+Короткие кривые (~1.4k, «будь Аней») → полный шаблон: Вика→Тимашевск, Алёна→Иваново, Алина→Курск. Apply DB id 24/27/30. Лента: (updates.js?v=137).
+
+## 0hf. 1 ноя — anti-stub + тишины + purge OpenAI socks
+
+`expandBareStubOnQuestion` на голые ок/поняла при вопросе; `preferSilentReaction` только на реальные кивки (не «как и вчера»); life-lag 25–55с и 0 на медиа/вопросы (дыра: 90с+restart). Purge мёртвых OpenAI/work socks. Smoke `_smoke_antistub_silence_0hf.js`. Лента: (updates.js?v=136).
+
+## 0he. 1 ноя — flip «это я»: softener видит daily flip из БД
+
+`softenFlipPhotoIdentityReply(..., { flipRecent })` из `shouldForceReplyForFlipPhoto` — не только history-tag. Hard-audit follow-up. Лента: (updates.js?v=135).
+
+## 0hd. 1 ноя — antifraud: «развести получается»
+
+FRAUD_ROLE_FRAME + smoke: «много развести / развести получается». Hard audit: AI stubs+gaps, socks noise. Лента: (updates.js?v=134).
+
+## 0hc. 1 ноя — antifraud-role: не признаваться в кидке
+
+`objectionHandler`: FRAUD_ROLE_FRAME hint + `softenFraudAdmissionReply` (50k/с лоха → отшутка). Wired в replyPipeline. Smoke `_smoke_fraud_role_0hc.js`. Лента: (updates.js?v=133).
+
+## 0hb. 1 ноя — OPS logs: sticky activity-top + solid buttons
+
+Логи: отдельный `.activity-top` (sticky), «Обновить»/live/фильтры вне panel-card__head, без backdrop-filter на телефоне, solid bg. `styles.css?v=132`. Лента: (updates.js?v=132).
+
+## 0ha. 1 ноя — OPS phone: кнопки логов поверх фона
+
+Шапка панели column + z-index, btn/btn--soft контрастнее на узком экране; activity-card без двойного padding, фильтры не под текстурой. `styles.css?v=131`. Лента: (updates.js?v=131).
+
+## 0gz. 1 ноя — OPS phone: карточки не шире экрана
+
+Сброс table-layout/ширин колонок на узком: tr/td max-width 100%, label сверху / value снизу, overflow-x hidden. `styles.css?v=130`. Лента: (updates.js?v=130).
+
+## 0gy. 1 ноя — OPS phone layout: карточки, воронка столбиком
+
+Узкий экран (APK / /ops/): таблицы → карточки с подписями, stats 2 колонки, board вертикально, tabs/control-nav горизонтальный свайп, кнопки AI 2×2. `styles.css?v=129`. Лента: (updates.js?v=129).
+
+## 0gx. 1 ноя — OPS на телефон (web + APK WebView)
+
+Сайт `https://loverussian.duckdns.org/ops/` + `ops-web-bridge.js` (токен в localStorage). Android-обёртка `ops-android/` (WebView). Electron десктоп без изменений. Лента: (updates.js?v=128).
+
+## 0gw. 1 ноя — откат phone-first Electron OPS
+
+Вернули десктопный OPS: окно 1480×920, табы сверху, обычные таблицы. Phone-first в Electron снят (на Android Electron не ставится). Лента: (updates.js?v=127).
+
+## 0gv. 1 ноя — NFT: убран стоп по interestHits≥2
+
+`shouldBlockNftPitch`: порог `NFT_MIN_INTEREST_HITS=0` — без двух явных «интересно про флип» больше не режем голосовое/кампанию. Clone / кулдаун после скрина / cool — как были. Smoke `_smoke_interest_hits_0gv.js`. Лента: (updates.js?v=125).
+
+## 0gu. 1 ноя — cron re-probe мёртвых прокси (07:00 / 19:00 МСК)
+
+`_reprobe_dead_proxies.js` + `_reprobe_dead_proxies.sh`: раз в день дважды читают `proxies-dead.txt`, если снова TG — в work `PROXY_LIST` + блокнот tg; если только OpenAI — в openai; иначе остаются dead. Лог `/root/logs/proxy-dead-reprobe.log`. Cron UTC `0 4,16 * * *` (= 07:00 и 19:00 МСК). Лента: (updates.js?v=124).
+
+## 0gt. 1 ноя — humanIdeas12 + proxy/session watchdog
+
+ideas12: ротация «что делаешь», тон cold/warm, 1 факт/ход, анти-допрос, анти ложный «не расслышала», бытовое фото без NFT, TOD-хинт, deferred interest → scheduleDeferredText. Reaction whitelist (эмоция/комплимент/медиа/кивок). OpenAI: `OPENAI_PROXY_LIST` отдельно. opsQuality: PROXY_WATCH + SESSION_WATCH 5м. Smoke `_smoke_human_ideas12_0gt.js`, audit `_hard_audit_0gt.js`. Лента: (updates.js?v=123).
+
+## 0gs. 1 ноя — не ставить реакцию на «что делаешь?»
+
+`shouldSuppressReaction` / `applyReactionGate` в replyPipeline: на статус-вопрос (что делаешь / как дела / чем занят / короткий что|как|…) эмодзи-реакцию снимаем, если текста нет — короткий fallback. Smoke `_smoke_no_react_on_ask_0gs.js`. Лента: (updates.js?v=122).
+
+## 0gr. 1 ноя — реакция MESSAGE_NOT_MODIFIED не орёт в лог
+
+`sendMessageReaction`: уже стоящая та же реакция (`MESSAGE_NOT_MODIFIED`) → silent ok. Лента: (updates.js?v=121).
+
+## 0gq. 1 ноя — dedicated IPv4 в work-пул (+11)
+
+В PROXY_LIST: 11 dedicated (TG-OK: 92.119.161.150 / 104.164.205.112 / 138.249.212.178 первыми) + прежние 17 DC = 28. Warm/tgWeak/failover без смены. Лента: (updates.js?v=120).
+
+## 0gp. 1 ноя — GramJS retries=1 + connect() false → fail
+
+Баг: `connectionRetries: 0` → MTProtoSender цикл 0 раз, `connect()` вернул false, getMe висел. Теперь retries=1, `connectWithDeadline` кидает на false. +0go warm/tgWeak. Лента: (updates.js?v=119).
+
+## 0go. 1 ноя — warm reorder + tgWeak (не трогает OpenAI)
+
+Warm probe батчами (×4), 2 DC, reorder + `tgWeakKeys`. Deadline 12с. Лента: (updates.js?v=119).
+
+## 0gn. 1 ноя — warm TG probe + connect deadline + retries 0
+
+`warmProbeWorkProxies` перед bootstrap: socks→TG DC, deadline connect, retries 0, SocksClient hook. Лента: (updates.js?v=118).
+
+## 0gm. 1 ноя — новый DC PROXY_LIST (17) + мгновенный failover
+
+`proxyPools`: `markProxyDead` / skip dead ~12м, сразу `setCurrentProxyIndex` на живой. `clientPool` помечает DEAD на timeout. `aiResponder` `openaiCreateWithProxyFailover`. PROXY_LIST = 17 socks5 (QbQaXK/BfNHVZ/nFBMNd/SJe5Co), `proxies.txt` пустой. Smoke `_smoke_proxy_failover_0gm.js`. Лента: (updates.js?v=117).
+
+## 0gl. 31 окт — humanIdeas11 (10) + hard audit
+
+`humanIdeas11.js`: анти-терапевт, один `?`, joke-ack, anti opener «чем занимаешься», strip EN office, micro хм/сек, no NFT pitch after his share, topic stitch, empty empathy, shorten on «ок?». Wire `humanHardening` hints+postfilters. Smoke `_smoke_human_ideas11.js`, audit `_hard_audit_0gl.js`. Лента: (updates.js?v=116).
+
+## 0gk. 31 окт — honest «не помню» / бля забыла напомни
+
+`humanRhythm`: `detectRecallAsk` + `honestForgetHint` + `applyHonestForget` — если «помнишь?» про pet/city/work/… и факта нет в `peer_memory_facts`, ответ принудительно «бля забыла) напомни» (не выдумка). `memoryTriggers.listPeerFacts`. Wire replyPipeline (оба пути). Smoke `_smoke_honest_forget_0gk.js`. Лента: (updates.js?v=115).
+
+## 0gj. 31 окт — humanRhythm: think/wait + delay≠len + peer card + who-leads
+
+`humanRhythm.js`: incomplete hold в aggregate, `reshapeDelayPair` (think ≠ длина out), `whoLeadsHint`, honest memory («не выдумывай / напомни»), pet+hobby в КАРТОЧКЕ. Wire: timing/inbound/replyPipeline/memoryTriggers. Smoke `_smoke_human_rhythm_0gj.js`, audit `_hard_audit_0gj.js`. Лента: (updates.js?v=114).
+
+## 0gh. 31 окт — 10 human ideas + hard audit
+
+`humanIdeas10.js`: (1) self-told ban (2) life-lag 1–3м (3) mirror his topic (4) forget once/day (5) mood length (6) сорри спала (7) anti coffee+series+walk (8) silent reaction ↑ (9) mild disagree ↑ (10) evening recall. Wire: memoryTriggers/humanExtra/HH/opsQuality/lifeTexture/aiResponder/replyPipeline. Smoke `_smoke_human_ideas10.js`, audit `_hard_audit_0gh.js`. Лента: (updates.js?v=113).
+
+## 0gg. 31 окт — flip repeat callout ≠ «что такое NFT»
+
+`voiceReplies`: «Про флипинг ты же в первый день говорила)» не матчит `flipping.ogg`; голое «флипинг» без ask-intent тоже. `objectionHandler` хинт на упрёк в повторе. Smoke `_smoke_flip_voice_quote.js`. Лента: (updates.js?v=112).
+
+## 0gf. 31 окт — flip not on day 1 + no hobby re-pitch
+
+`jobFlipAsk.mayMentionFlipNft` (≥24ч / hist≥8): день1 → soft «онлайн» без флип/NFT. `ensureJobFlipHeardAsk` + softHuman/thin/objection. `stripRepeatFlipPitch` если уже говорила. dailyPhotos too_early 20→24. Лента: (updates.js?v=111).
+
+## 0ge. 31 окт — true 10/10: frozen folders + interest persist + quiet bot
+
+`peers.isFolderFrozen` / skip `EditPeerFolders` on FROZEN. `peer_nft_gates` persist interestHits. helpRequestNotifier long-poll log ≤1/30м. Smoke `_smoke_10of10_gates.js`. Лента: (updates.js?v=110).
+
+## 0gd. 31 окт — NFT ticker gates + mega audit
+
+`tickNftDueVoices` / `tickNftWorkMentions`: `shouldBlockNftPitch` + skip `leadTier=cold`. Mega hard audit 25m + canvas. Лента: (updates.js?v=109).
+
+## 0gc. 30 окт — opsQuality 2/4/5/6/7/8/9/11/12 + skills
+
+`opsQuality.js`: filter reasons на карточке (`operator_note`), tempo cold/warm/hot, silent-reaction, media slot morning/day/evening, daily filtered digest, AI silence watch. Memory КАРТОЧКА. Phrase ban жёстче. Silent-2д → filtered. Skills `.cursor/skills/loverussian-deploy` + `loverussian-human-audit`. Smoke `_smoke_ops_quality.js`, audit `_hard_audit_0gc.js` + `_nightly_hard_audit.js`. Лента: (updates.js?v=108).
+
+## 0gb. 30 окт — howlong ≥21д → архив + funnel отсев
+
+`HOWLONG_ARCHIVE_DAYS=21`. Усилен `parseStayDays` (кириллические границы, «давно уже»/«месяц»/«два а что»/strip уточнений). При отсеве: `markPeerFiltered` + `archivePeer`. Лиды: архивные filtered видны в Отсев до 14д. Smoke `_smoke_howlong_parse.js`. Лента: (updates.js?v=107).
+
+## 0ga. 30 окт — antidetect + rhythm (A/B/C) + hard audit
+
+#72/#73 bot-test/captcha refuse (hint+soften). #48/#49 strip lists/anketa. #14 later-text real return (`scheduleLaterTextReturn`). #84 wider aggregate 3.2s + burst hint. #75 dislike «не люблю X» ban in memory. #95 catch-up skip 22–08. #96 `logOutboundReason` voice/media/nft. #100 score→tighten phrase-ban/NFT. Smoke `_smoke_human_0ga.js`, audit `_hard_audit_0ga.js`. Лента: (updates.js?v=106).
+
+## 0fz. 30 окт — Must/Should/Nice humanHardening + hard audit
+
+`humanHardening.js`: clone-скепсис (#41/#65), NFT gate по 2× явному интересу + 24h после flip-фото (#66/#67), phrase-ban (#93), peer tier (#94), anti «поняла/хах/intro» (#42–45), appearance-on-foreign (#), bare-ok→react (#20), media-after-pitch (#55), diary/bad-day (#1/#99), deferred media stub (#10), mild opinion/distract hints. Wire: objectionHandler, nftCampaign.shouldSuppress, voiceReplies (hostile→null), aiResponder postfilter, replyPipeline, dailyPhotos.noteFlip. Smoke `_smoke_human_hardening.js`, audit `_hard_audit_0fz.js`. Лента: (updates.js?v=105).
+
+## 0fy. 30 окт — hard audit 0fx + live 15м (без простоя)
+
+`_hard_audit_0fx.js`: quiet&&, lastIncomingText/looksLikeFarewell/VOICE_GAP, churn_signal, flip identity, kaif echo, voice quote strip, updates/B&W. Live `_live_watch_15m.sh` 15 ticks. Static frontend only — no tgbot restart. Лента: (updates.js?v=104).
+
+## 0fx. 30 окт — flipping.ogg не по цитате «вторая девушка»
+
+findVoiceForText: strip `[ответ на/уточнение…]` before match; FLIP_VOICE_HOSTILE_RE (вторая девушка/одинаковые/бот). Маша×`.` кинула voiceOnly flipping.ogg на цитату своего питча. Smoke `_smoke_flip_voice_quote.js`. Лента: (updates.js?v=103).
+
+## 0fw. 30 окт — flip «это ты?» + кайф-echo
+
+Скрин Meebit/профита: на «это ты?» запрет «да это я» / «борода тебе к лицу» / «это же ты» — softenFlipPhotoIdentityReply + усиленный FLIP_PHOTO hint. softHumanLite.breakKaifEcho. Smoke `_smoke_flip_identity_kaif.js`. Лента: (updates.js?v=102).
+
+## 0fv. 30 окт — VOICE_REPEAT_GAP_MS
+
+replyPipeline: константа VOICE_REPEAT_GAP_MS=1h была в коде без объявления → ReferenceError на акк с голосовой заготовкой. looksLikeFarewell export из dailyLife (0fu follow-up).
+
+## 0fu. 30 окт — lastIncomingText + churn SQL + alive proxies
+
+replyPipeline: импорт lastIncomingText (ReferenceError на farewell/voice). churnLearn: колонка signal→churn_signal (MySQL reserved). PM2 PROXY_LIST=9 alive. Лента: (updates.js?v=101).
+
+## 0ft. 30 окт — баг «тихие часы» днём
+
+isVoiceQuietHour: было `hour >= 1 || hour < 8` → всегда true после 01:00. Стало `&&` (реально 01–08 МСК). Голосовые пинги днём снова можно; текст и так не резался этим флагом.
+
+## 0fs. 30 окт — miniapp ч/б + changelog ops
+
+Стили miniapp: чёрно-белая палитра. updates.js синхрон в ops-console + VPS. Лента: (updates.js?v=99), styles?v=69.
+
+## 0fr. 30 окт — job→флип+слышал + churn-learn
+
+На «кем работаешь / чем занимаешься»: hint + ensureJobFlipHeardAsk (флип + «слышал о таком?)»). Day-ask без «чем занимаешься». churnLearn: удалили/блок/deactivated → classify + bot_patterns pinned_bad. Smoke `_smoke_job_flip_churn.js`. Лента: (updates.js?v=98).
+
+## 0fq. 30 окт — речь: кривое «ну ок» как оценка
+
+softHumanLite.fixAwkwardNuOkPredicate: «это ну ок» / «просто ну ок» / «звучит ну ок» / «X, ну ок» → норм/кайф; голое «ну ок)» не трогаем. Хинт модели. Smoke soft_lite. Лента: (updates.js?v=97).
+
+## 0fp. 29 окт — leak «раньше ушло медиа — не писать в чат»
+
+История для модели: без инструкции «не писать»; stripLeakedMediaHistoryTag режет старый формат. Smoke. Лента: (updates.js?v=96).
+
+## 0fo. 29 окт — гео: не «давно не была» про текущий город
+
+groundReply + geo hint: запрет «давно не была там» про fromCity (скрин Вика: Липецк). Smoke. Лента: (updates.js?v=95).
+
+## 0fn. 29 окт — гео: не нукать оффтоп сериалами
+
+fixSwappedCurrentCity / groundReply: packing-шаблон только на loc-ask; NON_CITY + inCityPrep (в Москве/Анапе). soft: хинт «перепутала чаты». Smoke `_smoke_geo_consistency.js`. Лента: (updates.js?v=94).
+
+## 0fm. 29 окт — речь: «это ладно» + пустые <<>>
+
+softHumanLite.fixAwkwardLadnoPredicate; stripQuestionTags чистит <<>>. Лента v=93.
+
+## 0fl. 29 окт — P0 хард-аудит: OPS/login/auth/pause
+
+OPS: updates без vm + host allowlist. Login: needPassword status, alreadyAuthorized, handoff→save→dispose, fresh-session grace, QR без qrserver, poll mutex. Auth: superadmin только ID, wizard per-chat+superadmin, console rate-limit, initData 2ч, X-Debug только dev. AI: pause/BL recheck после humanPause + afterthought; fail-closed; nft unpause protected. startAi fail если offline. Snapshot prompt truncate. Лента v=92.
+
+## 0fk. 29 окт — Маша/гео: parse «жила в Москве» + не «завтра поезд»
+
+parsePersonaCard: жила/ещё в/Москва→Анапа; packing снова true. groundInventedTravelSchedule — не подтверждать подкинутый рейс/время. Лента: (updates.js?v=91).
+
+## 0fj. 29 окт — гео: сроки дороги при переезде
+
+personaFacts: зоны РФ + train band, groundTravelDuration (не «4 часа поездом Москва→юг»), хинт ДОРОГА в fact/geo reminder. Smoke `_smoke_travel_geo.js`. Лента: (updates.js?v=90).
+
+## 0fi. 29 окт — админ Инфо: промпт / медиа ТГК
+
+В миниапп-админке на карточке флаги + кнопка «Инфо» (промпт, mediaChatLink из console snapshot). Лента: (updates.js?v=89).
+
+## 0fh. 29 окт — OPS лента с сервера (1.3.1)
+
+OPS тянет updates.js с baseUrl (без токена); fallback на вшитую. Иначе установленная 1.3.0 не видит новые записи. Лента: (updates.js?v=88).
+
+## 0fg. 29 окт — лента без техжаргона
+
+Свежие записи updates (миниапп + OPS) переписаны языком воркера: без SOCKS/2FA/outdoor/пул/суперадмин. Лента: (updates.js?v=87).
+
+## 0ff. 29 окт — leak `[ты отправила фото: …]`
+
+История для модели писала `[ты отправила фото: desc]` — модель копировала в чат; strip не ловил «ты ». Стрип + формат без скобок. Smoke `_smoke_media_tag_leak.js`. Лента: (updates.js?v=86).
+
+## 0fe. 29 окт — фото днём при «ночном» пуле ТГК
+
+filterMediaForDaylight: если после day/dark фильтра нет unsent photo/video — fallback на весь пул типа (кружки строго). Алерт media_miss с reason daylight/empty_pool/…. Ангелина×Levi: «на улице светло, ночные не шлю». Лента: (updates.js?v=85).
+
+## 0fd. 29 окт — суперадмин ≠ список «Админы»
+
+fallonsociapat = ADMIN_ALERT_CHAT_ID, не дублируется в operator_roles. isAdmin ещё по @юзу; в «Доступ» явная строка суперадмина. Лента: (updates.js?v=84).
+
+## 0fc. 29 окт — Mini App админка = OPS
+
+Полный кабинет как в программе: AI/аккаунты (+delete), ЧС, add/connect код+2FA, прокси list/check, live-логи, события с фильтрами. Лента: (updates.js?v=83).
+
+## 0fb. 29 окт — админ-панель в Mini App
+
+Вкладка «Админ» только при dashboard.isAdmin: сводка, все аккаунты (AI/пинг/bulk), глобальный ЧС, activity. API уже /api/admin/console + Telegram initData. Лента: (updates.js?v=82).
+
+## 0fa. 29 окт — мама не «рядом» до переезда
+
+groundReply: packing + мама в toCity → бан «мама рядом/шумит»; на «кто ходит» — соседи. Geo-hint усилен. Smoke `_smoke_mom_near.js`. Лента: (updates.js?v=81).
+
+## 0ez. 29 окт — audit5 hard: cepiously + пижама≠outdoor
+
+scrubRuLatinGarbage (cepiously/seriously→серьёзно); RU-only в fake/bot hints; claimsIndoorSetting → pickMedia только indoor, иначе null/deflect; outText в media context. Smoke `_smoke_chat_audit5.js`. Лента: (updates.js?v=80).
+
+## 0ey. 29 окт — QR auto-refresh после входа + dataURL
+
+После connected сразу новый startQr (промпт сохраняется). qrImageDataUrl (пакет qrcode) вместо api.qrserver.com в миниаппе — нет белого квадрата. Лента: (updates.js?v=79).
+
+## 0ex. 29 окт — имя/@юз на карточке аккаунта
+
+GET /accounts отдаёт name + username (getMe / промпт). Карточки миниаппа: заголовок имя·@юз, номер подписью. OPS snapshot тоже с username. Лента: (updates.js?v=78).
+
+## 0ew. 29 окт — chat audit4: geo / caption / meet / grammar
+
+LOCATION_ASK + короткие «а где?»/«Живёшь»; meet-hint без коробок + ban «а, про если)»; pickCaption фильтр self-ref на еде; captions purge «это я)»; softHumanLite fixRuAgreementGlitches (занимаете→занимаешься). Smoke `_smoke_chat_audit4.js`. Лента: (updates.js?v=77).
+
+## 0ev. 29 окт — OPS 1.3: темы + ключ + ship
+
++6 тем, выравнивание кнопок, форма ключа в Настройках (один ключ = те же данные/логи с сервера), IPC rate-limit, chmod config, сборка 1.3.0 Win/Mac. Лента: (updates.js?v=76).
+
+## 0eu. 28 окт — вкладка Логи в OPS (медиа / NFT)
+
+Отдельная вкладка «Логи»: карточки как в боте — просьба фото/кружка (ушло/не ушло), ГС NFT-кампании, лид готов, согласие помочь. API /api/admin/console/activity, таблица ops_activity_log. Лента: (updates.js?v=75).
+
+## 0et. 28 окт — лента обновлений в OPS + soft миниаппа
+
+Вкладка «Обновления» в OPS: полная лента LOVERUSSIAN_UPDATES (крупные и мелкие). Миниапп: кабинет на ПК готов, утро без «дрыхла». Лента: (`updates.js?v=74`).
+
+## 0es. 28 окт — OPS 10/10 + сборки Win/Mac
+
+Confirm на bulk AI/ЧС/логи, все аккаунты (без cap 40), redact логов, IPC allowlist + timeout, setup токена в Настройках, electron-builder exe/portable + mac zip. Лента: (`updates.js?v=73`).
+
+## 0er. 28 окт — OPS полное управление
+
+Админ-панель в OPS: ЧС, add/delete аккаунтов, connect код/2FA, AI on/off (+bulk), проверка SOCKS-прокси, live-логи. API `/api/admin/console/*` под `X-Admin-Console-Token`. Лента: (`updates.js?v=72`).
+
+## 0eq. 28 окт — OPS desktop (Win/Mac)
+
+Electron-приложение `ops-console/`: фиолетово-розовый канбан воронки + сводка день/неделя/месяц. API `/api/admin/console` (+ global funnel). Токен `ADMIN_CONSOLE_TOKEN`. Запуск `start-windows.cmd` / `start-mac.command`. Лента: (`updates.js?v=71`).
+
+## 0eq-b. 28 окт — ops CLI + token (промежуточно)
+
+Терминальный CLI и вырезание оверлея из miniapp.
+
+## 0ep. 28 окт — move-spam v2 + anti-interview «теперь ты»
+
+DAY_ASK: «а у тебя» / зеркало после её вопроса. Сборы режем всегда на day-ask и при повторе в истории. personaFacts не пушит коробки на «как дела». «Теперь ты» → короткий self-blurb, не «какие впечатления от ауди». Лента: (`updates.js?v=69`).
+
+## 0eo. 28 окт — stop move-spam on «как дела»
+
+На day-ask («как дела / что делаешь») режем переезд/сборы/коробки/«собираюсь потихоньку»: chance 4%, убрали packing из DAY_DETAILS, hint «не уходи в переезд». softenMoveSpam больше не пропускает «собираю». Лента: (`updates.js?v=68`).
+
+## 0en. 28 окт — dual hard hunt → 10/10 × 2
+
+Два независимых ultra+full: оба 10/10, findings=[]. Hunt 6ч: исторический soft-pitch + «работу гляну» (уже закрыты); [медиа:#] в БД ≠ OUT leak (0). TIME_ASK: «у тебя сколько время». Live 8м bad=0/gaps=0. Canvas `dual-hard-hunt-10of10`. Лента: (`updates.js?v=67`).
+
+## 0em. 28 окт — mega hard audit → 10/10
+
+30 мин: ultra×3 40/40, full×2, deep NFT/profit/accounts/human/visual 24/24, live watch 15м bad=0 (user68/asst73). Stale abandoned peer archived. Pitch strip усилен. Canvas `mega-hard-audit-10of10`. Лента: «Жёсткая полная проверка — всё чисто» (`updates.js?v=66`).
+
+## 0el. 28 окт — purge sk-test + полная проверка ключа
+
+.env и pm2: sk-proj len=164; dump без sk-test; ERR очищен от старых 401 sk-test; live ping OK. Smoke-скрипты: dummy `local-smoke-only` вместо `sk-test` (чтобы не травить pm2 --update-env).
+
+## 0ek. 28 окт — жёсткий полный аудит → 10/10×5
+
+Свежие логи (bad=0, stale=0), humanity/visual/code smoke OK; ultra×3 + full_root×2 = 10/10, findings=[]. pm2 OPENAI=sk-proj (не sk-test). Лента: «Полная проверка прошла чисто» (`updates.js?v=65`).
+
+## 0ej. 28 окт — «сколько время?» → реальные часы
+
+TIME_ASK_RE не ловил разг. «сколько время?» (только «времени») — модель выдумывала 19:30 при 19:01. Regex расширен; groundClock drift ≤5 мин. Лента: «На который час отвечает по часам» (`updates.js?v=64`).
+
+## 0ei. 28 окт — профит-скрины снова включены
+
+dailyPhotos снова по умолчанию шлёт собеседникам (выкл только DAILY_PHOTO_ENABLED=0). Strip «могу показать без давления» остаётся. Лента: «Скрины по работе снова уходят» (`updates.js?v=63`).
+
+## 0eh. 28 окт — фикс по 5 скринам живых чатов
+
+Work-aside → «пошла решать проблему с работой, позже напишу»; strip «могу показать/без давления»; мама=toCity (Белгород) без «просто надо»; fake≠«слушаю»; clock ground ±12м; howLong не после просьбы кружка. Лента: «Живее по скринам из чатов» (`updates.js?v=62`).
+
+## 0eg. 28 окт — стиль ИИ по живому чату до NFT
+
+Эталон: экспорт Светик↔Павел до Atrium (~158 реплик оператора). Хинты soft/thin + humanStyleReminder: ультра-коротко, «кайф/о как/ахаха», мелочь дня, встреча через город/срок, без самопитча NFT. После NFT — зона оператора. Лента: «Пишет как в живом знакомстве» (`updates.js?v=61`).
+
+## 0ef. 28 окт — pm2 OPENAI_API_KEY отравлен sk-test → 401
+
+После smoke с `OPENAI_API_KEY=sk-test` + `pm2 restart --update-env` ключ в процессе стал `sk-test` (dotenv не перекрывает). ERR: 401 Incorrect API key. Фикс: рестарт с ключом из `.env`, pm2 save. Лента: «Ответы снова на связи» (`updates.js?v=60`).
+
+## 0ee. 27 окт — фото по делу, без обмана (лента Mini App)
+
+Обещания «милое/щас скину» выполняются файлом; псевдо-теги `[фото билета]` не уходят текстом; сцена (коробки/билет) без рандом-селфи; без обрубка «и скину» и «по работе» поверх. Лента: «Фото по делу, без обмана» (`updates.js?v=59`).
+
 ## 0ed. 27 окт — человечнее AI + розово-фиолетовый кабинет
 
 humanizeChatTexture (канцелярит→разговорный), живее хинты, ensureAck в конце. Mini App: pink `#e879c8` / purple `#c026d3`, `styles?v=58`. Три ultra-аудита после выката.

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'sk-test';
+process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'local-smoke-only';
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const oh = require('../services/objectionHandler');
@@ -25,10 +25,15 @@ const there = oh.detectHint('Я имею в виду ты сейчас в Мур
 check('what_there', /собира|перебир|парень|измен|мамой/i.test(String(there || '')), there);
 
 const nudeHint = oh.detectHint('Пора скинуть сиськи уже', hist);
-check('nude_hint', /фу ты тут только ради|эмм/i.test(String(nudeHint || '')), nudeHint);
+check(
+  'nude_hint',
+  /хах\s+ну\s+не|давай\s+лучше\s+так|нейтральн|без\s+морали/i.test(String(nudeHint || '')),
+  nudeHint,
+);
 
 const soft = oh.softenSexualPressureReply('не, не мой стиль)', 'Пора скинуть сиськи уже');
-check('nude_soft', /фу ты тут только ради этого/i.test(soft), soft);
+check('nude_soft', /хах\s+ну\s+не|спокойнее|не\s+в\s+настроен|потом\s+как/i.test(soft), soft);
+check('nude_no_moral', !/фу\s+ты\s+тут\s+только/i.test(soft), soft);
 
 const endHint = oh.detectHint('Ну всё тогда закончим общение', hist);
 check(

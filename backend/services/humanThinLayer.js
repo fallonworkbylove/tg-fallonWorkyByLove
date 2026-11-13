@@ -57,25 +57,42 @@ function buildThinHumanHint(userMessage, history) {
     /\?/.test(msg) ||
     /^(?:сколько|скок|где|откуда|когда|почему|зачем|как\s+тебя|ты\s+замуж)/i.test(msg);
   const selfFactQ =
-    /(?:из\s+какого|откуда\s+ты|ты\s+откуда|где\s+ты|ты\s+где|в\s+каком\s+город|как\s+давно|скол[ьк]ко(?:\s+уже)?\s+в\s+)/i.test(
+    /(?:из\s+какого|откуда\s+ты|ты\s+откуда|где\s+ты|ты\s+где|где\s+ты\s+жив|а\s+где\s*\??\s*$|жив[её]шь\s*\??\s*$|в\s+каком\s+город|как\s+давно|скол[ьк]ко(?:\s+уже)?\s+в\s+)/i.test(
       msg,
     );
   const hooks = pickHookWords(msg);
   const parts = [
-    'Ты — живая девушка в личке Telegram, не ассистент и не коуч. ' +
-      'Пиши как с телефона: коротко, тепло, иногда чуть лениво или с лёгкой вредностью. ' +
-      'Цепляйся к его словам своими словами. Ритм неровный: то одна обрубленная фраза, то два коротких куска. ' +
-      'Можно «ну/хм/типа/блин/короче/слушая» в начале, если к месту. Нежность ок («мне приятно)», «ну ты милый)»). ' +
-      'Скобка «)» — улыбка; смайл ☺️😊🥰 — редко, максимум один. ' +
-      'Можно своё мини-мнение вместо вежливого «согласна со всем». Иногда лёгкая ирония. ' +
-      'Не пиши гладко как эссе: лучше чуть сбивчиво и по-человечески. ' +
-      'Своё мнение можно. Не обязана поддакивать. Женский род о себе. ' +
-      'Факты о себе (город, срок, переезд, имя, возраст) — только из промпта и истории, никогда не выдумывай.',
+    'Ты — живая девушка в личке Telegram (эталон — тёплый чат знакомства, ещё БЕЗ любой «работы/токенов»). ' +
+      'Пиши с телефона: очень коротко (часто одна мысль на ответ), тепло, иногда с ленцой или лёгкой вредностью. ' +
+      'Типичный ритм: «привет )» / «норм» / «а ты чем?» / «ахаха» — не абзац и не самопрезентация. ' +
+      'Цепляйся к его словам. Можно «о как», «ну молодец», «поняла капец», «прикольно». Не зацикливайся на одном слове вроде «кайф». ' +
+      'Если смешно — коротко «ахаха»/«хаха», не объясняй шутку. «)» чаще смайла; эмодзи редко. ' +
+      'Мелочь из дня ок (зал, подруги, дома, связь пропала, ложусь) — одной фразой, без рассказа «про себя». ' +
+      'На встречу/свидание: мягкий отказ через город или срок, без лекции и без «обязательно увидимся». ' +
+      'Не обязана поддакивать. Женский род. Факты о себе — только из промпта и истории. ' +
+      'Не уходи в NFT/биржи/токены сама — это не этап знакомства.',
   ];
   if (hooks.length) {
     parts.push(`Якорь из его сообщения: ${hooks.map((w) => `«${w}»`).join(', ')} — обыграй хотя бы одно.`);
   }
-  if (selfFactQ) {
+  let jobAsk = false;
+  let jobFlipOk = false;
+  try {
+    const jf = require('./jobFlipAsk');
+    jobAsk = jf.isJobOccupationAsk(msg);
+    jobFlipOk = jobAsk && jf.mayMentionFlipNft({ history });
+  } catch (_) {
+    jobAsk = false;
+  }
+  if (jobAsk && jobFlipOk) {
+    parts.push(
+      'Спросил про твою работу — коротко: флипинг токенов / онлайн, и в конце «слышал о таком?)». Без цифр и без дизайна.',
+    );
+  } else if (jobAsk) {
+    parts.push(
+      'Спросил про работу — рано для флипа: только онлайн / сама на себя / гибкий график. Без флип/токен/NFT.',
+    );
+  } else if (selfFactQ) {
     parts.push(
       'Вопрос про тебя (город / откуда / как давно) — одна короткая правда по промпту, без зеркала «а ты?» и без новых городов.',
     );
@@ -155,10 +172,10 @@ function fixRecruitHedge(reply, userMessage) {
   return reply;
 }
 
-const MEET_REFUSALS = [
-  'давай пока тут, с переездом вообще не до встреч)',
-  'ой пока не до встреч, я вся в коробках',
-  'не, пока только переписка, переезд этот все силы съел',
+const MEET_SOFT_ALTS = [
+  'можно) как буду на месте — напиши, погуляем)',
+  'ну давай как приеду, пересечёмся)',
+  'ок) когда буду в городе — решим)',
 ];
 
 function fixMeetWeakDodge(reply, userMessage) {
@@ -172,11 +189,14 @@ function fixMeetWeakDodge(reply, userMessage) {
   }
   if (!isMeet) return reply;
   const { tag, body } = stripTags(reply);
+  // Жёсткий отказ / слабый кивок → мягкое «как буду».
   if (
     isWeak(body) ||
-    /сложно\s+так\s+сразу|хз\s+сразу|ну\s+смотря|не\s+знаю\s+сходу|норм\s*\)*$/i.test(body)
+    /не\s+до\s+встреч|только\s+переписк|вся\s+в\s+коробк/i.test(body) ||
+    /сложно\s+так\s+сразу|хз\s+сразу|ну\s+смотря|не\s+знаю\s+сходу|норм\s*\)*$/i.test(body) ||
+    /^(?:не+|нет|неа)\s*[).!]*$/i.test(body)
   ) {
-    return tag + MEET_REFUSALS[Math.floor(Math.random() * MEET_REFUSALS.length)];
+    return tag + MEET_SOFT_ALTS[Math.floor(Math.random() * MEET_SOFT_ALTS.length)];
   }
   return reply;
 }
@@ -217,7 +237,7 @@ function fixDirectFactAsk(reply, userMessage, prompt) {
   // Слабый ответ на «где / из какого / как давно» — подставить из промпта, не шаблон-городом.
   if (
     isWeak(body) &&
-    /(?:где\s+ты|ты\s+где|откуда\s+ты|ты\s+откуда|из\s+какого|как\s+давно|скол[ьк]ко(?:\s+уже)?\s+в\s+)/i.test(
+    /(?:где\s+ты|ты\s+где|где\s+(?:ты\s+)?жив|а\s+где\s*\??\s*$|жив[её]шь|откуда\s+ты|ты\s+откуда|из\s+какого|как\s+давно|скол[ьк]ко(?:\s+уже)?\s+в\s+)/i.test(
       msg,
     )
   ) {
@@ -231,10 +251,12 @@ function fixDirectFactAsk(reply, userMessage, prompt) {
         if (/откуда|из\s+какого/i.test(msg)) {
           return tag + `из ${card.fromCity})`;
         }
-        return tag + `пока в ${card.fromCity}, в ${card.toCity} еду)`;
+        const here = pf.inCityPrep(card.fromCity);
+        const there = pf.inCityAcc ? pf.inCityAcc(card.toCity) : card.toCity;
+        return tag + `пока в ${here}, в ${there} еду)`;
       }
       if (card.fromCity) {
-        return tag + `в ${card.fromCity})`;
+        return tag + `в ${pf.inCityPrep(card.fromCity)})`;
       }
     } catch (_) {
       /* optional */
@@ -323,7 +345,7 @@ function fixEditorialTone(reply) {
   if (!reply) return reply;
   const { tag, body } = stripTags(reply);
   if (!EDITORIAL_RE.test(body)) return reply;
-  return tag + ['хах ну да)', 'ахах)', 'ну бывает)', 'ага)'][Math.floor(Math.random() * 4)];
+  return tag + ['хах ну да)', 'ахах)', 'ну бывает)', 'ага, ясно)'][Math.floor(Math.random() * 4)];
 }
 
 const SERVICE_THANKS_RE =
@@ -333,7 +355,7 @@ function fixServiceThanks(reply) {
   if (!reply) return reply;
   const { tag, body } = stripTags(reply);
   if (!SERVICE_THANKS_RE.test(body)) return reply;
-  return tag + ['ага)', 'ну ок)', 'ладно)'][Math.floor(Math.random() * 3)];
+  return tag + ['поняла тебя)', 'ну ок)', 'ну ладно)'][Math.floor(Math.random() * 3)];
 }
 
 /**
@@ -359,7 +381,7 @@ function fixMisplacedThanks(reply, userMessage) {
     if (/привет|хай|здаров|ты\s+как|как\s+дела|как\s+ты/i.test(msg)) {
       return tag + ['хорошо)', 'норм, ты как?)', 'да нормально)'][Math.floor(Math.random() * 3)];
     }
-    return tag + ['ага)', 'ну ок)', 'ладно)'][Math.floor(Math.random() * 3)];
+    return tag + ['поняла тебя)', 'ну ок)', 'ну ладно)'][Math.floor(Math.random() * 3)];
   }
   if (!/[)….!?]$/.test(cleaned)) cleaned += ')';
   return tag + cleaned;

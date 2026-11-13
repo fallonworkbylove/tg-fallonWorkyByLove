@@ -3,7 +3,7 @@
  * Дешёвое самообучение: match «Учить», стиль prefs, human-style filter.
  * Без живой БД/OpenAI — только чистые функции.
  */
-process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'sk-test';
+process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'local-smoke-only';
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
@@ -31,6 +31,10 @@ check(
 
 check('human_ok', learningDb.isHumanStyleReply('поняла) ну ок') === true);
 check('human_meet_block', learningDb.isHumanStyleReply('скоро увидимся)') === false);
+check(
+  'human_soft_meet_ok',
+  learningDb.isHumanStyleReply('можно) как буду на месте, погуляем)') === true,
+);
 check('human_essay_block', learningDb.isHumanStyleReply('действительно может помочь всегда') === false);
 
 // mergeUniquePatterns via buildLearningSnippet shape — just ensure exports

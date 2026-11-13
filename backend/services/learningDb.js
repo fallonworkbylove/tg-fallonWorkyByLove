@@ -57,10 +57,9 @@ const PENDING_MAX_AGE_HOURS = 6;
 // более свежим (стиль переписки и трендовые фразы меняются со временем).
 const RECENCY_DECAY = 0.985;
 
-// Эти фразы нельзя показывать как «удачные» — иначе learning снова учит
-// соглашаться на встречи (см. «скоро увидимся» / «погуляем когда приеду»).
+// Блочим только ЖЁСТКОЕ «сейчас/завтра увидимся» — мягкое «как буду на месте» ок (0jf).
 const MEET_LEAK_REPLY_RE =
-  /(скоро\s+)?увидимся|встретимся|погуляем|жду\s+тебя\s+тоже|когда\s+я\s+приеду|приеду\s+и\s+погул|обязательно\s+увид|давай\s+встрети|где\s+планируешь\s+встрет/i;
+  /скоро\s+увидимся|(?:завтра|сегодня|сейчас).{0,40}(?:встрет|погуля|увид)|подъед\w*\s+к\s+тебе|приеду\s+к\s+тебе\s+(?:сейчас|завтра)|жду\s+тебя\s+тоже|где\s+планируешь\s+встрет|давай\s+завтра\s+встрет/i;
 
 // Отсев «поисковых»/ИИ-фраз из лучших примеров (по правилам живого промпта).
 const AI_ESSAY_REPLY_RE =
@@ -124,9 +123,22 @@ async function columnExists(table, column) {
   return rows.length > 0;
 }
 
+function assertSqlIdent(name, kind = 'ident') {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(name || ''))) {
+    throw new Error(`unsafe SQL ${kind}: ${name}`);
+  }
+  return String(name);
+}
+
 async function addColumnIfMissing(table, column, definition) {
   if (await columnExists(table, column)) return;
-  await db.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  const t = assertSqlIdent(table, 'table');
+  const c = assertSqlIdent(column, 'column');
+  // definition только из кода (не user input): whitelist простых типов.
+  if (!/^[A-Za-z0-9_()\s,.']+$/.test(String(definition || ''))) {
+    throw new Error(`unsafe SQL definition for ${t}.${c}`);
+  }
+  await db.execute(`ALTER TABLE ${t} ADD COLUMN ${c} ${definition}`);
 }
 
 async function ensureTables() {
@@ -472,6 +484,55 @@ async function getPatternsByStage(stage, { direction, limit, minUses, rateThresh
  * как "никогда так не делай", даже если статистики по нему пока мало.
  * Используется скриптом scripts/pin-pattern.js.
  */
+/**
+ * Негатив из churn (удалил/блок после фразы бота) — в bot_patterns как плохой пример.
+ * Rate-limit снаружи (churnLearn). Не дублируем hash чаще раза в сутки.
+ */
+async function recordChurnNegative({ userMsg, botReply, reason, stage = 'general' }) {
+  if (!LEARNING_ENABLED || !botReply) return null;
+  try {
+    await tablesReady;
+    const hash = hashReply(botReply);
+    const trigger = String(userMsg || '').slice(0, 400);
+    const reply = String(botReply).slice(0, 500);
+    const st = STAGES.includes(stage) ? stage : 'general';
+
+    const [existing] = await db.execute(
+      `SELECT id, uses, pinned_bad, updated_at FROM bot_patterns WHERE bot_reply_hash = ? LIMIT 1`,
+      [hash],
+    );
+    if (existing[0]) {
+      const ageH =
+        (Date.now() - new Date(existing[0].updated_at).getTime()) / (60 * 60 * 1000);
+      if (existing[0].pinned_bad && ageH < 20) return { updated: 0, deduped: true };
+      await db.execute(
+        `UPDATE bot_patterns
+         SET uses = uses + 1,
+             success_score = success_score + 0,
+             success_rate = success_score / (uses + 1),
+             pinned = 1,
+             pinned_bad = 1,
+             stage = ?,
+             trigger_msg = IF(CHAR_LENGTH(trigger_msg) < 8, ?, trigger_msg)
+         WHERE id = ?`,
+        [st, trigger || `churn:${reason}`, existing[0].id],
+      );
+      return { updated: 1, id: existing[0].id };
+    }
+
+    await db.execute(
+      `INSERT INTO bot_patterns
+       (trigger_msg, bot_reply, bot_reply_hash, uses, success_score, success_rate, stage, pinned, pinned_bad)
+       VALUES (?, ?, ?, 2, 0, 0, ?, 1, 1)`,
+      [trigger || `churn:${reason}`, reply, hash, st],
+    );
+    return { inserted: 1 };
+  } catch (err) {
+    console.error('[learningDb] recordChurnNegative:', err.message);
+    return null;
+  }
+}
+
 async function pinPattern({ triggerContains, replyContains, bad = false }) {
   await tablesReady;
   const conditions = [];
@@ -743,6 +804,7 @@ module.exports = {
   STAGES,
   detectStage,
   recordBotReply,
+  recordChurnNegative,
   scoreAndLearn,
   buildLearningSnippet,
   buildManualTrainingSnippet,

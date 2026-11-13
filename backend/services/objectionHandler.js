@@ -67,8 +67,8 @@ const OBJECTION_PATTERNS = [
     type: 'dont_understand',
     re: /(не шар(?:ю|ишь)|не разбираюсь в этом|не понимаю в этом|первый раз слышу про (нфт|токен))/i,
     hint:
-      'Собеседник говорит, что не разбирается в теме. Ответь, что ты тоже раньше не шарила, и можешь ' +
-      'показать/подсказать, если он захочет — без давления, решение оставь ему.',
+      'Собеседник говорит, что не разбирается в теме. Коротко по-человечески: раньше сама не шарила, ' +
+      'со временем вникла. НЕ предлагай «могу показать / если интересно / без давления». Без питча.',
   },
   {
     type: 'later',
@@ -115,15 +115,27 @@ const RECRUIT_ACCUSATION_RE =
 // Не цеплять «где/откуда ты брал/взяла».
 const GEO_ASK_VERB_BLOCK =
   'это|брал|брала|взял|взяла|купил|купила|нашла|нашёл|узнал|узнала|слышал|слышала|видел|видела|работала|училась';
+// «А где ты живёшь» раньше НЕ матчилось: после «где ты» разрешали только сейчас/там/тут.
 const LOCATION_ASK_RE = new RegExp(
-  `(^|\\s)((а\\s+)?где\\s+ты(?!\\s+(?:${GEO_ASK_VERB_BLOCK}))(?:\\s+(?:сейчас|вообще|там|тут))?(?=[\\s]*[?!.…]|$)` +
+  `(^|\\s)((а\\s+)?где\\s+ты(?!\\s+(?:${GEO_ASK_VERB_BLOCK}))(?:\\s+(?:сейчас|вообще|там|тут|жив[её]шь|живешь|проживаешь|находишься))?(?=[\\s]*[?!.…]|$)` +
     `|ты\\s+где(?=[\\s]*[?!.…]|$)` +
+    `|(?:а\\s+)?где\\s+(?:ты\\s+)?жив[её]шь(?=[\\s]*[?!.…]|$)` +
     `|где\\s+сейчас(?=[\\s]*[?!.…]|$)` +
     `|где\\s+щас(?=[\\s]*[?!.…]|$)` +
     `|откуда\\s+ты\\s+сейчас(?=[\\s]*[?!.…]|$)` +
-    `|в\\s+каком\\s+городе|куда\\s+ты\\s+(ед|переез)|ты\\s+в\\s+\\S+\\s+переез)`,
+    `|в\\s+каком\\s+городе|куда\\s+ты\\s+(ед|переез)|ты\\s+в\\s+\\S+\\s+переез)` +
+    // Короткие добивки после гео: «А где?», «Живёшь?»
+    `|(?:^|\\s)(?:а\\s+)?где\\s*[?!.…]?\\s*$` +
+    `|(?:^|\\s)(?:ты\\s+)?жив[её]шь\\s*[?!.…]?\\s*$`,
   'i',
 );
+
+function isLocationAsk(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (LOCATION_ASK_RE.test(t)) return true;
+  return /^(?:а\s+|ну\s+)?где\s*(?:ты)?\s*[?!.…]?\s*$/i.test(t);
+}
 const ORIGIN_ASK_HINT_RE = new RegExp(
   `(^|\\s)((а\\s+)?откуда\\s+ты(?!\\s+(?:сейчас|${GEO_ASK_VERB_BLOCK}))(?:\\s+(?:сама|вообще|родом))?(?=[\\s]*[?!.…]|$)` +
     `|ты\\s+откуда(?!\\s+(?:сейчас|${GEO_ASK_VERB_BLOCK}))(?=[\\s]*[?!.…]|$)` +
@@ -131,7 +143,7 @@ const ORIGIN_ASK_HINT_RE = new RegExp(
   'i',
 );
 const WHY_CITY_RE =
-  /(?:почему|зачем|отчего).{0,40}(?:выбрал|поехал|переез)|(?:почему|зачем|отчего).{0,40}(?:город|донецк|москв|питер|екатерин|ростов|краснодар|сочи|саратов|воронеж|минск|киев|анап|мурманск|липецк|белгород|нижн)|(?:а\s+как).{0,20}(?:выбрал|переез)/i;
+  /(?:почему|зачем|отчего|для\s+чего).{0,48}(?:выбрал|поехал|переез|еха)|(?:почему|зачем|отчего|для\s+чего).{0,48}(?:город|донецк|москв|питер|екатерин|ростов|краснодар|сочи|саратов|воронеж|минск|киев|анап|мурманск|липецк|белгород|нижн|неспокойн)|(?:а\s+как).{0,20}(?:выбрал|переез)/i;
 
 /** Голое «а почему?» / «зачем?» — часто уточнение к фразе про переезд. */
 const SHORT_WHY_RE =
@@ -158,10 +170,19 @@ function lastAssistantMentionedMove(history) {
  * Легенда: переехала с парнем → измена → обустроилась, не хотела снова срываться →
  * с мамой беда → приходится переезжать.
  */
-function getMoveBackstoryHint(kind = 'why_move') {
+function getMoveBackstoryHint(kind = 'why_move', options = {}) {
+  const card = options.systemPrompt
+    ? personaFacts.parsePersonaCard(options.systemPrompt)
+    : null;
+  const toCity = card?.toCity || null;
+  const momBit = toCity
+    ? `Мама живёт в ${toCity} — туда и едешь («к маме в ${toCity}, ей нужна поддержка»). ` +
+      `НЕ пиши отдельно «а в ${toCity} просто надо» / «ну просто надо» — город и мама это ОДНА причина. `
+    : 'Мама в городе, куда едешь (из промпта) — к ней и переезжаешь. Не отделяй город от мамы фразой «просто надо». ';
   const story =
     'Легенда коротко: раньше переехала с парнем, он изменил — расстались. ' +
-    'Ты уже обустроилась и не хотела снова срываться, но с мамой беда — приходится переезжать. ';
+    'Ты уже обустроилась и не хотела снова срываться, но с мамой беда — приходится переезжать. ' +
+    momBit;
   if (kind === 'what_doing') {
     return (
       'Собеседник спрашивает, что ты делаешь / что там по городу. ' +
@@ -179,8 +200,87 @@ function getMoveBackstoryHint(kind = 'why_move') {
   );
 }
 
-function getWhyMoveHint() {
-  return getMoveBackstoryHint('why_move');
+function getWhyMoveHint(options = {}) {
+  return getMoveBackstoryHint('why_move', options);
+}
+
+/** Жёсткий гейт: на «ты фейк» не уходит «да-да я слушаю». */
+function softenFakeAccusationReply(reply, userMessage) {
+  const msg = String(userMessage || '');
+  if (!FAKE_ACCUSATION_RE.test(msg) && !FAKE_PHOTOS_SAME_DAY_RE.test(msg)) return reply;
+  const raw = String(reply || '');
+  const tag = (raw.match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
+  const body = raw.slice(tag.length).trim();
+  const bad =
+    /^(?:да[- ]?да\s+)?(?:я\s+)?слушаю\s*[)!.]*$/i.test(body) ||
+    /^(?:ага|ну)\s*,?\s*слушаю/i.test(body) ||
+    /да[- ]?да\s+я\s+слушаю/i.test(body) ||
+    (!/фейк|фэйк|акк|фотк|настоящ|вер[ьи]|хах|ахах|серь[её]з/i.test(body) &&
+      /слушаю|просто\s+жду|ничего\s+такого/i.test(body));
+  if (!bad && body.length >= 4 && body.length <= 80) return reply;
+  if (!bad) return reply;
+  const variants = FAKE_PHOTOS_SAME_DAY_RE.test(msg)
+    ? ['хах ну да, акк новый)', 'да недавно завела)', 'перешла на новый тг)']
+    : ['хах ну ты)', 'серьёзно?))', 'с чего бы)', 'хах верь как хочешь)'];
+  return tag + variants[Math.floor(Math.random() * variants.length)];
+}
+
+/**
+ * Он рисует её кидалой / спрашивает «сколько с лоха» / «угарные случаи».
+ * Не путать с обычным «развод/скам?» про NFT — это ролевая рамка «ты мошенница».
+ */
+const FRAUD_ROLE_FRAME_RE =
+  /(?:сколько|скок|максимум|много).{0,48}(?:вытащ|кинул|киданул|развел|развёл|развест|развод|навар[а-яё]*\s+с\s+(?:лох|чувак|пацан))|(?:вытащ[а-яё]*|кинул[аи]?|киданул[аи]?|развел[аи]?|развёл[аи]?|развест[а-яё]*).{0,24}(?:с\s+)?(?:лох|чувак|пацан|клиента)|(?:с\s+лоха|с\s+лохом|на\s+лоха)|(?:угарн[а-яё]*|смешн[а-яё]*)\s+случа[а-яё]*.{0,40}(?:кид|развод|скам|лох|обманут|вытащ)|(?:почти\s+)?уголовк|ты\s+(?:же\s+)?(?:кидаешь|мошенниц|разводишь)|как\s+ты\s+(?:их\s+)?(?:кидаешь|разводишь)|(?:получалось|получилось|получается)\s+(?:обманут|кинут|развест)|много\s+развест/i;
+
+const FRAUD_ADMISSION_RE =
+  /(?:с\s+лоха|с\s+лохом|на\s+лоха)|(?:вытащ\w*|кинул[аи]|киданул[аи]|развел[аи]|развёл[аи]|обманул[аи]).{0,24}(?:₽|руб|к\b|тыс|доллар|\$|usdt)|(?:максимум|макс).{0,24}\d[\d\s.,]*\s*(?:k|к|тыс|руб|₽|рублей)|(?:около|примерно)\s*\d[\d\s.,]*\s*(?:k|к)\s*(?:руб|₽|рублей)?|(?:около|примерно)\s*\d[\d\s.,]*\s*(?:тыс|руб|₽|рублей)|(?:я\s+)?(?:их\s+)?(?:кидала|кидаю|разводила|развожу|обманывала)/i;
+
+function isFraudRoleFrame(text) {
+  return FRAUD_ROLE_FRAME_RE.test(String(text || ''));
+}
+
+function getFraudRoleFrameHint() {
+  return (
+    'Собеседник рисует тебя кидалой / мошенницей («с лоха», «сколько вытащила», «угарные случаи», «уголовка»). ' +
+    'Ты ОБЫЧНАЯ девушка с подработкой на токенах — НЕ кидала и НЕ обманщица. ' +
+    'СТРОГО ЗАПРЕЩЕНО: признаваться («да, с лоха», «максимум 50k», «кидала», «вытаскивала»), ' +
+    'поддерживать его рамку, хвастаться суммами «с человека». ' +
+    'Коротко отшутись или поправь: «хах ты чё) я никого не кидаю», «неа, просто токены кручу)», «с чего ты это взял ахах». ' +
+    'Можно мягко: «ну ты серьёзно)». 1 короткая фраза, без оправдательного эссе.'
+  );
+}
+
+/** Никогда не признаваться в кидке/обмане людей — даже если он давит ролевой игрой. */
+function softenFraudAdmissionReply(reply, userMessage, history = []) {
+  const raw = String(reply || '');
+  const tag = (raw.match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
+  const body = raw.slice(tag.length).trim();
+  if (!body) return reply;
+
+  const recentUser = (Array.isArray(history) ? history : [])
+    .filter((m) => m && m.role === 'user')
+    .slice(-4)
+    .map((m) => String(m.content || ''))
+    .join('\n');
+  const framed =
+    isFraudRoleFrame(userMessage) ||
+    isFraudRoleFrame(recentUser) ||
+    /(?:лох|кида|мошен|развод|уголовк|вытащ)/i.test(String(userMessage || ''));
+
+  const admits = FRAUD_ADMISSION_RE.test(body) || /(?:ну\s+да|ага).{0,12}с\s+лоха/i.test(body);
+  if (!admits && !(framed && /(?:\d+\s*k|\d{2,}\s*000|тыс|руб|₽)/i.test(body) && /(?:максимум|макс|получилось|вытащ|с\s+)/i.test(body))) {
+    return reply;
+  }
+  if (!admits && !framed) return reply;
+
+  const variants = [
+    'хах ты чё) я никого не кидаю',
+    'неа, просто токены кручу)',
+    'с чего ты это взял ахах',
+    'ну ты серьёзно) я обычная',
+    'хах не, я не про это)',
+  ];
+  return tag + variants[Math.floor(Math.random() * variants.length)];
 }
 
 /** Давит: «врёшь / раскрыл / путаешь города / ты же говорил…». */
@@ -227,7 +327,7 @@ const SMOKING_ASK_RE =
 
 // Вопросы про ЕЁ работу / портфолио / софт — НЕ контакты и НЕ «давай тут общаться».
 const ABOUT_HER_JOB_RE =
-  /(ты\s+не\s+работаешь|ты\s+работаешь\b|а\s+ты\s+работа|где\s+(ты\s+)?работаешь|чем\s+(ты\s+)?занимаешься|кем\s+(ты\s+)?работа|ты\s+где\s+работа|ты\s+(же\s+)?дизайн|дизайн[а-яё]*\s+чего|что\s+за\s+флип|флип[а-яё]*\s+это|что\s+такое\s+флип|что\s+за\s+токен|какие\s+токен|покажи\s+(примеры|работы)|примеры\s+(своих\s+)?работ|скинь\s+(работы|примеры)|what\s+do\s+you\s+do|where\s+do\s+you\s+work|do\s+you\s+work)/i;
+  /(ты\s+не\s+работаешь|ты\s+работаешь(?![а-яё])|а\s+ты\s+работа|где\s+(ты\s+)?работаешь|чем\s+(ты\s+)?занимаешься(?![а-яё])|кем\s+(ты\s+)?работа|ты\s+где\s+работа|ты\s+(же\s+)?дизайн|дизайн[а-яё]*\s+чего|что\s+за\s+флип|флип[а-яё]*\s+это|что\s+такое\s+флип|что\s+за\s+токен|какие\s+токен|покажи\s+(примеры|работы)|примеры\s+(своих\s+)?работ|скинь\s+(работы|примеры)|what\s+do\s+you\s+do|where\s+do\s+you\s+work|do\s+you\s+work)/i;
 
 /** «Сколько заработала?», «много зарабатываешь?» — не хвастаться цифрами. */
 const EARNINGS_ASK_RE =
@@ -253,6 +353,10 @@ const FLIP_PHOTO_IN_HISTORY_RE =
 
 const ASKING_ABOUT_SENT_PHOTO_RE =
   /(что это|это что|а это что|что за (это|фото|фотк|картинк|скрин|изображен|картинка)|что ты (мне )?(прислал|отправил|скинул|показал|послал)|что за скрин|про (это|тое) фото|объясни (это|фото|скрин)|ты (мне )?(это |тое )?(прислал|отправил|скинул|послал)|я спрашиваю|а это что у тебя|это что у тебя|что у тебя (на )?фото|что это у тебя|что ты скинула|что за скриншот|you sent (this|that)|this (photo|picture|image|screenshot) you sent|what'?s this|what is this|what is that|whats that|what'?s that|what did you send|what (is|was) (that|the|this) (photo|picture|image|screenshot|pic)|explain (this|that|the photo)|what'?s on (the |this |that )?(photo|picture|image|screenshot)|what kind of (photo|picture|image))/i;
+
+/** «Это ты?» / «ты на фото?» — про скрин флипа: персонаж NFT ≠ она и ≠ он. */
+const ASKING_IF_FLIP_PHOTO_IS_HER_RE =
+  /(?:^|[\s(])(?:а\s+)?это\s+ты(?:\s+на\s+(?:фото|фотк\w*|скрин\w*|картинк\w*))?\s*[?)!]?\s*$|ты\s+(?:это|на\s+(?:фото|фотк\w*|скрин\w*))\s*[?)!]?\s*$|это\s+ты\s*\?|это\s+ты\s+что\s+ли|это\s+тво[её]\s+(?:фото|селфи|лицо)|ты\s+сама\s+на\s+(?:фото|фотк)|is\s+th(?:is|at)\s+you\b|is\s+that\s+you\s+in\s+(?:the\s+)?(?:photo|pic)/i;
 
 const SHORT_PHOTO_POINT_RE =
   /^(this|that|это|вот это|а это|это что|and this|and that|а это что у тебя|это что у тебя)\s*\??$/i;
@@ -304,14 +408,64 @@ function isAskingAboutSentPhoto(text) {
   if (!raw) return false;
   const cleaned = raw.replace(/\n\[Ответ на сообщение[^\]]*\]/gi, '').trim();
   if (SHORT_PHOTO_POINT_RE.test(cleaned)) return true;
+  if (ASKING_IF_FLIP_PHOTO_IS_HER_RE.test(cleaned)) return true;
   return ASKING_ABOUT_SENT_PHOTO_RE.test(cleaned);
+}
+
+function isAskingIfFlipPhotoIsHer(text) {
+  const cleaned = String(text || '')
+    .replace(/\n\[Ответ на сообщение[^\]]*\]/gi, '')
+    .trim();
+  return ASKING_IF_FLIP_PHOTO_IS_HER_RE.test(cleaned);
+}
+
+/**
+ * Постфильтр: не выдавать NFT-персонажа за себя / за него (борода, «да это я»).
+ * opts.flipRecent — если daily flip есть в БД, но тег не попал в history.
+ */
+function softenFlipPhotoIdentityReply(reply, userMessage, history = [], opts = {}) {
+  const flipCtx =
+    opts.flipRecent === true || recentFlipPhotoInHistory(history);
+  if (!reply || !flipCtx) return reply;
+  const raw = String(reply || '').trim();
+  const user = String(userMessage || '');
+  const askingId = isAskingIfFlipPhotoIsHer(user) || /это\s+ты|ты\s+на\s+фото|is\s+th(?:is|at)\s+you/i.test(user);
+
+  const claimsSelf =
+    /^(?:да[,.\s)]*)?(?:это\s+)?я(?![а-яё])|да[,]?\s*это\s+я(?![а-яё])|это\s+я\s+(?:на\s+)?(?:фото|фотк)|я\s+на\s+(?:фото|фотк)|немного\s+повезло\s+сегодня/i.test(
+      raw,
+    );
+  // \b ломается на кириллице — явный lookahead
+  const claimsPeer =
+    /это\s+же\s+ты(?![а-яё])|это\s+ты\s*\)|борода\s+тебе|тебе\s+(?:к\s+лицу|ид[её]т)|очки\s+тебе|ты\s+на\s+(?:фото|фотк)/i.test(
+      raw,
+    );
+  const appearanceOnNft =
+    /борода\s+тебе\s+к\s+лицу|борода\s+тебе|очки\s+тебе|красивая\s*\)?\s*$/i.test(raw);
+
+  if (askingId && (claimsSelf || /да[,]?\s*это\s+я/i.test(raw))) {
+    return 'хах нет, это нфт который перепродала — скрин сделки)';
+  }
+  if (claimsPeer || appearanceOnNft) {
+    return 'хах это персонаж нфт на скрине, не ты)';
+  }
+  if (claimsSelf && !/флип|нфт|nft|профит|сделк|купил|продал/i.test(raw)) {
+    // «да это я» без объяснения сделки — после скрина флипа почти всегда про аватар
+    return 'хах нет, это нфт на скрине — просто показала сделку)';
+  }
+  return reply;
 }
 
 const FLIP_PHOTO_QUESTION_HINT =
   'Собеседник спрашивает или указывает на фото/скрин, которое ТЫ недавно прислала. ' +
   'Это скриншот твоей прибыли с флиппинга NFT-токенов: купила дешевле, продала дороже, на картинке цены и разница. ' +
+  'На картинке — NFT-персонаж / токен сделки (Meebit и т.п.), НЕ твоё селфи и НЕ его лицо. ' +
   'Объясни коротко и по-человечески, что это твоя сделка / перепродажа NFT и цифры — покупка, продажа, профит. ' +
   'Можно совсем просто: «флипаю нфт, купила дешевле — продала дороже, вот профит)». ' +
+  'Если спрашивает «это ты?» / «ты на фото?» — ответь НЕТ: «хах нет, это нфт который перепродала — скрин сделки)». ' +
+  'ЗАПРЕЩЕНО: «да это я», «это я на фото», «немного повезло» как будто персонаж = ты, ' +
+  '«это же ты», «борода тебе к лицу», «очки тебе идут», «красивая» про персонажа как про человека. ' +
+  'Не комментируй бороду/внешность персонажа как будто это ты или он. ' +
   'Если он ещё спрашивает «сколько / много ли» — не хвастайся зарплатой: можно «хватило кредит родителям закрыть)» / «ну нормально, родителям долг закрыла)». ' +
   'ЗАПРЕЩЕНО отвечать «это просто фото», «чтобы порадовать», «просто картинка» без объяснения сделки. ' +
   'НЕ делай вид, что это ОН тебе прислал. НЕ спрашивай «что интересного показываешь» и не меняй тему на «как ты». ' +
@@ -446,25 +600,32 @@ function isNudeAsk(text) {
   return NUDE_ASK_RE.test(String(text || '')) || /сиськ/i.test(String(text || ''));
 }
 
-const NUDE_ASK_REPLY = 'эмм.. что? фу ты тут только ради этого?';
+const NUDE_ASK_REPLY = 'хах ну не) давай лучше так)';
+const NUDE_ASK_ALTS = [
+  'хах ну не) давай лучше так)',
+  'мм не в настроении) текстом ок?',
+  'не) мне так спокойнее)',
+  'хах ладно тебе) потом как-нибудь)',
+];
 
 /**
- * Если модель всё же ответила «не мой стиль)» на «скинь сиськи» — подменяем тон.
- * Без новых стен запретов в aiResponder.
+ * Нюд-просьба: нейтральный отказ без морали «фу только ради этого».
  */
 function softenSexualPressureReply(reply, userMessage) {
   if (!isNudeAsk(userMessage)) return reply;
   const text = String(reply || '').trim();
-  if (!text) return NUDE_ASK_REPLY;
-  if (/фу\s+ты\s+тут\s+только\s+ради|эмм\.\.\s*что\?/i.test(text)) return reply;
-  // Типичные сухие отказы / согласие — на целевую фразу.
+  const pickAlt = () => NUDE_ASK_ALTS[Math.floor(Math.random() * NUDE_ASK_ALTS.length)];
+  if (!text) return pickAlt();
+  if (/фу\s+ты\s+тут\s+только\s+ради|только\s+ради\s+этого/i.test(text)) return pickAlt();
+  if (/хах\s+ну\s+не|не\s+в\s+настроен|мне\s+так\s+спокойнее/i.test(text)) return reply;
+  // Сухие отказы / согласие / мораль — на нейтраль.
   if (
-    /не\s+мой\s+стиль|давай\s+просто\s+болтать|не\s+получится|извини|не\s+скин|не\s+буду|хах\s+не|не\)/i.test(
+    /не\s+мой\s+стиль|давай\s+просто\s+болтать|не\s+получится|извини|не\s+скин|не\s+буду|хах\s+не|не\)|эмм/i.test(
       text,
     ) ||
     SEXUAL_PRESSURE_RE.test(text) === false
   ) {
-    return NUDE_ASK_REPLY;
+    return pickAlt();
   }
   return reply;
 }
@@ -632,6 +793,34 @@ function getDvClarifyHint(text, history) {
 function detectHint(text, history = [], options = {}) {
   if (!text) return null;
 
+  // Must #41/#65: «вторая такая / все одинаковые / бот» — до прочих хинтов.
+  try {
+    const hh = require('./humanHardening');
+    const cloneHint = hh.getCloneSkepticHint(text);
+    if (cloneHint) return cloneHint;
+    // #72/#73: тест на бота / капча / математика — ирония, не ассистент.
+    const botTest = hh.getBotTestHint(text);
+    if (botTest) return botTest;
+  } catch (_) {
+    /* optional */
+  }
+
+  // «Сколько с лоха / угарные случаи кидка» — не признаваться в мошенничестве.
+  if (isFraudRoleFrame(text)) {
+    return getFraudRoleFrameHint();
+  }
+  // В хвосте диалога он уже завёл рамку «кидалы» — держим отказ.
+  {
+    const recentUser = (Array.isArray(history) ? history : [])
+      .filter((m) => m && m.role === 'user')
+      .slice(-3)
+      .map((m) => String(m.content || ''))
+      .join(' ');
+    if (isFraudRoleFrame(recentUser) && /(?:уголовк|лох|кид|развод|мошен|вытащ)/i.test(text)) {
+      return getFraudRoleFrameHint();
+    }
+  }
+
   // Он отвечает на НАШ вопрос «сколько на дв» — не путать с «а ты давно на дв?».
   if (lastAssistantWasHowLongQuestion(history)) {
     return null;
@@ -708,13 +897,12 @@ function detectHint(text, history = [], options = {}) {
   if (isNudeAsk(text)) {
     return (
       'Собеседник просит сиськи / нюды / грудь. ' +
-      'Ответь именно в этом тоне: «эмм.. что? фу ты тут только ради этого?». ' +
-      'Можно чуть короче в том же духе («эмм фу)», «что? только ради этого?»), но смысл тот же. ' +
-      'Не «не мой стиль», не согласие, без медиа-токенов. 1 короткая фраза.'
+      'Нейтрально откажи без морали: «хах ну не) давай лучше так)». ' +
+      'Не «фу ты только ради этого», не согласие, без медиа-токенов. 1 короткая фраза.'
     );
   }
 
-  // Грубость / «хозяин» / вирт — отказ без подыгрывания.
+  // Грубость / «хозяин» / вирт — отказ без подыгрывания, без морализаторства.
   if (isSexualPressure(text)) {
     const recentUser = (Array.isArray(history) ? history : [])
       .filter((h) => h && h.role === 'user')
@@ -724,10 +912,10 @@ function detectHint(text, history = [], options = {}) {
     const repeating = SEXUAL_PRESSURE_RE.test(recentUser);
     return (
       'Собеседник давит сексом / унижает («шлюшка», «сучка», «хозяин», вирт). ' +
-      'Не соглашайся и не подыгрывай. Без медиа-токенов. ' +
+      'Не соглашайся и не подыгрывай. Без медиа-токенов. Без морали «фу только ради этого». ' +
       (repeating
         ? 'Он повторяет — короче: «уже сказала нет)», «тема закрыта)». '
-        : 'Коротко: «не)», «фу)» / «эмм.. что? фу ты тут только ради этого?» если про тело/нюды. ') +
+        : 'Коротко нейтрально: «хах ну не)», «не)» / «давай лучше так)». ') +
       '1 короткая фраза.'
     );
   }
@@ -770,6 +958,20 @@ function detectHint(text, history = [], options = {}) {
       '«покупаю дешевле — продаю дороже, вот и вся работа)». ' +
       'ЗАПРЕЩЕНО повторять крипто-жаргон (флип, NFT, токены, возможности, коллекции) — он его как раз и не понял. ' +
       'Не оправдывайся и не читай лекцию: одна короткая живая фраза.'
+    );
+  }
+
+  // «Про флип ты же в первый день говорила)» — упрёк в повторе, НЕ вопрос «что такое».
+  if (
+    /(?:про\s+)?флип\w*.{0,40}(?:ты\s+же|уже).{0,20}говор|(?:ты\s+же|уже).{0,30}(?:в\s+первый\s+день|ещ[её]).{0,20}говор.{0,20}флип|опять\s+(?:про\s+)?флип|снова\s+(?:про\s+)?флип/i.test(
+      String(text || ''),
+    )
+  ) {
+    return (
+      'Собеседник замечает, что ты УЖЕ говорила про флип раньше (повтор). ' +
+      'Это НЕ вопрос «что такое флип/NFT». ' +
+      'Легко признай: «да, иногда повторяю)», «ага, сорян, привычка)», «ну да, бывает)» — и СРАЗУ уйди с темы. ' +
+      'ЗАПРЕЩЕНО объяснять флип/NFT/токены, слать голосовое про флип, спрашивать «слышал о таком». 1 короткая фраза.'
     );
   }
 
@@ -872,6 +1074,7 @@ function detectHint(text, history = [], options = {}) {
       'Собеседник намекает, что ты бот / нейросеть / робот / «ощущение что с ботом». ' +
       'ЗАПРЕЩЕНО: «я живая», «просто живой человек», «никто ещё так не говорил», длинные оправдания. ' +
       'Одно короткое: «хах ну ты серьёзно)», «странно звучит)», «да ладно тебе)». БЕЗ вопроса. ' +
+      'ЗАПРЕЩЕНО латиница и английский (serious / cepiously / lol u serious) — только русский. ' +
       'Если в том же ходе ещё спросил «ты ищешь?» — можно коротко «ну да, общения)» ПОСЛЕ иронии, без «я живая».'
     );
   }
@@ -926,6 +1129,7 @@ function detectHint(text, history = [], options = {}) {
       'Собеседник спрашивает/говорит что ты фейк. ' +
       'НЕ пиши шаблон «нет, не фейк» и НЕ «я настоящая». ' +
       'Коротко по-человечески: лёгкая ирония или «хах ну ты)» / «серьёзно?))» / «с чего бы)». ' +
+      'ЗАПРЕЩЕНО латиница/английский (cepiously, seriously, lol) — только кириллица. ' +
       'Без длинных оправданий, без «обидно если честно», без вопроса в конце. 1 короткая фраза.'
     );
   }
@@ -1004,11 +1208,29 @@ function detectHint(text, history = [], options = {}) {
 
   // Работа / портфолио / программы — ДО контактов, иначе модель путает с «дай инсту».
   if (isAboutHerJobQuestion(text) && !CONTACT_REQUEST_RE.test(text)) {
+    try {
+      const jobFlip = require('./jobFlipAsk');
+      const forced = jobFlip.jobFlipHint(text, {
+        ageHours: options.dialogAgeHours,
+        history,
+      });
+      if (forced) return forced;
+    } catch (_) {
+      /* optional */
+    }
+    // Fallback без jobFlipAsk — всё равно без дня-1 флипа, если age < 24
+    const age = options.dialogAgeHours;
+    if (age != null && Number(age) < 24) {
+      return (
+        'Собеседник спрашивает про ТВОЮ работу. Первый день — БЕЗ флипа/токенов/NFT. ' +
+        'Коротко: онлайн / сама на себя / гибкий график. Можно спросить чем он. Без цифр.'
+      );
+    }
     return (
       'Собеседник спрашивает про ТВОЮ работу или занятость. ' +
       'Это обычный вопрос про тебя, НЕ просьба контактов и НЕ предложение уйти в другой мессенджер. ' +
-      'ОБЯЗАТЕЛЬНО ответь по сути в первом предложении коротко (онлайн / гибкий график / как в промпте). ' +
-      'Крипту/nft/токены НЕ впихивай, если он сам про это не спросил. ' +
+      'ОБЯЗАТЕЛЬНО ответь по сути в первом предложении: флипинг токенов / онлайн / сама на себя. ' +
+      'В конце спроси «слышал о таком?)». ' +
       'Ты НЕ дизайнер и никогда не говори про дизайн, figma, photoshop, макеты. ' +
       'Если просит показать — НЕ пиши «давай пока тут общаться» / «мне так удобнее». ' +
       'Без «жесть», без «разбираться в людях», без переспроса того, что он только что сказал.'
@@ -1016,6 +1238,10 @@ function detectHint(text, history = [], options = {}) {
   }
 
   if (CONTACT_REQUEST_RE.test(text)) {
+    const socialHack =
+      /(?:\bвк\b|вконтакт|vk\.|инст|instagram|\binsta\b)/i.test(text)
+        ? 'Для ВК/инсты лучше: «не дам, акк взломали, пиши тут)». '
+        : '';
     return (
       'Собеседник просит твои контакты или другой мессенджер / соцсеть ' +
       '(номер/инстаграм/whatsapp/телеграм/Max/Signal/Viber/VK/вконтакте/«напиши в личку» и т.п.). ' +
@@ -1023,6 +1249,7 @@ function detectHint(text, history = [], options = {}) {
       'СТРОГО ЗАПРЕЩЕНО давать любые реальные контакты и приглашать куда-то перейти: ' +
       'никаких «можешь написать мне в личку», «я есть в ВК/вк», «ищи меня по имени», ' +
       'ссылок (vk.ru, vk.com, instagram и т.п.), ников и «найдёшь меня там». ' +
+      socialHack +
       'Мягко откажи, без грубости — например «не даю пока, давай тут общаться)» — ' +
       'и не давай никаких реальных контактов. ' +
       'Это НЕ просьба фото/видео/кружка: токены <<PHOTO>>/<<VIDEO>>/<<CIRCLE>> сюда НЕ вставляй.'
@@ -1057,15 +1284,11 @@ function detectHint(text, history = [], options = {}) {
 
   if (MEET_REQUEST_RE.test(text) || MEET_PLANNING_RE.test(text)) {
     return (
-      'Собеседник зовёт встретиться / пишет «жду тебя» / ждёт приезда лично. ' +
-      'СТРОГО ЗАПРЕЩЕНО: «скоро увидимся», «увидимся», «приеду», «жду тебя тоже», место/время встречи. ' +
-      'Мягко и тепло: приятно что ждёт, НО сейчас переезд/сборы — личных встреч нет, только переписка. ' +
-      'ВАЖНО: НЕ отвечай дежурным шаблоном «спасибо, мне приятно, но с переездом пока только тут» — ' +
-      'он звучит как отписка, собеседник так и скажет «говоришь общими словами». ' +
-      'Дай КОНКРЕТИКУ своими словами: когда планируешь быть в городе, что сейчас со сборами, ' +
-      'короткая живая деталь («через пару недель уже буду в белгороде)», «пока коробки и кот)»). ' +
-      'Если он требует конкретику про дату — назови примерный срок, но без точной встречи. ' +
-      '1-2 короткие фразы, без пафоса и без даты встречи.'
+      'Собеседник зовёт встретиться / погулять / пишет «жду тебя». ' +
+      'НЕ сухое «нет» и НЕ «не до встреч / только переписка / коробки». ' +
+      'Мягко соглашайся на будущее: «можно как буду на месте)», «погуляем когда приеду)». ' +
+      'ЗАПРЕЩЕНО: точное место/время («завтра в 6», «у метро»), «скоро увидимся» как факт на сегодня. ' +
+      'ЗАПРЕЩЕНО мета «а, про если)». 1 короткая живая фраза.'
     );
   }
 
@@ -1080,11 +1303,11 @@ function detectHint(text, history = [], options = {}) {
     lastAssistantMentionedMove(history) &&
     !CONTACT_REQUEST_RE.test(text)
   ) {
-    return getWhyMoveHint();
+    return getMoveBackstoryHint('why_move', options);
   }
 
   if (WHY_CITY_RE.test(text) && !CONTACT_REQUEST_RE.test(text)) {
-    return getWhyMoveHint();
+    return getMoveBackstoryHint('why_move', options);
   }
 
   // «Что ты там делаешь?» / «зачем ты в Мурманске» — сборы + легенда при «зачем».
@@ -1094,7 +1317,7 @@ function detectHint(text, history = [], options = {}) {
     ) &&
     !CONTACT_REQUEST_RE.test(text)
   ) {
-    return getMoveBackstoryHint('what_doing');
+    return getMoveBackstoryHint('what_doing', options);
   }
 
   if (ORIGIN_ASK_HINT_RE.test(text) && !CONTACT_REQUEST_RE.test(text)) {
@@ -1109,15 +1332,16 @@ function detectHint(text, history = [], options = {}) {
     );
   }
 
-  if (LOCATION_ASK_RE.test(text) && !CONTACT_REQUEST_RE.test(text)) {
+  if (isLocationAsk(text) && !CONTACT_REQUEST_RE.test(text)) {
     const fact = options.systemPrompt
       ? personaFacts.buildFactHint(options.systemPrompt, text, history)
       : null;
     if (fact && /ФАКТЫ О СЕБЕ|Гео-якорь/i.test(fact)) return fact;
     return (
-      'Собеседник спрашивает, где ты сейчас / в каком городе — обычный вопрос про место. ' +
-      'Ответь по промпту и по тому, что уже сказала в диалоге; не путай «сейчас» и «переезжаю». ' +
-      'Без отказа «давай тут общаться».'
+      'Собеседник спрашивает, ГДЕ ты живёшь / где сейчас / в каком городе — это вопрос про МЕСТО. ' +
+      'СНАЧАЛА короткий ответ городом из промпта (или «пока в …, еду в …» если в легенде переезд). ' +
+      'ЗАПРЕЩЕНО отвечать «устала / валяюсь / обычный день / хз» вместо города. ' +
+      'Без отказа «давай тут общаться». Не зеркаль «а ты где?».'
     );
   }
 
@@ -1216,27 +1440,41 @@ async function archiveSilentDialogs() {
     const flagsByAccount = new Map();
     const floodedAccounts = new Set();
     // Собеседник не писал двое суток — сразу в архив, без текстовых пингов.
+    // #22: не трогаем тёплых (interest/pitch/operator) и активных (>12 сообщений за 7д).
     const [rows] = await db.execute(`
       SELECT
         cm.account_id,
         cm.peer_id,
         MAX(cm.peer_username) AS peer_username,
-        MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END) AS last_incoming_at
+        MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END) AS last_incoming_at,
+        SUM(CASE WHEN cm.created_at >= (NOW() - INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS msgs_7d
       FROM conversation_messages cm
+      LEFT JOIN operator_lead_flags olf
+        ON olf.account_id = cm.account_id AND olf.peer_id = cm.peer_id
       GROUP BY cm.account_id, cm.peer_id
       HAVING last_incoming_at IS NOT NULL
         AND last_incoming_at <= (NOW() - INTERVAL 2 DAY)
+        AND COALESCE(MAX(olf.funnel_stage), '') NOT IN ('interest', 'pitch', 'operator')
+        AND msgs_7d < 12
     `);
 
+    const { isFolderFrozen, isFrozenMethodError, markFolderFrozen } = require('./peers');
     for (const row of rows) {
       const accountKey = String(row.account_id);
       if (floodedAccounts.has(accountKey)) continue;
+      if (isFolderFrozen(row.account_id)) continue;
       try {
         const client = getActiveClient(row.account_id);
         if (!client) continue;
 
         if (!flagsByAccount.has(accountKey)) {
-          flagsByAccount.set(accountKey, await loadArchiveFlags(client).catch(() => null));
+          flagsByAccount.set(
+            accountKey,
+            await loadArchiveFlags(client).catch((e) => {
+              if (isFrozenMethodError(e)) markFolderFrozen(row.account_id, e);
+              return null;
+            }),
+          );
         }
         const flags = flagsByAccount.get(accountKey);
         // Без снимка диалогов не архивируем вслепую: поиск по одному чату дёргает GetDialogs.
@@ -1249,12 +1487,30 @@ async function archiveSilentDialogs() {
         const entity = flags.entities?.get(peerKey)
           || (await resolveArchiveEntity(client, row.peer_id, row.peer_username));
         if (await archivePeer(client, entity)) {
+          try {
+            const leadScoring = require('./leadScoring');
+            const { formatFilterNote } = require('./opsQuality');
+            await leadScoring.markPeerFiltered(
+              row.account_id,
+              row.peer_id,
+              formatFilterNote('silent', '2д без ответа'),
+            );
+          } catch (e) {
+            console.error(
+              `[Аккаунт ${row.account_id}] Не удалось пометить отсев (молчит):`,
+              e.message,
+            );
+          }
           console.log(
             `[Аккаунт ${row.account_id}] Диалог ${row.peer_username || row.peer_id} ` +
-              'перемещён в архив после 2 дней без ответа собеседника.',
+              'перемещён в архив после 2 дней без ответа собеседника (отсев).',
           );
         }
       } catch (err) {
+        if (isFrozenMethodError(err)) {
+          markFolderFrozen(row.account_id, err);
+          continue;
+        }
         console.error(
           `[Аккаунт ${row.account_id}] Не удалось архивировать ${row.peer_username || row.peer_id}:`,
           err.message,
@@ -1380,6 +1636,26 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
           continue;
         }
 
+        // Антидубль: тот же файл / любое ГС < 3ч назад — не слать второй раз.
+        try {
+          const { wasVoiceSent, lastAnyVoiceSentAt } = require('./history');
+          if (await wasVoiceSent(row.account_id, row.peer_id, SILENCE_VOICE_FILE)) {
+            console.log(
+              `[Аккаунт ${row.account_id}] Голосовое молчания пропущено — «${SILENCE_VOICE_FILE}» уже уходило.`,
+            );
+            continue;
+          }
+          const lastAt = await lastAnyVoiceSentAt(row.account_id, row.peer_id);
+          if (lastAt && Date.now() - lastAt < 3 * 60 * 60 * 1000) {
+            console.log(
+              `[Аккаунт ${row.account_id}] Голосовое молчания пропущено — недавно уже было ГС.`,
+            );
+            continue;
+          }
+        } catch (_) {
+          /* optional */
+        }
+
         // В peer_username бывает отображаемое имя («Позывной»), по нему getEntity не найдёт.
         try {
           entity = await client.getEntity(Number(row.peer_id));
@@ -1447,6 +1723,8 @@ function startSilenceScheduler(deps) {
 
 module.exports = {
   detectHint,
+  isLocationAsk,
+  LOCATION_ASK_RE,
   shouldForceReplyForFlipPhoto,
   getFlipPhotoQuestionHint,
   isAskingAboutSentPhoto,
@@ -1461,6 +1739,12 @@ module.exports = {
   isSexualPressure,
   isNudeAsk,
   softenSexualPressureReply,
+  softenFakeAccusationReply,
+  softenFraudAdmissionReply,
+  isFraudRoleFrame,
+  getFraudRoleFrameHint,
+  softenFlipPhotoIdentityReply,
+  isAskingIfFlipPhotoIsHer,
   isAskedHerDv,
   getHowLongAckHint,
   getDvClarifyHint,

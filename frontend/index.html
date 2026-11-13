@@ -25,7 +25,44 @@
         href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
       />
     </noscript>
-    <link rel="stylesheet" href="styles.css?v=58" />
+    <link rel="stylesheet" href="styles.css?v=78" />
+    <!-- 0je: розово-фиолетовый стиль + текст карточек -->
+    <style id="fix-acc-text-0je">
+      .account-card {
+        color: #f8f0f6 !important;
+        -webkit-text-fill-color: #f8f0f6 !important;
+      }
+      .account-card__phone,
+      .account-card__sub,
+      .account-card__meta {
+        color: #f8f0f6 !important;
+        -webkit-text-fill-color: #f8f0f6 !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+      }
+      .account-card__sub,
+      .account-card__meta {
+        color: #c4a8c0 !important;
+        -webkit-text-fill-color: #c4a8c0 !important;
+      }
+      .account-card .badge.success {
+        color: #9be7c4 !important;
+        -webkit-text-fill-color: #9be7c4 !important;
+      }
+      .account-card .badge.warn {
+        color: #f0d29a !important;
+        -webkit-text-fill-color: #f0d29a !important;
+      }
+      .account-card .btn {
+        -webkit-text-fill-color: currentColor !important;
+      }
+      .account-card--select-all {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        gap: 10px !important;
+      }
+    </style>
   </head>
   <body>
     <div id="tg-gate" class="tg-gate" hidden>
@@ -33,9 +70,9 @@
         <p class="brand-mark">LoveRussian</p>
         <p class="eyebrow">Telegram Mini App</p>
         <h2>Откройте в Telegram</h2>
-        <p class="tg-gate__text">Это приложение работает внутри Telegram. Запустите его через вашего бота, чтобы авторизоваться и загрузить данные.</p>
+        <p class="tg-gate__text">Приложение работает внутри Telegram. Открой его через бота, чтобы войти и загрузить данные.</p>
         <button id="tg-gate-bypass" class="btn btn-secondary full" type="button">Продолжить для теста</button>
-        <p class="tg-gate__hint">Тестовый режим работает без данных Telegram и предназначен только для разработки.</p>
+        <p class="tg-gate__hint">Тестовый режим без данных Telegram. Только для разработки.</p>
       </div>
     </div>
 
@@ -49,6 +86,7 @@
       <button class="side-nav__btn" data-tab="stats" type="button">Статы</button>
       <button class="side-nav__btn" data-tab="learn" type="button">Учить</button>
       <button class="side-nav__btn" data-tab="options" type="button">Опции</button>
+      <button class="side-nav__btn admin-only" data-tab="admin" type="button" hidden>Админ</button>
       <button class="side-nav__btn" data-tab="info" type="button">Обновления</button>
     </aside>
 
@@ -113,6 +151,7 @@
               <button class="btn btn-secondary" data-action="open-accounts" type="button">+ Аккаунт</button>
               <button class="btn btn-secondary" data-action="open-leads" type="button">К лидам</button>
               <button class="btn btn-secondary" data-action="open-info" type="button">Обновления</button>
+              <button class="btn btn-secondary admin-only" data-action="open-admin" type="button" hidden>Админ</button>
               <button class="btn btn-danger" data-action="logout" type="button">Выйти</button>
             </div>
           </div>
@@ -137,6 +176,15 @@
               <button class="btn btn-secondary small" type="button" data-action="clear-selection">Снять</button>
             </div>
             <div id="accounts-list" class="accounts-table-wrap"></div>
+          </div>
+
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Задачи</h3>
+              <button class="btn btn-secondary small" type="button" data-action="refresh-tasks">Обновить</button>
+            </div>
+            <p class="field-hint">Что нужно сделать по анкетам: медиа-чат, сессия и т.п.</p>
+            <div id="worker-tasks-list" class="stack"></div>
           </div>
 
           <div class="section-card card">
@@ -194,14 +242,35 @@
               </label>
 
               <label id="account-prompt-field" class="prompt-field">
-                <span>Промпт персонажа <em class="req-mark">обязательно</em></span>
+                <span class="field-label">Промпт персонажа <em class="req-mark">обязательно</em></span>
+                <select id="persona-template" class="field-select" aria-label="Шаблон персонажа">
+                  <option value="">Шаблон (необязательно)</option>
+                </select>
+                <div id="persona-vars" class="persona-vars" hidden>
+                  <label>
+                    <span>Имя</span>
+                    <input id="persona-name" type="text" autocomplete="off" placeholder="Алёна" />
+                  </label>
+                  <label>
+                    <span>Возраст</span>
+                    <input id="persona-age" type="text" inputmode="numeric" autocomplete="off" placeholder="26" />
+                  </label>
+                  <label>
+                    <span>Сейчас город</span>
+                    <input id="persona-from" type="text" autocomplete="off" placeholder="Липецк" />
+                  </label>
+                  <label>
+                    <span>Куда переезд</span>
+                    <input id="persona-to" type="text" autocomplete="off" placeholder="Иваново" />
+                  </label>
+                </div>
                 <textarea
                   id="account-prompt"
                   rows="4"
                   required
                   placeholder="Кто она, город, возраст, как пишет. Без промпта AI не отвечает."
                 ></textarea>
-                <span class="field-hint">Нужен и для QR, и для входа по коду — иначе аккаунт молчит.</span>
+                <span class="field-hint">Выбери шаблон, поправь имя и города. Дни 1, 2, 3 прогрева уже в боте, «ДЕНЬ 1/2/3» в промпт не копируй.</span>
               </label>
 
               <p id="account-form-hint" class="form-hint" hidden></p>
@@ -225,7 +294,7 @@
             <div class="panel-hero__icon" aria-hidden="true"></div>
             <div>
               <h2>Лиды</h2>
-              <p>Воронка: знакомство → общение → интерес → предложка → оператор. Архив и без ответа 24ч+ — скрыты.</p>
+              <p>Воронка: знакомство, общение, интерес, предложка, оператор. Архив и чаты без ответа сутки и дольше скрыты.</p>
             </div>
           </div>
           <div class="section-card card">
@@ -271,17 +340,17 @@
         </section>
 
         <section class="tab-panel" data-panel="info">
-          <p class="updates-feed-note">Лента с сентября 2026 · КРУПНОЕ и МАЛЕНЬКОЕ. Записей за июль–август в архиве нет.</p>
+          <p class="updates-feed-note">Лента с сентября 2026. Метки КРУПНОЕ и МАЛЕНЬКОЕ. Записей за июль и август нет.</p>
           <div id="updates-list" class="updates-feed" aria-label="Обновления"></div>
           <details class="updates-about card">
             <summary>О сервисе и blacklist</summary>
             <div class="updates-about__body">
               <p>Кабинет для управления аккаунтами и обучения ответов.</p>
-              <p><strong>Blacklist</strong> — список Telegram User ID, которым AI не отвечает. Входящее видно системе, но ответа не будет. Удобно для спама или людей, с которыми пишет только оператор.</p>
+              <p><strong>Blacklist.</strong> Список Telegram User ID, которым AI не отвечает. Входящее видно системе, ответа не будет. Для спама или чатов, где пишет только оператор.</p>
               <ul class="list">
-                <li>Добавляйте аккаунты с промптом и проверяйте лимиты.</li>
-                <li>Удачные сценарии сохраняйте в «Учить».</li>
-                <li>Задержку и чёрный список — в «Опции».</li>
+                <li>Добавляй аккаунты с промптом и смотри лимиты.</li>
+                <li>Удачные сценарии сохраняй в «Учить».</li>
+                <li>Задержку и чёрный список настраивай в «Опции».</li>
               </ul>
             </div>
           </details>
@@ -365,6 +434,147 @@
           </div>
           <div id="stats-cards" class="stats-grid summary-grid"></div>
         </section>
+
+        <section class="tab-panel" data-panel="admin">
+          <div class="panel-strip card panel-rise">
+            <div class="panel-strip__mark" aria-hidden="true"></div>
+            <div class="panel-strip__text">
+              <p class="panel-hero__kicker">Админ</p>
+              <h2>Кабинет управления</h2>
+              <p id="admin-live" class="panel-strip__live">Как в программе на компьютере</p>
+            </div>
+            <button class="btn btn-secondary small panel-strip__refresh" data-action="admin-refresh" type="button">↻</button>
+          </div>
+
+          <div id="admin-summary" class="stats-grid summary-grid summary-grid--panel panel-rise"></div>
+
+          <div class="admin-subnav card panel-rise" role="tablist" aria-label="Разделы админки">
+            <button class="btn btn-secondary small chip-btn is-active" type="button" data-action="admin-sub" data-sub="accounts">AI / аккаунты</button>
+            <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="blacklist">ЧС</button>
+            <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="add">Добавить</button>
+            <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="proxies">Прокси</button>
+            <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="logs">Логи</button>
+            <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="activity">События</button>
+          </div>
+
+          <div id="admin-panel-accounts" class="section-card card admin-block" data-admin-panel="accounts">
+            <div class="section-card__header">
+              <h3>Ответ AI</h3>
+              <div class="admin-bulk">
+                <button class="btn btn-primary small" type="button" data-action="admin-bulk-ai-on">Вкл все</button>
+                <button class="btn btn-secondary small" type="button" data-action="admin-bulk-ai-off">Выкл все</button>
+              </div>
+            </div>
+            <p class="options-hint">Включение и выключение автоответа, пинг и удаление, как в OPS.</p>
+            <div id="admin-accounts-list" class="stack admin-accounts-list"></div>
+          </div>
+
+          <div id="admin-panel-blacklist" class="section-card card admin-block" data-admin-panel="blacklist" hidden>
+            <div class="section-card__header">
+              <h3>Чёрный список</h3>
+              <button class="btn btn-secondary small" type="button" data-action="admin-bl-refresh">Обновить</button>
+            </div>
+            <p class="options-hint">Как в Telegram-админке: блокировка воркеров, не собеседников ИИ.</p>
+            <label class="options-field">
+              <span>@username или Telegram ID</span>
+              <input id="admin-bl-input" type="text" placeholder="@sicretsolo / 7607083426" autocomplete="off" />
+            </label>
+            <div class="options-actions">
+              <button class="btn btn-primary" type="button" data-action="admin-bl-add">В ЧС</button>
+            </div>
+            <div id="admin-bl-list" class="stack options-list"></div>
+          </div>
+
+          <div id="admin-panel-add" class="section-card card admin-block" data-admin-panel="add" hidden>
+            <div class="section-card__header">
+              <h3>Добавить / подключить</h3>
+            </div>
+            <label class="options-field">
+              <span>Телефон</span>
+              <input id="admin-add-phone" type="text" placeholder="+79991234567" autocomplete="off" />
+            </label>
+            <label class="options-field">
+              <span>Owner Telegram ID</span>
+              <input id="admin-add-owner" type="text" placeholder="id владельца в users" inputmode="numeric" autocomplete="off" />
+            </label>
+            <label class="options-field">
+              <span>Промпт (опционально)</span>
+              <textarea id="admin-add-prompt" rows="4" placeholder="Ты — …"></textarea>
+            </label>
+            <div class="options-actions">
+              <button class="btn btn-primary" type="button" data-action="admin-add-create">Создать запись</button>
+              <button class="btn btn-secondary" type="button" data-action="admin-add-code">Запросить код</button>
+            </div>
+            <div id="admin-add-code-wrap" hidden>
+              <label class="options-field">
+                <span>Код из Telegram</span>
+                <input id="admin-add-code" type="text" inputmode="numeric" placeholder="12345" autocomplete="one-time-code" />
+              </label>
+              <div class="options-actions">
+                <button class="btn btn-primary" type="button" data-action="admin-add-confirm-code">Подтвердить код</button>
+                <button class="btn btn-secondary" type="button" data-action="admin-add-resend">Ещё раз код</button>
+              </div>
+            </div>
+            <div id="admin-add-2fa-wrap" hidden>
+              <label class="options-field">
+                <span>Облачный пароль 2FA</span>
+                <input id="admin-add-2fa" type="password" autocomplete="current-password" />
+              </label>
+              <div class="options-actions">
+                <button class="btn btn-primary" type="button" data-action="admin-add-confirm-2fa">Подтвердить пароль</button>
+              </div>
+            </div>
+            <p id="admin-add-status" class="options-hint"></p>
+          </div>
+
+          <div id="admin-panel-proxies" class="section-card card admin-block" data-admin-panel="proxies" hidden>
+            <div class="section-card__header">
+              <h3>Прокси</h3>
+              <div class="admin-bulk">
+                <button class="btn btn-secondary small" type="button" data-action="admin-proxy-refresh">Список</button>
+                <button class="btn btn-primary small" type="button" data-action="admin-proxy-check">Проверить SOCKS</button>
+              </div>
+            </div>
+            <p id="admin-proxy-hint" class="options-hint">Рабочие: чаты ИИ. Резидентские: вход по коду и QR.</p>
+            <div id="admin-proxy-results" class="stack admin-proxy-results"></div>
+          </div>
+
+          <div id="admin-panel-logs" class="section-card card admin-block" data-admin-panel="logs" hidden>
+            <div class="section-card__header">
+              <h3>Консоль логов</h3>
+              <div class="admin-bulk">
+                <button class="btn btn-secondary small" type="button" data-action="admin-logs-refresh">Обновить</button>
+                <button class="btn btn-secondary small" type="button" data-action="admin-logs-clear">Очистить</button>
+                <label class="admin-live-chk">
+                  <input type="checkbox" id="admin-logs-live" checked />
+                  <span>live</span>
+                </label>
+              </div>
+            </div>
+            <pre class="admin-log-console" id="admin-log-console" aria-live="polite"></pre>
+          </div>
+
+          <div id="admin-panel-activity" class="section-card card admin-block" data-admin-panel="activity" hidden>
+            <div class="section-card__header">
+              <h3>Логи событий</h3>
+              <div class="admin-bulk">
+                <button class="btn btn-secondary small" type="button" data-action="admin-activity-refresh">Обновить</button>
+                <label class="admin-live-chk">
+                  <input type="checkbox" id="admin-activity-live" checked />
+                  <span>live</span>
+                </label>
+              </div>
+            </div>
+            <p class="options-hint">Как в боте: просьба фото/кружка, ГС NFT, лид готов, согласие помочь.</p>
+            <div class="admin-subnav admin-subnav--tight" id="admin-activity-filters">
+              <button class="btn btn-secondary small chip-btn is-active" type="button" data-action="admin-akind" data-akind="all">Все</button>
+              <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-akind" data-akind="media">Фото / кружок</button>
+              <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-akind" data-akind="nft">NFT / ГС</button>
+              <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-akind" data-akind="lead">Лиды</button>
+            </div>
+            <div id="admin-activity-list" class="stack admin-activity-list"></div>
+          </div>
+        </section>
       </main>
 
       <nav class="bottom-nav" aria-label="Вкладки">
@@ -374,12 +584,13 @@
         <button class="nav-btn" data-tab="stats" type="button"><span class="nav-btn__label">Статы</span></button>
         <button class="nav-btn" data-tab="learn" type="button"><span class="nav-btn__label">Учить</span></button>
         <button class="nav-btn" data-tab="options" type="button"><span class="nav-btn__label">Опции</span></button>
+        <button class="nav-btn admin-only" data-tab="admin" type="button" hidden><span class="nav-btn__label">Админ</span></button>
       </nav>
     </div>
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="updates.js?v=58"></script>
-    <script src="app.js?v=58"></script>
+    <script src="updates.js?v=186"></script>
+    <script src="app.js?v=168"></script>
     </body>
     </html>

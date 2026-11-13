@@ -33,15 +33,35 @@ function isDatingSiteAsk(history, userMessage) {
 
 function softHint(history, userMessage) {
   const parts = [
-    'Пиши как живая девушка в личке с телефона: тепло, чуть хаотично, по-человечески — не саппорт и не ChatGPT. ' +
-      'Цепляйся к конкретике из его фразы своими словами, не общие «ого)» / «поняла)». ' +
-      'На факт или вопрос — сначала по сути; ритм живой (то короче, то чуть нежнее). ' +
-      'Можно «ну/хм/типа/блин/короче/слушая» в начале; скобка «)» — улыбка; смайл — редко один. ' +
-      'Можно маленькую опечатку или сбитый порядок слов, если звучит естественно — не переигрывай. ' +
-      'Можно своё мини-мнение («мне норм)», «ну спорно)») вместо вежливого согласия. ' +
-      'Без коуч-тона, без «чем могу помочь», без пустых «вместе посмотрим», пока нечего кинуть. ' +
-      'Два мира: ДВ/сайт знакомств ≠ NFT/флип (работа) — не путай, пока он сам не смешал.',
+    'Пиши как живая девушка в личке с телефона — эталон: короткий тёплый чат до любой «работы/токенов». ' +
+      'Обычно 1 мысль = 1 короткая фраза (часто 3–12 слов). Не эссе и не анкета про себя. ' +
+      'Цепляйся к его словам; можно «о как», «норм», «поняла», «ну молодец» — но не голое «ага» на длинный факт. ' +
+      'Смех отдельно коротко («ахаха», «хаха») если реально смешно — не разжёвывай шутку. ' +
+      'Скобка «)» чаще смайла; эмодзи редко. Можно редкую опечатку, без переигрыша. ' +
+      'Жизнь: зал/подруги/дома/связь пропала/ложусь — мелочью, не монологом. ' +
+      'Встречу не назначай: мягко через город/срок («была бы в …», «после … числа»), без лекции. ' +
+      'Часто спрашивай про НЕГО (день, настроение, планы) — один вопрос, не допрос. Держись его темы, своё — мелочью. ' +
+      'Без коуч-тона и без NFT/токенов/бирж, пока он сам явно не про это. На «чем занимаешься» в первый день — только онлайн/сама на себя, без флипа. ДВ = знакомства, не работа. ' +
+      '«ну ок)» — только короткое согласие. ЗАПРЕЩЕНО оценка: «это ну ок», «звучит ну ок», «просто ну ок», «день ну ок». ' +
+      'Для оценки: «норм», «прикольно», «о как» — не одно и то же слово подряд.',
   ];
+
+  try {
+    const jobFlip = require('./jobFlipAsk');
+    if (jobFlip.isJobOccupationAsk(userMessage)) {
+      if (jobFlip.mayMentionFlipNft({ history })) {
+        parts.push(
+          'ВАЖНО СЕЙЧАС: он спросил про твою работу. Коротко про флипинг токенов + в конце «слышал о таком?)».',
+        );
+      } else {
+        parts.push(
+          'ВАЖНО СЕЙЧАС: он спросил про работу, но рано для флипа. Только «онлайн / сама на себя» — без флип/токен/NFT.',
+        );
+      }
+    }
+  } catch (_) {
+    /* optional */
+  }
 
   if (isDatingSiteAsk(history, userMessage)) {
     parts.push(
@@ -54,9 +74,22 @@ function softHint(history, userMessage) {
   if (needsReciprocalQuestion(history, userMessage)) {
     parts.push(
       'ВАЖНО СЕЙЧАС: ты несколько сообщений только отвечала — диалог односторонний. ' +
-        'После короткого ответа добавь ОДИН живой вопрос про него: как день, чем занят, что делал, как настроение. ' +
+        'После короткого ответа добавь ОДИН вопрос как в живом чате: «как дела?», «как день?», «а ты чем?», «как настроение?». ' +
         'НЕ зеркаль «а ты откуда?» / «а ты чем занимаешься?» сразу после своего города/работы. ' +
         'Не допрос: один вопрос, без второго.',
+    );
+  }
+
+  const mixMsg = String(userMessage || '');
+  if (
+    /чат(?:ы)?\s+перепутал|перепутал[аи]?\s+чат|не\s+тот\s+чат|не\s+(?:то|ту)\s+(?:тем|тем[уе]|сообщ)|ответила\s+не\s+(?:то|так)|мимо\s+тем/i.test(
+      mixMsg,
+    )
+  ) {
+    parts.push(
+      'ВАЖНО СЕЙЧАС: он сказал, что ты перепутала чаты / ответила не в тему. ' +
+        'Коротко «ой сорри)» / «ахах перепутала)» и ОТВЕТЬ на его ПОСЛЕДНИЙ реальный вопрос по делу. ' +
+        'Если спрашивал про сериалы/музыку/день — про это, НЕ уходи снова в город и переезд.',
     );
   }
   return parts.join(' ');
@@ -178,6 +211,8 @@ function humanizeChatTexture(reply) {
     .replace(new RegExp(`${b}следует${e}`, 'gi'), 'лучше')
     .replace(new RegExp(`${b}довольно\\s+интересно${e}`, 'gi'), 'прикольно')
     .replace(new RegExp(`${b}весьма${e}`, 'gi'), 'прям')
+    .replace(/ну\s+типа\s+ух\s+ты/gi, 'ух ты')
+    .replace(/ну\s+типа\s+(?=интересн|классн|круто|да\b)/gi, '')
     .replace(new RegExp(`${b}я\\s+понимаю\\s+тво[её]\\s+чувства?${e}`, 'gi'), 'ну понимаю')
     .replace(new RegExp(`${b}это\\s+нормально\\s+чувствовать${e}`, 'gi'), 'бывает')
     .replace(
@@ -236,15 +271,86 @@ function softCompleteCut(reply) {
   if (/^(?:по\s+делу)\s*\)?$/i.test(body)) {
     return tag + ['ну типа того)', 'ага, по делу)', 'да, коротко)'][Math.floor(Math.random() * 3)];
   }
+  if (
+    /^(?:прикольно|ну\s+прикольно|интересно|ну\s+интересно|ох?|ну\s+да\s+точно)\s*\)?$/i.test(
+      body,
+    )
+  ) {
+    return (
+      tag +
+      ['ох, звучит)', 'ну это да)', 'хех, ясно)', 'ага, прикольно звучит)'][
+        Math.floor(Math.random() * 4)
+      ]
+    );
+  }
+  if (/^(?:да|ну\s+да),?\s+это\s+точно\s*\)?$/i.test(body)) {
+    return (
+      tag +
+      ['ага, так и есть)', 'ну да, похоже)', 'хм, и правда)'][Math.floor(Math.random() * 3)]
+    );
+  }
+  if (/^(?:да,?\s+)?согласна?\s*\)?$/i.test(body)) {
+    return (
+      tag +
+      ['ага, тоже так думаю)', 'ну да, похоже)', 'хм, согласна с тобой)'][
+        Math.floor(Math.random() * 3)
+      ]
+    );
+  }
+  if (/^ну\s+типа\s+/i.test(body) && body.length < 48) {
+    const fixed = body.replace(/^ну\s+типа\s+/i, '').trim();
+    if (fixed.length >= 6) return tag + (fixed.endsWith(')') ? fixed : `${fixed})`);
+  }
   if (/\s(?:был|была)\s*$/i.test(body) && body.split(/\s+/).length <= 5) {
     return tag + `${body.replace(/\s*$/, '')} норм)`;
+  }
+  // Обрубок рекомендации трека: «слушай «X» от,» / «от, тоже классный».
+  if (
+    /послушай|послушать|трек|песн/i.test(body) &&
+    (/\sот\s*,\s*(?:тоже|ещё|еще)?/i.test(body) || /\sот\s*[,)]?\s*$/i.test(body))
+  ) {
+    const alts = [
+      'хм, название вылетело, потом скину)',
+      'трек норм, щас название вспомню)',
+      'ой, забыла как группа называется)',
+    ];
+    return tag + alts[Math.floor(Math.random() * alts.length)];
+  }
+  // 0iy/0iz: «просто дел по» / висячий предлог в конце (\b не ловит кириллицу)
+  if (/(?:^|[^а-яё])дел\s+по\s*\)?$/i.test(body) || /просто\s+дел\s+по(?![а-яё])/i.test(body)) {
+    return tag + 'просто дел полно)';
+  }
+  // 0jf: «да нет, еще не позд)» / «нормальное, подожд»
+  if (/(?:^|[^а-яё])позд\s*\)?$/i.test(body)) {
+    return tag + body.replace(/(позд)\s*\)?$/i, 'поздно)');
+  }
+  if (/(?:^|[^а-яё])подожд\s*\)?$/i.test(body)) {
+    return tag + body.replace(/(подожд)\s*\)?$/i, 'подожди)');
+  }
+  // Висячие предлоги / союзы в конце целого пузыря
+  if (
+    /(?:^|[^а-яё])(?:по|на|в|к|с|у|из|за|от|для|про|при|и|а|но|что|как|чтобы)\s*\)?$/i.test(
+      body,
+    ) &&
+    body.split(/\s+/).length <= 8
+  ) {
+    return tag + ['хм, потом доскажу)', 'ой вылетело, сек)', 'ну в общем да)'][
+      Math.floor(Math.random() * 3)
+    ];
+  }
+  // Одиночная буква в конце («ага, да, Д») — мусор обрыва
+  if (/[,:]\s*[А-ЯЁA-Zа-яёa-z]\s*\)?$/.test(body) && body.length <= 36) {
+    const cleaned = body.replace(/[,:]\s*[А-ЯЁA-Zа-яёa-z]\s*\)?$/, '').trim();
+    if (cleaned.length >= 3) {
+      return tag + (cleaned.endsWith(')') ? cleaned : `${cleaned})`);
+    }
   }
   return reply;
 }
 
 /** Голые междометия / пустые реакции без содержания. */
 const BARE_ACK_RE =
-  /^(?:ага|угу|ок|окей|ладно|ясно|поняла?|ну\s+да|хм\s+ок|круто|здорово|супер|класс|аминь|радость|доброе|ок\)\)|ну\s+ок)\s*\){0,2}$/i;
+  /^(?:ага|угу|ок|окей|ладно|ясно|поняла?|ну\s+да|хм\s+ок|круто|здорово|супер|класс|прикольно|интересно|точно|согласна?|аминь|радость|доброе|ок\)\)|ну\s+ок)\s*\){0,2}$/i;
 
 /**
  * На содержательную реплику («я с района», факт, рассказ) голый «ага/ладно»
@@ -256,28 +362,279 @@ function enrichBareAckOnSubstance(reply, userMessage) {
     .replace(/\[[^\]]*\]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!user || user.length < 12) return reply;
+  // 0iz: раньше <12 пропускало короткие факты → «ага)» в чат
+  if (!user || user.length < 6) return reply;
   if (/^(?:ну\s+|да\s+)?(?:ага|угу|ок|окей|ладно|норм|хорошо|ясно|понял[а]?|спс|спасибо)\b/i.test(user)) {
     return reply;
   }
-  if (/\?/.test(user) && user.length < 40) return reply;
 
   const tag = (String(reply).match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
   const body = String(reply).slice(tag.length).trim();
-  if (!BARE_ACK_RE.test(body)) {
+  if (!BARE_ACK_RE.test(body) && !AUDIT_EXACT_STUBS.has(body.toLowerCase())) {
+    return reply;
+  }
+  // Вопрос / просьба — не цепляем кривой крюк («ого, чего)»); дожмёт expandBareStubOnQuestion.
+  if (
+    /[?]/.test(user) ||
+    /^(?:ну\s+|а\s+)?(?:что|чё|че|чего|как|чем|где|куда|когда|почему|зачем|кто)(?![а-яёa-z])/i.test(
+      user,
+    ) ||
+    /(?:можешь|скинь|запиши|пришли|покажи)(?![а-яёa-z])/i.test(user)
+  ) {
     return reply;
   }
   // Есть конкретика у него — короткая реакция с отсылкой, не голое «ага».
-  const words = user.split(/\s+/).filter((w) => w.length > 3).slice(0, 3);
-  const hook = words[0] ? words[0].replace(/[^\p{L}\p{N}-]/gu, '') : '';
+  // Не цеплять служебные слова («если», «когда») — иначе «а, про если)» палит бота.
+  const STOP_HOOK =
+    /^(?:если|когда|хочешь|можешь|будешь|просто|только|сейчас|очень|ещё|еще|типа|вообще|потом|сейчас|может|надо|нужно|там|тут|это|того|тебя|меня|себе)$/i;
+  const words = user
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\p{L}\p{N}-]/gu, ''))
+    .filter((w) => w.length > 3 && !STOP_HOOK.test(w))
+    .slice(0, 3);
+  const hook = words[0] || '';
   const variants = hook
-    ? [
-        `ого, ${hook.toLowerCase()})`,
-        `а, про ${hook.toLowerCase()})`,
-        `ну ясно, интересно)`,
-      ]
-    : ['ну ясно)', 'интересн)', 'ого, расскажи)'];
+    ? [`ого, ${hook.toLowerCase()})`, `ну ясно, интересно)`, `хех, звучит)`, `ага, и как тебе?)`]
+    : ['ну ясно)', 'интересно)', 'ого, расскажи)', 'хех ну да)'];
   return tag + variants[Math.floor(Math.random() * variants.length)];
+}
+
+/** Грамматика: «чем занимаете?» → «чем занимаешься?» + вырез «а, про если)». */
+function fixRuAgreementGlitches(reply) {
+  if (!reply) return reply;
+  return String(reply)
+    .replace(/(?:^|[^\p{L}])чем\s+занимаете(?!\p{L})/giu, (m) =>
+      m.replace(/занимаете/i, 'занимаешься'),
+    )
+    .replace(/(?:^|[^\p{L}])занимаете(?!\p{L})/giu, (m) =>
+      m.replace(/занимаете/i, 'занимаешься'),
+    )
+    .replace(
+      /(?:^|[^\p{L}])а,?\s*про\s+(?:если|когда|хочешь|можешь|будешь)\s*\)?/giu,
+      (m) => (m.startsWith('а') || /^а/i.test(m.trim()) ? 'ага)' : `${m[0]}ага)`),
+    );
+}
+
+/**
+ * «молодость - это ладно» / «X это ладно» — калька, так не говорят.
+ * «ладно» = согласие, не оценка. → «хорошо» / короткое «кайф)».
+ */
+function fixAwkwardLadnoPredicate(reply) {
+  if (!reply) return reply;
+  const tag = (String(reply).match(/^\s*<<[^>\n]*>>\s*/) || [''])[0];
+  let body = String(reply).slice(tag.length);
+  const before = body;
+  // «молодость - это ладно» / «работа это ладно»
+  // Не использовать \b — в JS граница слова ломается на кириллице.
+  const end = '(?![а-яёa-z])';
+  body = body.replace(
+    new RegExp(
+      `([а-яёa-z]{3,}(?:\\s+[а-яёa-z]{2,}){0,4})\\s*[-–—:]\\s*это\\s+ладно${end}`,
+      'gi',
+    ),
+    (_, left) => {
+      const soft = String(left || '').trim();
+      const alts = [`${soft} - это хорошо`, `${soft} прикольно`, `${soft} норм)`];
+      return alts[Math.floor(Math.random() * alts.length)];
+    },
+  );
+  body = body.replace(
+    new RegExp(
+      `([а-яёa-z]{3,}(?:\\s+[а-яёa-z]{2,}){0,4})\\s+это\\s+ладно${end}`,
+      'gi',
+    ),
+    (_, left) => {
+      const soft = String(left || '').trim();
+      if (/^(ну|да|ок|ага|угу)$/i.test(soft)) return `${soft} ладно`;
+      return `${soft} - это хорошо`;
+    },
+  );
+  // Висячее «это ладно)» в начале куска — не кормим «ну ок» (тоже кривая оценка)
+  body = body.replace(
+    new RegExp(`(^|[.!?)\n]\\s*)это\\s+ладно${end}`, 'gi'),
+    '$1ладно',
+  );
+  if (body !== before) {
+    body = body.replace(/\s{2,}/g, ' ').trim();
+    if (body && !/[)….!?]$/.test(body)) body += ')';
+  }
+  return tag + body;
+}
+
+/**
+ * «сериалы - это ну ок», «звучит ну ок», «на Байкале просто ну ок» —
+ * «ну ок» = короткое согласие, не оценка предмета. → «норм» / «кайф» / «прикольно».
+ * Голое «ну ок)» / «хах ну ок)» не трогаем.
+ */
+function fixAwkwardNuOkPredicate(reply) {
+  if (!reply) return reply;
+  const tag = (String(reply).match(/^\s*<<[^>\n]*>>\s*/) || [''])[0];
+  let body = String(reply).slice(tag.length);
+  const trimmed = body.trim();
+  // Чистое согласие — ок
+  if (
+    /^(?:о,?\s*|ха+х?,?\s*|аха+х?,?\s*|хм,?\s*|эм,?\s*|ага,?\s*|угу,?\s*|ну,?\s*)*ну\s+ок\s*\)?\s*$/i.test(
+      trimmed,
+    )
+  ) {
+    return reply;
+  }
+  const before = body;
+  const end = '(?![а-яёa-z])';
+  const b = '(?<![а-яёa-z0-9])';
+  const keepAck = /^(о|хах|ахах|хм|эм|ага|угу|ну|да|ок|ладно|поняла|ясно|короче|привет|приветик)$/i;
+
+  // «X - это ну ок»
+  body = body.replace(
+    new RegExp(
+      `([а-яёa-z0-9]{2,}(?:\\s+[а-яёa-z0-9]{2,}){0,5})\\s*[-–—:]\\s*это\\s+ну\\s+ок${end}`,
+      'gi',
+    ),
+    (_, left) => {
+      const soft = String(left || '').trim();
+      const alts = [`${soft} - это норм`, `${soft} о как)`, `${soft} прикольно`];
+      return alts[Math.floor(Math.random() * alts.length)];
+    },
+  );
+  // «X это ну ок»
+  body = body.replace(
+    new RegExp(
+      `([а-яёa-z0-9]{2,}(?:\\s+[а-яёa-z0-9]{2,}){0,5})\\s+это\\s+ну\\s+ок${end}`,
+      'gi',
+    ),
+    (_, left) => {
+      const soft = String(left || '').trim();
+      if (keepAck.test(soft)) return `${soft} ок`;
+      return `${soft} - это норм`;
+    },
+  );
+  // «Мальта - ну ок» без «это»
+  body = body.replace(
+    new RegExp(
+      `([а-яёa-z0-9]{2,}(?:\\s+[а-яёa-z0-9]{2,}){0,4})\\s*[-–—]\\s*ну\\s+ок${end}`,
+      'gi',
+    ),
+    (_, left) => `${String(left).trim()} - норм`,
+  );
+  // «мазда, ну ок» / «атлет, ну ок»
+  body = body.replace(
+    new RegExp(
+      `([а-яёa-z0-9]{3,}(?:\\s+[а-яёa-z0-9]{2,}){0,3}),\\s*ну\\s+ок${end}`,
+      'gi',
+    ),
+    (_, left) => {
+      const soft = String(left).trim();
+      if (keepAck.test(soft)) return `${soft}, ну ок`;
+      return `${soft}, норм`;
+    },
+  );
+  // висячее «это ну ок»
+  body = body.replace(
+    new RegExp(`(^|[.!?)\n]\\s*)это\\s+ну\\s+ок${end}`, 'gi'),
+    '$1норм',
+  );
+  // «звучит/выглядит ну ок»
+  body = body.replace(
+    new RegExp(`${b}(звучит|выглядит|кажется)\\s+ну\\s+ок${end}`, 'gi'),
+    '$1 норм',
+  );
+  // «довольно/просто/было (бы) ну ок»
+  body = body.replace(
+    new RegExp(
+      `${b}(?:довольно|просто|было(?:\\s+бы)?|прям(?:о)?)\\s+ну\\s+ок${end}`,
+      'gi',
+    ),
+    'норм',
+  );
+  // «день ну ок» / «сериалы ну ок» — слово перед оценкой
+  body = body.replace(
+    new RegExp(`([а-яёa-z]{3,})\\s+ну\\s+ок${end}`, 'gi'),
+    (m, w) => {
+      if (keepAck.test(w)) return m;
+      return `${w} норм`;
+    },
+  );
+  // «ну ок гулять/мечтать»
+  body = body.replace(
+    new RegExp(
+      `${b}ну\\s+ок\\s+(?=(?:гулять|мечтать|ездить|смотреть|слушать|делать|работать|жить)(?![а-яёa-z]))`,
+      'gi',
+    ),
+    'кайф ',
+  );
+  // «ну ок, что …» → обычное «ок, что»
+  body = body.replace(/ну\s+ок,\s*что\s+/gi, 'ок, что ');
+  // «ну ок, ну ок»
+  body = body.replace(/ну\s+ок,\s*ну\s+ок/gi, 'норм');
+
+  if (body !== before) {
+    body = body.replace(/\s{2,}/g, ' ').trim();
+    if (body && !/[)….!?]$/.test(body)) body += ')';
+  }
+  return tag + body;
+}
+
+/**
+ * RU-чат: латиница-мусор вроде «cepiously))» → нормальный русский.
+ * EN-чаты (мало кириллицы) не трогаем.
+ */
+function scrubRuLatinGarbage(reply) {
+  if (!reply) return reply;
+  const src = String(reply);
+
+  // Сначала всегда чиним известный мусор (даже если вся фраза латиницей).
+  let t = src
+    .replace(/\bce+pi?ous+ly\b/gi, 'серьёзно')
+    .replace(/\bs[ei]rious+ly\b/gi, 'серьёзно')
+    .replace(/\bsirs?ious+ly\b/gi, 'серьёзно')
+    .replace(/\blol\s*u\s*serious\??\b/gi, 'серьёзно?')
+    .replace(/\bu\s*serious\??\b/gi, 'серьёзно?')
+    .replace(/\bseriou?s(?:ly)?\b/gi, 'серьёзно')
+    .replace(/\bweird\s+take\b/gi, 'странно звучит')
+    .replace(/\bok\s+then\b/gi, 'ну ок')
+    .replace(/\bok\s+believe\s+what\s+u\s+want\b/gi, 'ладно верь')
+    .replace(/\blol\s+again\??\b/gi, 'хах опять');
+
+  const cyr = (t.match(/[а-яё]/gi) || []).length;
+  const lat = (t.match(/[a-z]/gi) || []).length;
+  // Чистый EN без кириллицы после фиксов — не трогаем дальше.
+  if (cyr < 1 && lat >= 3) {
+    return t
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\s+([)!.?,])/g, '$1')
+      .trim() || reply;
+  }
+
+  t = t
+    .replace(/(?:^|[^\p{L}])lol(?!\p{L})/giu, (m) => m.replace(/lol/i, 'хах'))
+    .replace(/(?:^|[^\p{L}])(?:wtf|omg)(?!\p{L})/giu, (m) =>
+      /wtf/i.test(m) ? m.replace(/wtf/i, 'что') : m.replace(/omg/i, 'ого'),
+    )
+    .replace(/(?:^|[^\p{L}])(?:yeah|yep)(?!\p{L})/giu, (m) => m.replace(/yeah|yep/i, 'ага'))
+    .replace(/(?:^|[^\p{L}])nah(?!\p{L})/giu, (m) => m.replace(/nah/i, 'неа'))
+    .replace(/(?:^|[^\p{L}])nope(?!\p{L})/giu, (m) => m.replace(/nope/i, 'нет'));
+
+  // Висячие латинские «слова» 5+ букв в RU-ответе (не бренды).
+  if (cyr >= 1) {
+    t = t.replace(/(?:^|[^\p{L}@/])([a-z]{5,})(?![а-яёa-z0-9])/giu, (m, word) => {
+      const w = String(word).toLowerCase();
+      if (
+        /^(https?|telegram|instagram|youtube|tiktok|iphone|android|chatgpt|openai|whitelist|crypto|token|nft)$/i.test(
+          w,
+        )
+      ) {
+        return m;
+      }
+      return m.replace(word, '');
+    });
+  }
+
+  return t
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([)!.?,])/g, '$1')
+    .replace(/\?{2,}/g, '?')
+    .replace(/^\s*[)!.?,]+\s*/g, '')
+    .trim() || reply;
 }
 
 const RECIPROCAL_QS = [
@@ -370,7 +727,7 @@ const USER_SAYS_DAYTIME_RE =
   /(?:^|[^а-яёa-z0-9])(?:уже\s+утро|сейчас\s+утро|утром|уже\s+день|день\s+же|не\s+ночь|солнце(?:\s|$)|доброе\s+утро|день\s+добрый)/i;
 
 const REPLY_NIGHT_CLAIM_RE =
-  /ночь\s+же|уже\s+ночь|сейчас\s+ночь|спокойной(?:\s+ночи)?|доброй\s+ночи|споки|сладких\s+снов|пойду\s+спать|иду\s+спать/i;
+  /ночь\s+же|уже\s+ночь|сейчас\s+ночь|спокойной\s+ночи|доброй\s+ночи|споки|сладких\s+снов|пойду\s+спать|иду\s+спать/i;
 
 /**
  * Запоздалый ответ на вчерашнее «спокойной» / утренний «ночь же» —
@@ -538,28 +895,221 @@ function stripRoboticGirl(reply) {
   return tag + body;
 }
 
-/** Финальный гейт: голые короткие ack не уходят в чат. */
-function ensureAckNotBare(reply) {
+/** Точные пустышки из audit 10/10 — никогда не уходят в чат как весь ответ. */
+const AUDIT_EXACT_STUBS = new Set(
+  [
+    'а ещё)',
+    'а ещё',
+    'ой и ещё)',
+    'забыла сказать)',
+    'кстати да)',
+    'ага',
+    'ага)',
+    'угу',
+    'угу)',
+    'ладно',
+    'ладно)',
+    'ок',
+    'ок)',
+    'окей',
+    'окей)',
+    'круто',
+    'круто)',
+    'здорово',
+    'здорово)',
+    'хм ок',
+    'хм ок)',
+    'ну да)',
+    'ну да',
+  ].map((s) => s.toLowerCase()),
+);
+
+const SAFE_ACK_VARIANTS = [
+  'ну ладно)',
+  'хм, ясно)',
+  'ага, ясно)',
+  'ок, я тут)',
+  'хех ну да)',
+  'ну бывает)',
+  'о как)',
+  'хм ок)',
+];
+
+function pickSafeAck() {
+  return SAFE_ACK_VARIANTS[Math.floor(Math.random() * SAFE_ACK_VARIANTS.length)];
+}
+
+const BARE_GREETING_RE =
+  /^(?:привет|приветик|прив|хай|хей|здарова|здаров|здравствуй|доброе\s+утро|добрый\s+день|добрый\s+вечер|hi|hello|hey)\s*[).!]{0,3}$/i;
+const GREETING_ACK_ALTS = ['хай)', 'привет)', 'хех привет)', 'ну привет)', 'хай, привет)'];
+
+function isBareGreeting(userMessage) {
+  const u = String(userMessage || '')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return BARE_GREETING_RE.test(u);
+}
+
+/** На голое «привет» нельзя «мм, поняла)» — нечего понимать. */
+function fixAckOnBareGreeting(reply, userMessage) {
+  if (!reply || !isBareGreeting(userMessage)) return reply;
+  const tag = (String(reply).match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
+  const body = String(reply).slice(tag.length).trim();
+  if (!body) return reply;
+  if (/привет|приветик|хай|хей|здаров|добр/i.test(body)) return reply;
+  if (
+    BARE_ACK_RE.test(body) ||
+    /^(?:мм|эм|хм)[,.]?\s*(?:понял[аи]?|ясно|ага|ок)\s*\)?$/i.test(body) ||
+    /понял[аи]?\s*\)?$/i.test(body)
+  ) {
+    return tag + GREETING_ACK_ALTS[Math.floor(Math.random() * GREETING_ACK_ALTS.length)];
+  }
+  return reply;
+}
+
+/** Финальный гейт: голые короткие ack / audit-stubs не уходят в чат. */
+function ensureAckNotBare(reply, userMessage) {
   if (!reply) return reply;
   const tag = (String(reply).match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
   const body = String(reply).slice(tag.length).trim();
   if (!body || body.includes('\n')) return reply;
-  if (!BARE_ACK_RE.test(body)) return reply;
-  const variants = [
-    'ну ладно)',
-    'хм, поняла)',
-    'ага, ясно)',
-    'ок, я тут)',
-  ];
-  return tag + variants[Math.floor(Math.random() * variants.length)];
+  const exactStub = AUDIT_EXACT_STUBS.has(body.toLowerCase());
+  // Ультра-коротыши 1–5 символов (кроме живых неа/нет) — тоже дожимаем.
+  // «ок)» в audit-stubs — режем; живой «ок» без скобки тоже в списке.
+  const ultraShort =
+    body.length <= 5 &&
+    !/^(?:неа\)?|нет\)?|да\)?)$/i.test(body) &&
+    !/[❤😁☺️😊🥰🔥👍]/.test(body);
+  if (!exactStub && !BARE_ACK_RE.test(body) && !ultraShort) return reply;
+  if (isBareGreeting(userMessage)) {
+    return tag + GREETING_ACK_ALTS[Math.floor(Math.random() * GREETING_ACK_ALTS.length)];
+  }
+  return tag + pickSafeAck();
 }
 
 function fixGluedParticles(reply) {
   if (!reply) return reply;
   // «да нетсейчас?» / «несейчас» — модель слипает частицы.
+  // Без \b: в JS граница слова ломается на кириллице.
   return String(reply)
-    .replace(/\b(да\s+)?нетсейчас\b/gi, (_, p) => `${p || ''}нет, сейчас`)
-    .replace(/\bнесейчас\b/gi, 'не сейчас');
+    .replace(/(^|[^а-яёa-z0-9])((?:да\s+)?)нетсейчас(?![а-яёa-z0-9])/gi, (_, a, p) => `${a}${p || ''}нет, сейчас`)
+    .replace(/(^|[^а-яёa-z0-9])несейчас(?![а-яёa-z0-9])/gi, '$1не сейчас');
+}
+
+const KAIF_ONLY_RE =
+  /^(?:ну\s+|да\s+|ага\s+|угу\s+)?кайф(?:овой|овая|ики|ово)?(?:\s*[,.!)…]*)?$/i;
+const KAIF_SHORT_RE =
+  /^(?:ну\s+|да\s+|ага\s+|угу\s+)?кайф(?:овой|овая|ики|ово)?\b.{0,20}$/i;
+const KAIF_ACK_ALTS = ['норм)', 'прикольно)', 'о как)', 'круто)', 'хех ну да)'];
+
+function isKaifHeavy(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  return (
+    KAIF_ONLY_RE.test(t) ||
+    KAIF_SHORT_RE.test(t) ||
+    (/^кайф\b/i.test(t) && t.length <= 36 && !/[?]/.test(t))
+  );
+}
+
+function countRecentKaif(history, n = 6) {
+  return (Array.isArray(history) ? history : [])
+    .filter((m) => m && m.role === 'assistant')
+    .slice(-n)
+    .filter((m) => {
+      const c = String(m.content || '').trim();
+      return /кайф/i.test(c) && c.length <= 48;
+    }).length;
+}
+
+/**
+ * Петля «кайф»: 1+ своё «кайф» в хвосте → не эхо; юзер тоже на кайфе → сразу увод.
+ * Короткие «кайф)» без истории → мягкая замена на другой ack.
+ */
+function breakKaifEcho(reply, history, userMessage) {
+  const user = String(userMessage || '').trim();
+  const out = String(reply || '').trim();
+  if (!out) return reply;
+
+  const userIsKaif =
+    KAIF_ONLY_RE.test(user) ||
+    (/кайф/i.test(user) && user.length <= 24 && !/[?]/.test(user));
+  const replyIsKaif = isKaifHeavy(out);
+  if (!replyIsKaif) return reply;
+
+  const kaifHits = countRecentKaif(history, 6);
+  const pivots = [
+    'ага) чем ещё день скрашиваешь?',
+    'поняла) а ты сейчас дома?',
+    'ок) что по планам на вечер?',
+    'ясно) слушай, а ты откуда сам?',
+    'мм) а ты чем занят сейчас?',
+  ];
+  const pickPivot = () => pivots[Math.floor(Math.random() * pivots.length)];
+  const pickAck = () => KAIF_ACK_ALTS[Math.floor(Math.random() * KAIF_ACK_ALTS.length)];
+
+  // Юзер на кайфе + мы снова «кайф» — всегда ломаем (даже с 0 в истории).
+  if (userIsKaif) return pickPivot();
+  // Уже был свой кайф в хвосте — не повторяем.
+  if (kaifHits >= 1) return pickPivot();
+  // Голое «кайф)» без петли — хотя бы не одно и то же слово.
+  if (KAIF_ONLY_RE.test(out)) return pickAck();
+  return reply;
+}
+
+/**
+ * Два коротких ответа на два вопроса → один пузырь (меньше «а делать?)» отдельной строкой).
+ */
+function mergeTwoQuestionBubbles(reply, userMessage) {
+  const raw = String(reply || '');
+  if (!raw.includes('\n')) return reply;
+  let questions = [];
+  try {
+    questions = require('./aiResponder').extractUserQuestions(userMessage) || [];
+  } catch (_) {
+    return reply;
+  }
+  if (questions.length < 2) return reply;
+  const tag = (raw.match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
+  const body = raw.slice(tag.length).trim();
+  const lines = body
+    .split(/\n+/)
+    .map((l) => l.replace(/^\s*<<[^>]+>>\s*/, '').trim())
+    .filter(Boolean);
+  if (lines.length !== 2) return reply;
+  if (lines.some((l) => l.length > 70 || /\?/.test(l))) return reply;
+  const joined = `${lines[0].replace(/[)….!]?$/, '')}; ${lines[1]}`.replace(/\s{2,}/g, ' ');
+  return tag + (joined.endsWith(')') ? joined : `${joined})`);
+}
+
+/**
+ * После кружка «концерт/тусовка» модель иногда врёт «дома в кресле» по старым примерам.
+ * Если в истории описание кадра ≠ дом, а ответ про дом/кресло — подменяем.
+ */
+function fixCirclePlaceMismatch(reply, history, userMessage) {
+  const ask = String(userMessage || '');
+  if (!/(?:где\s+ты|это\s+где|а\s+где|куда\s+(?:ты\s+)?|что\s+за\s+место)/i.test(ask)) {
+    return reply;
+  }
+  const hist = Array.isArray(history) ? history : [];
+  let desc = '';
+  for (let i = hist.length - 1; i >= 0; i -= 1) {
+    const h = hist[i];
+    if (h?.role !== 'assistant') continue;
+    const m = String(h.content || '').match(/\{кружок:\s*([^}]+)\}/i);
+    if (m) {
+      desc = m[1].trim();
+      break;
+    }
+  }
+  if (!desc) return reply;
+  const nightlife =
+    /концерт|тусовк|клуб|сцен|вечеринк|красн\w*\s+свет|шум|зажига|баре|на\s+тусе/i.test(desc);
+  if (!nightlife) return reply;
+  const body = String(reply || '');
+  if (!/(?:дома|уютн|кресл|ча(?:й|шка)|диван)/i.test(body)) return reply;
+  return 'на концерте сейчас, шумно)'.slice(0, 80);
 }
 
 function applySoftLite(reply, history, userMessage) {
@@ -567,6 +1117,14 @@ function applySoftLite(reply, history, userMessage) {
   let out = softenCoachy(reply);
   out = stripRoboticGirl(out);
   out = softCompleteCut(out);
+  out = fixAckOnBareGreeting(out, userMessage);
+  out = mergeTwoQuestionBubbles(out, userMessage);
+  out = fixCirclePlaceMismatch(out, history, userMessage);
+  try {
+    out = require('./humanIdeas14').fixBrokenWords(out);
+  } catch (_) {
+    /* optional */
+  }
   out = enrichBareAckOnSubstance(out, userMessage);
   out = stripEmptyTogetherInvite(out);
   out = fixStaleNightTalk(out, userMessage);
@@ -577,9 +1135,36 @@ function applySoftLite(reply, history, userMessage) {
   out = fixStaleNightTalk(out, userMessage);
   out = stripQuestionAfterFarewell(out);
   out = fixGluedParticles(out);
+  out = fixRuAgreementGlitches(out);
+  out = fixAwkwardLadnoPredicate(out);
+  out = fixAwkwardNuOkPredicate(out);
+  out = breakKaifEcho(out, history, userMessage);
+  try {
+    const so = require('./scaleOps');
+    out = so.breakShortAckEcho(out, history);
+    out = so.fixOfftopicMoveReply(out, userMessage);
+    out = so.softenMoveTiming(out, userMessage);
+  } catch (_) {
+    /* optional */
+  }
+  out = scrubRuLatinGarbage(out);
   out = humanizeChatTexture(out);
+  // 0in H: после texture снова чиним род + нечитаемые обрубки/typo.
+  try {
+    out = require('./humanIdeas14').fixBrokenWords(out);
+  } catch (_) {
+    /* optional */
+  }
+  try {
+    const ai = require('./aiResponder');
+    if (typeof ai.fixModelTypos === 'function') out = ai.fixModelTypos(out);
+    if (typeof ai.fixFemaleSelfForms === 'function') out = ai.fixFemaleSelfForms(out);
+  } catch (_) {
+    /* optional */
+  }
   // Финальный гейт после всех правок — иначе season/robot снова вернут «ага)».
-  out = ensureAckNotBare(out);
+  out = fixAckOnBareGreeting(out, userMessage);
+  out = ensureAckNotBare(out, userMessage);
   return out;
 }
 
@@ -588,18 +1173,29 @@ module.exports = {
   isDatingSiteAsk,
   softenCoachy,
   softCompleteCut,
+  fixAckOnBareGreeting,
+  isBareGreeting,
+  mergeTwoQuestionBubbles,
   enrichBareAckOnSubstance,
   ensureAckNotBare,
   fixGluedParticles,
+  fixRuAgreementGlitches,
+  fixAwkwardLadnoPredicate,
+  fixAwkwardNuOkPredicate,
+  breakKaifEcho,
+  scrubRuLatinGarbage,
   humanizeChatTexture,
   stripEmptyTogetherInvite,
   stripRoboticGirl,
   fixStaleNightTalk,
   stripFalseSeasonCorrection,
   applySoftLite,
+  fixCirclePlaceMismatch,
   needsReciprocalQuestion,
   shouldKeepTrailingQuestion,
   ensureReciprocalQuestion,
   stripQuestionAfterFarewell,
   USER_CLOSING_RE,
+  pickSafeAck,
+  AUDIT_EXACT_STUBS,
 };
