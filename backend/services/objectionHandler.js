@@ -574,10 +574,23 @@ function isDirectQuestion(text) {
   );
 }
 
+/** «Олег из вк» — не просьба контакта (см. humanIdeas15.SOCIAL_SOURCE_INTRO_RE). */
+function isContactRequest(text) {
+  const t = String(text || '');
+  if (!t.trim()) return false;
+  try {
+    const { SOCIAL_SOURCE_INTRO_RE } = require('./humanIdeas15');
+    if (SOCIAL_SOURCE_INTRO_RE && SOCIAL_SOURCE_INTRO_RE.test(t)) return false;
+  } catch (_) {
+    /* optional */
+  }
+  return CONTACT_REQUEST_RE.test(t);
+}
+
 function isContactOrMeetRelated(text) {
   const t = String(text || '');
   return (
-    CONTACT_REQUEST_RE.test(t) ||
+    isContactRequest(t) ||
     MEET_REQUEST_RE.test(t) ||
     MEET_PLANNING_RE.test(t) ||
     isVideoCallRequest(t)
@@ -988,14 +1001,14 @@ function detectHint(text, history = [], options = {}) {
   }
 
   // «Сколько / много ли?» — раньше скрина: скромно про кредит родителям, не цифры с картинки.
-  if (EARNINGS_ASK_RE.test(String(text || '')) && !CONTACT_REQUEST_RE.test(text)) {
+  if (EARNINGS_ASK_RE.test(String(text || '')) && !isContactRequest(text)) {
     return getEarningsAskHint();
   }
   // Голое «сколько?» после нашего скрина профита — то же.
   if (
     /^(?:а\s+|ну\s+)?(?:сколько|скок)\s*[?)!]?\s*$/i.test(String(text || '').trim()) &&
     recentFlipPhotoInHistory(history) &&
-    !CONTACT_REQUEST_RE.test(text)
+    !isContactRequest(text)
   ) {
     return getEarningsAskHint();
   }
@@ -1202,12 +1215,12 @@ function detectHint(text, history = [], options = {}) {
   }
 
   // «Сколько заработала / много зарабатываешь?» — кредит родителям, без цифр.
-  if (EARNINGS_ASK_RE.test(String(text || '')) && !CONTACT_REQUEST_RE.test(text)) {
+  if (EARNINGS_ASK_RE.test(String(text || '')) && !isContactRequest(text)) {
     return getEarningsAskHint();
   }
 
   // Работа / портфолио / программы — ДО контактов, иначе модель путает с «дай инсту».
-  if (isAboutHerJobQuestion(text) && !CONTACT_REQUEST_RE.test(text)) {
+  if (isAboutHerJobQuestion(text) && !isContactRequest(text)) {
     try {
       const jobFlip = require('./jobFlipAsk');
       const forced = jobFlip.jobFlipHint(text, {
@@ -1237,7 +1250,7 @@ function detectHint(text, history = [], options = {}) {
     );
   }
 
-  if (CONTACT_REQUEST_RE.test(text)) {
+  if (isContactRequest(text)) {
     const socialHack =
       /(?:\bвк\b|вконтакт|vk\.|инст|instagram|\binsta\b)/i.test(text)
         ? 'Для ВК/инсты лучше: «не дам, акк взломали, пиши тут)». '
@@ -1293,7 +1306,7 @@ function detectHint(text, history = [], options = {}) {
   }
 
   // «Врёшь / раскрыл / путаешь города» — не менять гео под давлением.
-  if (GEO_LIE_PRESSURE_RE.test(String(text || '')) && !CONTACT_REQUEST_RE.test(text)) {
+  if (GEO_LIE_PRESSURE_RE.test(String(text || '')) && !isContactRequest(text)) {
     return getGeoLiePressureHint(history);
   }
 
@@ -1301,12 +1314,12 @@ function detectHint(text, history = [], options = {}) {
   if (
     SHORT_WHY_RE.test(String(text || '').trim()) &&
     lastAssistantMentionedMove(history) &&
-    !CONTACT_REQUEST_RE.test(text)
+    !isContactRequest(text)
   ) {
     return getMoveBackstoryHint('why_move', options);
   }
 
-  if (WHY_CITY_RE.test(text) && !CONTACT_REQUEST_RE.test(text)) {
+  if (WHY_CITY_RE.test(text) && !isContactRequest(text)) {
     return getMoveBackstoryHint('why_move', options);
   }
 
@@ -1315,12 +1328,12 @@ function detectHint(text, history = [], options = {}) {
     /(?:что\s+ты\s+там\s+делаешь|зачем\s+ты\s+там|почему\s+(?:ты\s+)?(?:там|в\s+[а-яё]{3,})|ты\s+сейчас\s+в\s+[а-яё\-]+.{0,40}что\s+ты\s+там)/i.test(
       String(text || ''),
     ) &&
-    !CONTACT_REQUEST_RE.test(text)
+    !isContactRequest(text)
   ) {
     return getMoveBackstoryHint('what_doing', options);
   }
 
-  if (ORIGIN_ASK_HINT_RE.test(text) && !CONTACT_REQUEST_RE.test(text)) {
+  if (ORIGIN_ASK_HINT_RE.test(text) && !isContactRequest(text)) {
     const card = options.systemPrompt
       ? personaFacts.parsePersonaCard(options.systemPrompt)
       : null;
@@ -1332,7 +1345,7 @@ function detectHint(text, history = [], options = {}) {
     );
   }
 
-  if (isLocationAsk(text) && !CONTACT_REQUEST_RE.test(text)) {
+  if (isLocationAsk(text) && !isContactRequest(text)) {
     const fact = options.systemPrompt
       ? personaFacts.buildFactHint(options.systemPrompt, text, history)
       : null;
@@ -1734,6 +1747,7 @@ module.exports = {
   isAskingHerName,
   isDirectQuestion,
   isContactOrMeetRelated,
+  isContactRequest,
   isMeetRequest,
   isVideoCallRequest,
   isSexualPressure,

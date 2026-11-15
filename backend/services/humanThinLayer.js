@@ -139,7 +139,13 @@ function fixContactLeak(reply, userMessage) {
   const msg = String(userMessage || '');
   const { tag, body } = stripTags(reply);
   if (!body) return reply;
-  const asked = PEER_ASKED_CONTACT_RE.test(msg);
+  let asked = PEER_ASKED_CONTACT_RE.test(msg);
+  try {
+    const { SOCIAL_SOURCE_INTRO_RE } = require('./humanIdeas15');
+    if (asked && SOCIAL_SOURCE_INTRO_RE && SOCIAL_SOURCE_INTRO_RE.test(msg)) asked = false;
+  } catch (_) {
+    /* optional */
+  }
   if (asked && (CONTACT_LEAK_RE.test(body) || CONTACT_WEAK_AGREE_RE.test(body) || /инст|ник|ссылк/i.test(body))) {
     return tag + CONTACT_REFUSALS[Math.floor(Math.random() * CONTACT_REFUSALS.length)];
   }

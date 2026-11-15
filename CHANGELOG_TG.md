@@ -4,6 +4,42 @@
 
 ---
 
+## 0jo. 15 ноя — «Олег из вк» ≠ просьба скинуть ВК
+
+Intro «из вк/с инсты» больше не триггерит отказ «акки взломали». Просьбы «дай вк» — как раньше. Smoke `_smoke_vk_intro_0jo.js`. Лента: (updates.js?v=195).
+
+## 0jn. 14 ноя — хвост аудита: age/LIMIT + silence watch + NFT work
+
+`getDialogAgeHours` LIMIT 400 DESC; AI-silence watch без INTERVAL ? и без полного GROUP BY; work-mention SQL-окно+LIMIT 24; ensureAck только в finalize; prune lastOutbound. Smoke `_smoke_opt_0jn.js`. Лента: (updates.js?v=194).
+
+## 0jm. 14 ноя — хард-аудит: тишина SQL + captions + пул
+
+Silence/media gaps без полного GROUP BY истории; skip `[уточнение]`; captions/own_media mtime-кеш; MySQL keepAlive/idle; guard flush-таймера ops; NFT ≥6 через OFFSET; prune Maps. Smoke `_smoke_opt_0jm.js`. Лента: (updates.js?v=193).
+
+## 0jl. 14 ноя — оптимизация ядра: NFT/БД/постпроцесс
+
+Кеш triggers.json; NFT-тик раз в 3м + один archive + SQL по schedule; пул MySQL 25; registry hints; один finalize ensureAck/voprosy; replySendPrep; opsEvents без цикла; lazy objection; убраны bak aiResponder; smoke exit. Smoke `_smoke_opt_0jl.js`. Лента: (updates.js?v=192).
+
+## 0jk. 14 ноя — не дублировать «как день» текстом после voprosy
+
+voprosy.ogg уже спрашивает «как день проходит» — текст рядом/после режем (`stripDayAskDupWithVoprosy` в voiceReplies + softLite + replyPipeline). Smoke `_smoke_voprosy_dup_0jk.js`. Лента: (updates.js?v=191).
+
+## 0jj. 14 ноя — NFT ГС: живой диалог 2ч
+
+`NFT_VOICE_LIVE_DIALOG_MIN` 60→120: голосовое nft.ogg шлём, если он писал в последние 2 часа (было 1ч). «По работе» по-прежнему ≤30м. Smoke `_smoke_nft_live_0jj.js`. Лента: (updates.js?v=190).
+
+## 0ji. 14 ноя — NFT воронка + живые ответы + ops
+
+Метрика NFT (schedule→по работе→ГС), алерт stuck; учёт `[голосовое: nft.ogg]`; архив TG не рвёт весь тик; cold+interest≥2; reschedule просрочки; silence heal приоритет NFT/focus; ideas10–18 через registry + один stub-gate; postprocess ensureAck; shared replyPipeline evening; smoke runner exit; CORS `*`→same-origin; AUTH_KEY/NFT watch в ops; oct1 archived. Smoke `_smoke_bundle_0ji.js`. Лента: (updates.js?v=189).
+
+## 0jh. 14 ноя — стрип обещания медиа без обрубков
+
+`stripMediaPromise`: не оставляем «подожд)», «нормальное фото», «<<>>», «короче подожди» после вырезания «щас поищу». Если файл уходит — короткий ack вместо хвоста. Smoke `_smoke_media_strip_0jh.js`. Лента: (updates.js?v=188).
+
+## 0jg. 13 ноя — топ-8 личности (ideas18)
+
+humanIdeas18: длина как у него; отсылка к его словам из истории; мягкое несогласие; на встречу «а ты когда?»; реакция на деталь фото; повторный «ты бот» короче; тиры близости; мелочь города. Smoke `_smoke_human_0jg.js`. Лента: (updates.js?v=187).
+
 ## 0jf. 13 ноя — P0–P2 живые ответы + личность-lite
 
 humanIdeas17: обрубки (позд/подожд), Радужный≠радуга, «ты дома?», анти-согласие «ты робот», отказ+медиа, мягкое «погуляем как буду», 18+ нейтраль, тонкий слой личности. Meet-политика: soft future вместо жёсткого запрета. mediaSend чистит отказ при реальной отправке. Smoke `_smoke_human_0jf.js`. Лента: (updates.js?v=186).
