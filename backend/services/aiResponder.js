@@ -1152,16 +1152,16 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     }
     // Ответ был одним приветствием, а мы уже здоровались — реакция вместо второго «привет)».
     if (clipped.trim() && !withJobFlip.trim()) return `<<REACT:${['❤', '🥰', '😁'][Math.floor(Math.random() * 3)]}>>`;
-    let finalOut = lowercaseSentenceStarts(withJobFlip);
-    // После hardening/ideas снова могут всплыть голые «ага)» — режем в самом конце.
-    try {
-      const soft = require('./softHumanLite');
-      finalOut = soft.fixAckOnBareGreeting(finalOut, userMessage);
-      finalOut = soft.ensureAckNotBare(finalOut, userMessage);
-    } catch (_) {
-      /* optional */
-    }
-    return finalOut;
+    // Финальный gate: ensureAck + voprosy-strip + voice-tag/promise (один раз).
+    return require('./aiResponderPostprocess').finalizeOutgoingReply(
+      withJobFlip,
+      userMessage,
+      {
+        history,
+        voiceWillSend: !!options.voiceWillSend,
+        voiceFileName: options.voiceFileName || null,
+      },
+    );
   };
 
   const raw = completion.choices[0]?.message?.content?.trim() || '';
@@ -1398,7 +1398,10 @@ const DAY_ASK_RE =
 const MOVE_SPAM_RE =
   /(переезд|переезжа|коробк|сборы|собира(ю|юсь|емся)|собираю\s+|собираюсь\s+|собираю\s+вещи|готовлюсь\s+(?:к\s+)?переез|упаковыва|распаков|разлажив|к\s+маме\s+пере|вещи\s+потихоньку|потихоньку\s*,?\s*устала)/i;
 const USER_ASKED_MOVE_RE =
-  /(переезд|переезжа|когда\s+(ты\s+)?(при|у)е|куда\s+(ты\s+)?пере|коробк|сборы|сколько\s+(?:у\s+тебя\s+)?вещ|со\s+вчера|вс[её]\s+ещё\s+собира)/i;
+  /(переезд|переезжа|когда\s+(ты\s+)?(при|у)е|куда\s+(ты\s+)?пере|коробк|сборы|сколько\s+(?:у\s+тебя\s+)?вещ|со\s+вчера|вс[её]\s+ещё\s+собира|почему\s+(?:именно\s+)?|зачем\s+(?:тебе\s+)?в\s+|почему\s+в\s+)/i;
+/** Гео/город — не подменять ответ «кофе пью / отдыхаю» из move-spam. */
+const USER_ASKED_GEO_RE =
+  /(?:где\s+(?:ты\s+)?жив|ты\s+где|а\s+ты\s+где|где\s+ты\b|откуда\s+ты|ты\s+откуда|из\s+какого|в\s+каком\s+город|жив[её]шь\s*\??\s*$)/i;
 
 /** «Распаковываю» = уже на месте. Пока сборы / ещё в старом городе — нельзя. */
 const UNPACK_ARRIVED_RE =
@@ -1528,7 +1531,8 @@ function rewriteMoveSpamReply(text) {
  */
 function softenMoveSpamOnDayAsk(reply, userMessage, history) {
   const msg = String(userMessage || '');
-  if (USER_ASKED_MOVE_RE.test(msg)) return reply;
+  // «где живёшь / почему Амурск» — не режем в «кофе пью)» / «просто отдыхаю)».
+  if (USER_ASKED_MOVE_RE.test(msg) || USER_ASKED_GEO_RE.test(msg)) return reply;
   const text = String(reply || '').trim();
   if (!text || !MOVE_SPAM_RE.test(text)) return reply;
 

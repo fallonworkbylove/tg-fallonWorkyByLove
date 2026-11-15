@@ -11,9 +11,12 @@ function tg() {
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 
-// Окно по Москве (не UTC сервера!): 14:00–16:00 МСК — строго до NFT 16:00–21:00 МСК.
-const WINDOW_START_HOUR = Number(process.env.DAILY_PHOTO_START_HOUR || 14);
-const WINDOW_END_HOUR = Number(process.env.DAILY_PHOTO_END_HOUR || 16);
+// Профит-скрины ТОЛЬКО день 2 (24–48ч сессии), окно 18–20 МСК.
+// Раньше день-3 (13–15) + закрытие слотов в 16:00 убивало день-2 (18–20) → скрины уезжали на 3–4 день.
+const DAY2_AGE_MIN_H = 24;
+const DAY2_AGE_MAX_H = 48;
+const WINDOW_START_HOUR = Number(process.env.DAILY_PHOTO_START_HOUR || 18);
+const WINDOW_END_HOUR = Number(process.env.DAILY_PHOTO_END_HOUR || 20);
 // Не вклиниваться в живую переписку: скрин посреди разговора палит.
 const ACTIVE_CHAT_QUIET_MIN = 10;
 // Но и не кидать его в тишину: он должен был писать не позже этого.
@@ -292,11 +295,20 @@ function zonedLocalToUtc(year, month, day, hour, minute = 0, second = 0) {
   return new Date(utcGuess - offset);
 }
 
-function moscowWindowBounds(now = new Date()) {
+function moscowWindowBounds(now = new Date(), startHour = WINDOW_START_HOUR, endHour = WINDOW_END_HOUR) {
   const p = zonedNowParts(now);
-  const start = zonedLocalToUtc(p.year, p.month, p.day, WINDOW_START_HOUR, 0, 0);
-  const end = zonedLocalToUtc(p.year, p.month, p.day, WINDOW_END_HOUR, 0, 0);
+  const start = zonedLocalToUtc(p.year, p.month, p.day, startHour, 0, 0);
+  const end = zonedLocalToUtc(p.year, p.month, p.day, endHour, 0, 0);
   return { start, end, parts: p };
+}
+
+/** Только день 2 (24–48ч): 18–20 МСК. День 3+ — NFT, без профит-скринов. */
+function photoWindowForAgeHours(ageHours, now = new Date()) {
+  const age = Number(ageHours);
+  if (!Number.isFinite(age) || age < DAY2_AGE_MIN_H || age >= DAY2_AGE_MAX_H) {
+    return null;
+  }
+  return moscowWindowBounds(now, WINDOW_START_HOUR, WINDOW_END_HOUR);
 }
 
 function randomTimeBetween(from, to) {
@@ -308,6 +320,11 @@ function randomTimeBetween(from, to) {
 
 /** Не слать «профит-фото», если диалог уже в NFT-фазе или голосовое ушло. */
 async function shouldSkipDailyPhoto(accountId, peerId) {
+  // Явно выкл.: DAILY_PHOTO_ENABLED=0|false|off
+  if (/^(0|false|no|off)$/i.test(String(process.env.DAILY_PHOTO_ENABLED || ''))) {
+    return 'disabled';
+  }
+
   if (await helpRequestNotifier.isAutoreplyDisabledForPeer(accountId, peerId)) {
     return 'autoreply_disabled';
   }
@@ -332,9 +349,9 @@ async function shouldSkipDailyPhoto(accountId, peerId) {
   // MIN(created_at) по всей истории ошибочно считал старые диалоги «3-м днём».
   const ageHours = await tg().getDialogAgeHours(accountId, String(peerId));
   if (ageHours == null) return 'no_active_dialog';
-  if (ageHours >= tg().NFT_VOICE_AFTER_HOURS) return 'nft_day';
-  // Первый день знакомства в текущей сессии — ещё рано для профит-скрина.
-  if (ageHours < 20) return 'too_early';
+  // День 1 (<24ч) — рано. День 2 (24–48ч) — один слот скрина. День 3+ — NFT, не скрины.
+  if (ageHours < DAY2_AGE_MIN_H) return 'too_early';
+  if (ageHours >= DAY2_AGE_MAX_H) return 'past_day2_nft_phase';
 
   return null;
 }
@@ -396,12 +413,7 @@ async function schedulePendingSends() {
   await ensureSchema();
 
   const now = new Date();
-  const { start: windowStart, end: windowEnd } = moscowWindowBounds(now);
   const mskDate = moscowDateString(now);
-
-  if (now >= windowEnd) return;
-
-  const lowerBound = now > windowStart ? now : windowStart;
   const parts = zonedNowParts(now);
 
   // Кандидаты: писали в календарные сутки МСК (не CURDATE() UTC-сервера).
@@ -419,6 +431,13 @@ async function schedulePendingSends() {
   for (const writer of writers) {
     if (await shouldSkipDailyPhoto(writer.account_id, writer.peer_id)) continue;
 
+    const ageHours = await tg().getDialogAgeHours(writer.account_id, String(writer.peer_id));
+    const win = photoWindowForAgeHours(ageHours, now);
+    if (!win) continue;
+    const { start: windowStart, end: windowEnd } = win;
+    if (now >= windowEnd) continue;
+    const lowerBound = now > windowStart ? now : windowStart;
+    if (lowerBound >= windowEnd) continue;
     const scheduledAt = randomTimeBetween(lowerBound, windowEnd);
 
     try {
@@ -447,10 +466,15 @@ async function sendDuePhotos() {
   await ensureSchema();
 
   const now = new Date();
-  const { end: windowEnd } = moscowWindowBounds(now);
+  // Окно дня 2 = 18–20 МСК (не дефолт 14–16 — иначе слоты 18–20 гасились в 16:00).
+  const { start: windowStart, end: windowEnd } = moscowWindowBounds(
+    now,
+    WINDOW_START_HOUR,
+    WINDOW_END_HOUR,
+  );
   const mskDate = moscowDateString(now);
 
-  // После 16:00 МСК — закрываем все оставшиеся слоты дня, ничего не шлём.
+  // После конца окна дня 2 — закрываем оставшиеся слоты.
   if (now >= windowEnd) {
     await db.execute(
       `UPDATE daily_photo_sends
@@ -460,6 +484,9 @@ async function sendDuePhotos() {
     );
     return;
   }
+
+  // До начала окна — не шлём и не гасим (слот ждёт 18:00 МСК).
+  if (now < windowStart) return;
 
   // Запланировано на после конца окна — гасим.
   await db.execute(
@@ -565,6 +592,12 @@ async function sendDuePhotos() {
         await releaseClaim(row.id);
         throw sendErr;
       }
+      try {
+        require('./humanHardening').noteFlipPhotoSent(row.account_id, row.peer_id);
+        require('./humanHardening').notePitchSent(row.account_id, row.peer_id);
+      } catch (_) {
+        /* optional */
+      }
 
       try {
         await saveMessage(
@@ -640,6 +673,11 @@ function startDailyPhotoScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
 
+  if (/^(0|false|no|off)$/i.test(String(process.env.DAILY_PHOTO_ENABLED || ''))) {
+    console.log('[dailyPhotos] Планировщик профит-скринов выключен (DAILY_PHOTO_ENABLED).');
+    return;
+  }
+
   const tick = async () => {
     try {
       await schedulePendingSends();
@@ -660,6 +698,11 @@ module.exports = {
   startDailyPhotoScheduler,
   schedulePendingSends,
   sendDuePhotos,
+  photoWindowForAgeHours,
+  DAY2_AGE_MIN_H,
+  DAY2_AGE_MAX_H,
+  WINDOW_START_HOUR,
+  WINDOW_END_HOUR,
   FLIP_PHOTO_HISTORY_TAG_RU,
   FLIP_PHOTO_HISTORY_TAG_EN,
   // backwards-compatible alias

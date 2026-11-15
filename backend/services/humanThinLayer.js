@@ -225,11 +225,22 @@ const MOM_AGE_ALTS = ['за 50 уже)', 'ну за пятьдесят)', 'хм 
 const BOUQUET_ALTS = ['сама взяла)', 'с рынка)', 'подруга дала)', 'ну купила по пути)'];
 const LIVE_WITH_ALTS = ['ага, с родителями пока)', 'ну да, с мамой)', 'пока с родителями)'];
 
+/** Мелочь дня вместо города — баг «где живёшь? → кофе пью». */
+const ACTIVITY_FILLER_RE =
+  /кофе\s+пью|сериал\s+фоном|просто\s+отдыхаю|дома\s+сижу|валяюсь|ничего\s+особенного|обычный\s+день|устала\s+немного/i;
+
 function fixDirectFactAsk(reply, userMessage, prompt) {
   if (!reply) return reply;
   const msg = bare(userMessage);
   const { tag, body } = stripTags(reply);
-  if (!isWeak(body) && body.split(/\s+/).length >= 4) return reply;
+  const geoAsk =
+    /(?:где\s+ты|ты\s+где|где\s+(?:ты\s+)?жив|а\s+где\s*\??\s*$|жив[её]шь|откуда\s+ты|ты\s+откуда|из\s+какого|как\s+давно|скол[ьк]ко(?:\s+уже)?\s+в\s+)/i.test(
+      msg,
+    );
+  // На гео — ловим и слабый ответ, и «кофе пью)» (не isWeak, ≥4 слов).
+  if (!isWeak(body) && !ACTIVITY_FILLER_RE.test(body) && body.split(/\s+/).length >= 4) {
+    return reply;
+  }
 
   if (/(?:сколько|скок).{0,20}лет|лет\s+маме/i.test(msg) && /мам/i.test(msg)) {
     return tag + MOM_AGE_ALTS[Math.floor(Math.random() * MOM_AGE_ALTS.length)];
@@ -240,13 +251,8 @@ function fixDirectFactAsk(reply, userMessage, prompt) {
   if (/(?:ты\s+)?одна\s+жив|с\s+кем\s+жив/i.test(msg)) {
     return tag + LIVE_WITH_ALTS[Math.floor(Math.random() * LIVE_WITH_ALTS.length)];
   }
-  // Слабый ответ на «где / из какого / как давно» — подставить из промпта, не шаблон-городом.
-  if (
-    isWeak(body) &&
-    /(?:где\s+ты|ты\s+где|где\s+(?:ты\s+)?жив|а\s+где\s*\??\s*$|жив[её]шь|откуда\s+ты|ты\s+откуда|из\s+какого|как\s+давно|скол[ьк]ко(?:\s+уже)?\s+в\s+)/i.test(
-      msg,
-    )
-  ) {
+  // Слабый / activity-filler на «где / из какого / как давно» — город из промпта.
+  if ((isWeak(body) || ACTIVITY_FILLER_RE.test(body)) && geoAsk) {
     try {
       const pf = require('./personaFacts');
       const card = pf.parsePersonaCard(prompt);
@@ -320,7 +326,7 @@ function fixWeakQuestionReply(reply, userMessage) {
   const msg = bare(userMessage);
   const asked =
     /\?/.test(msg) ||
-    /^(?:\?+|сколько|скок|где|откуда|когда|почему|зачем|как\s+(?:тебя|дела|ты)|ты\s+(?:как|где|откуда))/i.test(
+    /^(?:\?+|сколько|скок|где|откуда|когда|почему|зачем|как\s+(?:тебя|дела|ты|настроен)|ты\s+(?:как|где|откуда)|а\s+чем\s+ты|чем\s+ты\b|что\s+делаешь)/i.test(
       msg,
     );
   if (!asked) return reply;
@@ -332,6 +338,31 @@ function fixWeakQuestionReply(reply, userMessage) {
       tag +
       ['в смысле?)', 'а?)', 'что именно?)', 'хм?)'][Math.floor(Math.random() * 4)]
     );
+  }
+  // Ясный вопрос — ответ по теме, не «раскрой)» (баг Саймон: «как настроение?»).
+  if (/как\s+настроен/i.test(msg)) {
+    return (
+      tag +
+      ['норм)', 'ровное пока)', 'нормально)', 'всё ок)'][Math.floor(Math.random() * 4)]
+    );
+  }
+  if (/(?:как\s+(?:дела|день|ты)|ты\s+как)\b/i.test(msg)) {
+    return (
+      tag +
+      ['норм)', 'нормально)', 'ничего, ок)', 'всё ок)'][Math.floor(Math.random() * 4)]
+    );
+  }
+  if (/(?:а\s+)?чем\s+ты\b|что\s+делаешь|чем\s+занят/i.test(msg)) {
+    return (
+      tag +
+      ['дома сижу)', 'ничего особого)', 'просто дома)', 'отдыхаю пока)'][
+        Math.floor(Math.random() * 4)
+      ]
+    );
+  }
+  if (/(?:где\s+(?:ты\s+)?жив|ты\s+где|откуда|из\s+какого|жив[её]шь)/i.test(msg)) {
+    // Город чинит fixDirectFactAsk; тут не «раскрой».
+    return tag + ['пока дома)', 'ну дома)', 'ещё тут)'][Math.floor(Math.random() * 3)];
   }
   return (
     tag +
