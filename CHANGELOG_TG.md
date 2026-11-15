@@ -4,6 +4,18 @@
 
 ---
 
+## 0jw. 15 ноя — догон застрявших NFT вне 16–21
+
+Вне окна кампании `tickNftDueVoices` всё равно шлёт ГС, если «по работе» уже ушло и `scheduled_at` просрочен ≥60м (разгреб stuck). Smoke тот же `_smoke_nft_unstick_0jv.js`. Лента: (updates.js?v=202).
+
+## 0jv. 15 ноя — NFT не зависает после «по работе»
+
+`tickNftDueVoices`: убран гейт «он писал за 120м» для слотов с `work_mention_sent=1` — ГС уходит по `scheduled_at` даже при молчании (пауза nft_pending). `live_user` только для приоритета очереди; батч до 8. Вне часов — догон stuck (≥60м). Smoke `_smoke_nft_unstick_0jv.js`. Лента: (updates.js?v=202).
+
+## 0ju. 15 ноя — в лидах имя/юз над номером аккаунта
+
+В карточке лида над «Аккаунт: +…» показывается имя или @username рабочего аккаунта (live / промпт / кэш юза). API `account_name` / `account_username`. Smoke `_smoke_leads_acc_name_0ju.js`. Лента: (updates.js?v=201, app.js?v=169).
+
 ## 0jt. 15 ноя — не «привет)» на «что делаешь / выходные»
 
 `fixBareGreetingOnSubstance`: голое «привет/хай» на не-привет (что делаешь, выходные, настроение) → ответ по теме. Finalize + softLite. Smoke `_smoke_no_hello_substance_0jt.js`. Лента: (updates.js?v=200).

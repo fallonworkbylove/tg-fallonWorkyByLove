@@ -28,8 +28,9 @@ function applyTelegramChrome(webApp) {
     if (typeof webApp.setHeaderColor === 'function') webApp.setHeaderColor(header);
     if (typeof webApp.setBackgroundColor === 'function') webApp.setBackgroundColor(bg);
 
-    // Тему Telegram подмешиваем только если фон тёмный — иначе светлая тема
-    // Telegram + наш светлый --text давали «белый экран» / «не грузит».
+    // Тему Telegram подмешиваем только если фон тёмный.
+    // Текст/muted — только если достаточно светлые (иначе тёмный text на наших
+    // тёмных карточках → «пропал текст» в списке аккаунтов).
     const root = document.documentElement;
     const bgLuma = cssLuma(tp.bg_color);
     if (bgLuma != null && bgLuma < 0.45) {
@@ -38,8 +39,14 @@ function applyTelegramChrome(webApp) {
       if (tp.section_bg_color || tp.secondary_bg_color) {
         root.style.setProperty('--card', tp.section_bg_color || tp.secondary_bg_color);
       }
-      if (tp.text_color) root.style.setProperty('--text', tp.text_color);
-      if (tp.hint_color) root.style.setProperty('--muted', tp.hint_color);
+      const textLuma = cssLuma(tp.text_color);
+      if (tp.text_color && textLuma != null && textLuma >= 0.55) {
+        root.style.setProperty('--text', tp.text_color);
+      }
+      const mutedLuma = cssLuma(tp.hint_color);
+      if (tp.hint_color && mutedLuma != null && mutedLuma >= 0.35) {
+        root.style.setProperty('--muted', tp.hint_color);
+      }
       if (tp.button_color) {
         root.style.setProperty('--primary', tp.button_color);
         root.style.setProperty('--primary-strong', tp.button_color);
@@ -246,6 +253,69 @@ async function request(path, options = {}) {
 const api = {
   getDashboard: () => request('/dashboard'),
 
+  getAdminConsole: () => request('/admin/console'),
+  getAdminBlacklist: () => request('/admin/console/blacklist'),
+  addAdminBlacklist: (input) =>
+    request('/admin/console/blacklist', {
+      method: 'POST',
+      body: { input },
+    }),
+  deleteAdminBlacklist: (telegramId) =>
+    request(`/admin/console/blacklist/${encodeURIComponent(telegramId)}`, {
+      method: 'DELETE',
+    }),
+  adminStartAi: (id) =>
+    request(`/admin/console/accounts/${id}/start-ai`, { method: 'POST' }),
+  adminStopAi: (id) =>
+    request(`/admin/console/accounts/${id}/stop-ai`, { method: 'POST' }),
+  adminPing: (id) => request(`/admin/console/accounts/${id}/ping`),
+  adminDeleteAccount: (id) =>
+    request(`/admin/console/accounts/${id}`, { method: 'DELETE' }),
+  adminBulkAiOn: () =>
+    request('/admin/console/accounts/bulk/start-ai', {
+      method: 'POST',
+      body: {},
+    }),
+  adminBulkAiOff: () =>
+    request('/admin/console/accounts/bulk/stop-ai', {
+      method: 'POST',
+      body: {},
+    }),
+  adminCreateAccount: (body) =>
+    request('/admin/console/accounts', { method: 'POST', body }),
+  adminConnectStart: (body) =>
+    request('/admin/console/accounts/connect/start', { method: 'POST', body }),
+  adminConnectResend: (body) =>
+    request('/admin/console/accounts/connect/resend', { method: 'POST', body }),
+  adminConnectCode: (body) =>
+    request('/admin/console/accounts/connect/code', { method: 'POST', body }),
+  adminConnectPassword: (body) =>
+    request('/admin/console/accounts/connect/password', {
+      method: 'POST',
+      body,
+    }),
+  getAdminProxies: () => request('/admin/console/proxies'),
+  checkAdminProxies: (pool = 'all') =>
+    request('/admin/console/proxies/check', {
+      method: 'POST',
+      body: { pool },
+    }),
+  getAdminLogs: (opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts.limit) params.set('limit', String(opts.limit));
+    if (opts.afterId) params.set('afterId', String(opts.afterId));
+    const qs = params.toString();
+    return request(`/admin/console/logs${qs ? `?${qs}` : ''}`);
+  },
+  clearAdminLogs: () => request('/admin/console/logs', { method: 'DELETE' }),
+  getAdminActivity: (opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts.limit) params.set('limit', String(opts.limit));
+    if (opts.afterId) params.set('afterId', String(opts.afterId));
+    const qs = params.toString();
+    return request(`/admin/console/activity${qs ? `?${qs}` : ''}`);
+  },
+
   getAccounts: () => request('/accounts'),
 
   addAccount: (phone, prompt) =>
@@ -293,6 +363,13 @@ const api = {
   deleteAccount: (id) =>
     request(`/accounts/${id}`, {
       method: 'DELETE',
+    }),
+
+  personaTemplates: () => request('/accounts/persona-templates'),
+  workerTasks: () => request('/accounts/worker-tasks'),
+  doneWorkerTask: (id) =>
+    request(`/accounts/worker-tasks/${id}/done`, {
+      method: 'POST',
     }),
 
   startAi: (id) =>
@@ -473,6 +550,21 @@ const state = {
     accountsLimit: 10,
     messages: 0,
     isBetaTester: false,
+    isAdmin: false,
+  },
+
+  admin: {
+    sub: 'accounts',
+    console: null,
+    blacklist: [],
+    activity: [],
+    activityKind: 'all',
+    proxies: null,
+    connect: null,
+    logsAfterId: 0,
+    logsTimer: null,
+    activityTimer: null,
+    loaded: false,
   },
 
   accounts: [],
@@ -637,7 +729,7 @@ function showToast(message) {
   if (existing) {
     existing.textContent = message;
     existing.dataset.expireAt = String(Date.now() + 2800);
-    return;
+      return;
   }
   const toast = document.createElement('div');
   toast.className = 'toast';
@@ -802,22 +894,44 @@ function getExampleAccountId(example) {
 }
 
 function getExampleAccountName(example) {
+  const accountId = getExampleAccountId(example);
+  const account = state.accounts.find(
+    (item) => String(item.id) === String(accountId),
+  );
+  if (account) return formatAccountTitle(account);
+
   const accountName =
     example.accountPhone ??
     example.account_phone ??
     example.phone ??
     example.account;
 
-  if (accountName) {
-    return accountName;
+  return accountName || 'Аккаунт';
+}
+
+/** Юз / имя TG / имя из промпта — что показать вместо голого номера. */
+function formatAccountTitle(account) {
+  const name = String(account?.name || '').trim();
+  const uname = String(account?.username || account?.tg_username || '')
+    .trim()
+    .replace(/^@+/, '');
+  if (name && uname && !/^@/i.test(name) && !name.toLowerCase().includes(uname.toLowerCase())) {
+    return `${name} · @${uname}`;
   }
+  if (name) return name;
+  if (uname) return `@${uname}`;
+  return String(account?.phone || `#${account?.id || '?'}`);
+}
 
-  const accountId = getExampleAccountId(example);
-  const account = state.accounts.find(
-    (item) => String(item.id) === String(accountId),
-  );
-
-  return account?.phone || 'Аккаунт';
+function formatAccountSub(account) {
+  const title = formatAccountTitle(account);
+  const phone = String(account?.phone || '').trim();
+  if (phone && title !== phone) return phone;
+  const uname = String(account?.username || '')
+    .trim()
+    .replace(/^@+/, '');
+  if (uname && !title.includes(`@${uname}`)) return `@${uname}`;
+  return '';
 }
 
 function setActiveTab(tabName) {
@@ -832,7 +946,13 @@ function setActiveTab(tabName) {
     info: 'Обновления',
     options: 'Опции',
     stats: 'Статы',
+    admin: 'Админ',
   };
+
+  if (!state.dashboard.isAdmin && tabName === 'admin') {
+    tabName = 'panel';
+    state.activeTab = 'panel';
+  }
 
   if (elements.pageTitle) {
     elements.pageTitle.textContent = titles[tabName] || 'Панель';
@@ -849,6 +969,12 @@ function setActiveTab(tabName) {
   // Контент скроллится отдельно от shell — при смене вкладки всегда сверху.
   if (elements.content) {
     elements.content.scrollTop = 0;
+  }
+
+  if (tabName === 'admin' && state.dashboard.isAdmin) {
+    loadAdminData().catch((err) => handleRequestError(err));
+  } else {
+    stopAdminLiveTimers();
   }
 }
 
@@ -872,7 +998,9 @@ async function loadDashboard() {
     isBetaTester: Boolean(
       dashboard.isBetaTester ?? dashboard.is_beta_tester,
     ),
+    isAdmin: Boolean(dashboard.isAdmin ?? dashboard.is_admin),
   };
+  syncAdminVisibility();
 }
 
 async function loadAccounts() {
@@ -977,6 +1105,40 @@ async function loadStats() {
  * Promise.allSettled позволяет не ломать интерфейс,
  * даже если отдельный endpoint временно вернул ошибку.
  */
+async function loadWorkerTasks() {
+  const box = document.getElementById('worker-tasks-list');
+  if (!box) return;
+  try {
+    const data = await api.workerTasks();
+    const tasks = data.tasks || [];
+    if (!tasks.length) {
+      box.innerHTML = `<div class="empty-state"><p>Открытых задач нет</p></div>`;
+      return;
+    }
+    box.innerHTML = tasks
+      .map((t) => {
+        const acc = t.account_id ? `#${t.account_id}` : '';
+        const kind = t.kind ? String(t.kind) : '';
+        return `<article class="account-card" data-task-id="${t.id}">
+          <div class="account-card__main">
+            <div class="account-card__phone">${escapeHtml(t.title || 'Задача')}</div>
+            <div class="account-card__meta">
+              ${acc ? `<span>анкета ${escapeHtml(acc)}</span>` : ''}
+              ${kind ? `<span class="badge badge-soft">${escapeHtml(kind)}</span>` : ''}
+            </div>
+          </div>
+          <div class="account-card__actions">
+            <button class="btn btn-secondary small" type="button" data-action="done-task" data-id="${t.id}">Готово</button>
+          </div>
+        </article>`;
+      })
+      .join('');
+  } catch (e) {
+    box.innerHTML = `<div class="empty-state"><p>Не удалось загрузить задачи</p></div>`;
+    console.warn('worker tasks:', e.message);
+  }
+}
+
 async function loadAllData() {
   const results = await Promise.allSettled([
     loadDashboard(),
@@ -987,6 +1149,7 @@ async function loadAllData() {
     loadExamples(),
     loadConversations(),
     loadStats(),
+    loadWorkerTasks(),
   ]);
 
   render();
@@ -1082,24 +1245,29 @@ function renderPanel() {
       <div class="stack">
         ${state.accounts
           .slice(0, 6)
-          .map((account) => {
-            const aiEnabled = isAiEnabled(account);
-            const isOnline = !!account.is_online;
-            return `
-              <div class="account-item">
-                <div class="account-item__head">
-                  <strong>
+    .map((account) => {
+      const aiEnabled = isAiEnabled(account);
+      const isOnline = !!account.is_online;
+      return `
+        <div class="account-item">
+          <div class="account-item__head">
+            <strong>
                     <span class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"></span>
-                    ${escapeHtml(account.phone)}
-                  </strong>
-                  <span class="badge ${aiEnabled ? 'success' : 'warn'}">
-                    ${escapeHtml(account.status || (aiEnabled ? 'AI включен' : 'Остановлен'))}
-                  </span>
-                </div>
+                    ${escapeHtml(formatAccountTitle(account))}
+            </strong>
+                  ${
+                    formatAccountSub(account)
+                      ? `<span class="account-item__sub">${escapeHtml(formatAccountSub(account))}</span>`
+                      : ''
+                  }
+            <span class="badge ${aiEnabled ? 'success' : 'warn'}">
+              ${escapeHtml(account.status || (aiEnabled ? 'AI включен' : 'Остановлен'))}
+                </span>
+              </div>
                 <div class="action-row" style="margin-top:8px;">
                   <button class="btn btn-secondary" data-action="details" data-id="${account.id}" type="button">Карточка</button>
-                  ${
-                    aiEnabled
+                ${
+                  aiEnabled
                       ? `<button class="btn btn-secondary" data-action="stop" data-id="${account.id}" type="button">Стоп</button>`
                       : `<button class="btn btn-primary" data-action="ai" data-id="${account.id}" type="button">AI</button>`
                   }
@@ -1153,7 +1321,7 @@ function renderMediaGalleryPreview() {
         <button class="media-tile" type="button" data-action="details" data-id="${account.id}">
           <span class="media-tile__phone">${escapeHtml(account.phone)}</span>
           <span class="media-tile__link">${escapeHtml(account.media_chat_link)}</span>
-        </button>
+            </button>
       `,
     )
     .join('');
@@ -1197,9 +1365,9 @@ function openMediaGallery() {
                 .join('')
             : '<div class="empty-state"><p>Пока нет медиа-ссылок</p></div>'
         }
-      </div>
-    </div>
-  `;
+          </div>
+        </div>
+      `;
   document.body.appendChild(overlay);
   document.body.classList.add('modal-open');
   document.addEventListener('keydown', onModalKeydown);
@@ -1233,9 +1401,13 @@ function renderAccounts() {
     const allSelected =
       state.accounts.length > 0 &&
       state.accounts.every((a) => isAccountSelected(a.id));
+    const textStyle =
+      'color:#f8f0f6!important;-webkit-text-fill-color:#f8f0f6!important;opacity:1!important;visibility:visible!important;font-size:16px!important;line-height:1.35!important';
+    const mutedStyle =
+      'color:#c4a8c0!important;-webkit-text-fill-color:#c4a8c0!important;opacity:1!important;visibility:visible!important;font-size:13px!important;line-height:1.35!important';
     elements.accountsList.innerHTML = `
       <div class="accounts-cards">
-        <label class="account-card account-card--select-all">
+        <div class="account-card account-card--select-all" role="group" aria-label="Выбрать все">
           <input
             class="account-card__check"
             type="checkbox"
@@ -1243,17 +1415,19 @@ function renderAccounts() {
             ${allSelected ? 'checked' : ''}
             aria-label="Выбрать все"
           />
-          <span class="account-card__phone">Выбрать все</span>
-        </label>
+          <span class="account-card__phone" style="${textStyle}">Выбрать все</span>
+        </div>
         ${state.accounts
-          .map((account) => {
-            const aiEnabled = isAiEnabled(account);
+        .map((account) => {
+          const aiEnabled = isAiEnabled(account);
             const selected = isAccountSelected(account.id);
             const isOnline = !!account.is_online;
             const sentToday = Number(
               account.sent_today ?? account.sentToday ?? 0,
             );
-            return `
+            const title = escapeHtml(formatAccountTitle(account));
+            const sub = formatAccountSub(account);
+          return `
               <article
                 class="account-card ${selected ? 'is-selected' : ''}"
                 data-account-row="${account.id}"
@@ -1265,32 +1439,44 @@ function renderAccounts() {
                     data-action="select-account"
                     data-id="${account.id}"
                     ${selected ? 'checked' : ''}
-                    aria-label="Выбрать ${escapeHtml(account.phone || '')}"
+                    aria-label="Выбрать ${title}"
                   />
                   <div class="account-card__main">
-                    <div class="account-card__phone">
+                    <div class="account-card__phone" style="${textStyle}">
                       <span class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"></span>
-                      ${escapeHtml(account.phone || '')}
+                      ${title}
                     </div>
-                    <div class="account-card__meta">
-                      <span class="badge ${aiEnabled ? 'success' : 'warn'}">
+                    ${
+                      sub
+                        ? `<div class="account-card__sub" style="${mutedStyle}">${escapeHtml(sub)}</div>`
+                        : ''
+                    }
+                    <div class="account-card__meta" style="${mutedStyle}">
+                <span class="badge ${aiEnabled ? 'success' : 'warn'}">
                         AI ${aiEnabled ? 'вкл' : 'выкл'}
-                      </span>
-                      <span>${isOnline ? 'онлайн' : 'офлайн'}</span>
-                      <span title="Сообщений с 00:00 МСК">сегодня · <strong>${sentToday}</strong></span>
-                      <span>медиа · ${account.media_chat_link ? 'есть' : 'нет'}</span>
-                    </div>
+                </span>
+                      <span style="${mutedStyle}">${isOnline ? 'онлайн' : 'офлайн'}</span>
+                      <span style="${mutedStyle}" title="Сообщений с 00:00 МСК">сегодня · <strong style="color:#f0abfc!important;-webkit-text-fill-color:#f0abfc!important">${sentToday}</strong></span>
+                      <span style="${mutedStyle}">медиа · ${account.media_chat_link ? 'есть' : 'нет'}</span>
+                      ${
+                        account.health_missing && account.health_missing.length
+                          ? `<span class="badge warn" title="Не хватает для спокойной работы">нужно: ${escapeHtml(
+                              account.health_missing.join(', '),
+                            )}</span>`
+                          : `<span class="badge success">готово</span>`
+                      }
+              </div>
                   </div>
                 </div>
                 <div class="account-card__actions">
-                  ${
-                    aiEnabled
+                ${
+                  aiEnabled
                       ? `<button class="btn btn-secondary small" data-action="stop" data-id="${account.id}" type="button">Стоп</button>`
                       : `<button class="btn btn-primary small" data-action="ai" data-id="${account.id}" type="button">AI</button>`
                   }
                   <button class="btn btn-secondary small" data-action="details" data-id="${account.id}" type="button">Карточка</button>
                   <button class="btn btn-danger small" data-action="delete" data-id="${account.id}" type="button">Удал.</button>
-                </div>
+              </div>
               </article>
             `;
           })
@@ -1307,7 +1493,9 @@ function renderAccounts() {
         .map(
           (account) => `
             <option value="${account.id}">
-              ${escapeHtml(account.phone)}
+              ${escapeHtml(formatAccountTitle(account))}${
+                formatAccountSub(account) ? ` · ${escapeHtml(formatAccountSub(account))}` : ''
+              }
             </option>
           `,
         )
@@ -1416,6 +1604,32 @@ function renderConversations() {
         const botMsgs = item.botMsgs ?? item.bot_msgs ?? null;
         const accountPhone =
           item.accountPhone ?? item.account_phone ?? '';
+        const workAcc = state.accounts.find(
+          (a) => String(a.id) === String(accountId),
+        );
+        const apiAccName = String(
+          item.accountName ?? item.account_name ?? '',
+        ).trim();
+        const apiAccUser = String(
+          item.accountUsername ?? item.account_username ?? '',
+        )
+          .trim()
+          .replace(/^@+/, '');
+        let accountTitle = workAcc
+          ? formatAccountTitle(workAcc)
+          : formatAccountTitle({
+              name: apiAccName,
+              username: apiAccUser,
+              phone: accountPhone,
+              id: accountId,
+            });
+        if (
+          !accountTitle ||
+          accountTitle === accountPhone ||
+          accountTitle === `#${accountId}`
+        ) {
+          accountTitle = '';
+        }
         const score = item.leadScore ?? item.lead_score ?? 0;
         const tier = item.leadTier ?? item.lead_tier ?? 'cold';
         const paused = Boolean(item.autoreplyDisabled ?? item.autoreply_disabled);
@@ -1424,6 +1638,7 @@ function renderConversations() {
         const funnelLabel =
           item.funnelLabel ?? item.funnel_label ?? labels[funnelStage] ?? funnelStage;
         const funnelAuto = item.funnelAuto ?? item.funnel_auto ?? true;
+        const operatorNote = String(item.operatorNote ?? item.operator_note ?? '').trim();
         const lastUserAt = item.lastUserAt ?? item.last_user_at ?? item.lastAt ?? item.last_at;
         const lastLabel = lastUserAt
           ? new Date(lastUserAt).toLocaleString('ru-RU', {
@@ -1461,7 +1676,17 @@ function renderConversations() {
             </span>
           </div>
 
+          ${
+            accountTitle
+              ? `<p class="lesson-item__meta lesson-item__acc-name">${escapeHtml(accountTitle)}</p>`
+              : ''
+          }
           <p class="lesson-item__meta"><strong>Аккаунт:</strong> ${escapeHtml(accountPhone)}${lastLabel ? ` · писал ${escapeHtml(lastLabel)}` : ''}</p>
+          ${
+            operatorNote
+              ? `<p class="lesson-item__note">${escapeHtml(operatorNote)}</p>`
+              : ''
+          }
 
           <div class="lead-actions">
             <label class="funnel-select-wrap lead-actions__stage">
@@ -1564,7 +1789,7 @@ function renderLearn() {
           <div class="lesson-item__head">
             <strong class="lesson-item__title">${escapeHtml(getExampleAccountName(item))}</strong>
             <span class="badge-row">
-              <span class="badge badge-soft">Пример</span>
+            <span class="badge badge-soft">Пример</span>
               ${
                 exampleId
                   ? `<button class="btn btn-danger small" type="button" data-action="delete-example" data-id="${escapeHtml(String(exampleId))}">Удал.</button>`
@@ -1631,34 +1856,34 @@ function renderBlacklist() {
   }
 
   container.innerHTML = state.blacklist
-    .map((item) => {
-      const userId = getBlacklistUserId(item);
-      const itemId =
+        .map((item) => {
+          const userId = getBlacklistUserId(item);
+          const itemId =
         typeof item === 'object' && item !== null ? item.id : null;
 
-      return `
+          return `
         <div class="exception-row">
           <div class="exception-row__main">
             <span class="exception-row__handle">${escapeHtml(userId || '—')}</span>
             <span class="exception-row__meta">AI не отвечает</span>
           </div>
-          ${
-            itemId !== null && itemId !== undefined
-              ? `
-                <button
+              ${
+                itemId !== null && itemId !== undefined
+                  ? `
+                    <button
                   class="exception-row__remove"
-                  type="button"
-                  data-action="delete-blacklist"
-                  data-id="${itemId}"
+                      type="button"
+                      data-action="delete-blacklist"
+                      data-id="${itemId}"
                   aria-label="Убрать ${escapeHtml(String(userId || ''))} из blacklist"
                   title="Убрать из списка"
-                >
+                    >
                   <span class="exception-row__remove-icon" aria-hidden="true"></span>
                   Убрать
-                </button>
-              `
-              : ''
-          }
+                    </button>
+                  `
+                  : ''
+              }
         </div>
       `;
     })
@@ -1773,11 +1998,16 @@ function renderStats() {
           return `
             <div class="account-item">
               <div class="account-item__head">
-                <strong>${escapeHtml(account.phone)}</strong>
+                <strong>${escapeHtml(formatAccountTitle(account))}</strong>
                 <span class="badge badge-soft">
                   ${escapeHtml(account.status || (aiEnabled ? 'AI включен' : 'Остановлен'))}
                 </span>
               </div>
+              ${
+                formatAccountSub(account)
+                  ? `<div class="account-item__sub">${escapeHtml(formatAccountSub(account))}</div>`
+                  : ''
+              }
             </div>
           `;
         })
@@ -1798,8 +2028,8 @@ function renderUpdates() {
   if (!entries.length) {
     elements.updatesList.innerHTML =
       '<div class="empty-state"><p>Обновлений пока нет.</p></div>';
-    return;
-  }
+      return;
+    }
   elements.updatesList.innerHTML = entries
     .map((entry) => {
       const date = escapeHtml(entry.date || '');
@@ -1825,7 +2055,454 @@ function renderUpdates() {
     .join('');
 }
 
+function syncAdminVisibility() {
+  const on = Boolean(state.dashboard?.isAdmin);
+  document.querySelectorAll('.admin-only').forEach((el) => {
+    el.hidden = !on;
+  });
+  if (!on && state.activeTab === 'admin') {
+    state.activeTab = 'panel';
+    localStorage.setItem('currentTab', 'panel');
+  }
+}
+
+const ADMIN_SUBS = new Set(['accounts', 'blacklist', 'add', 'proxies', 'logs', 'activity']);
+
+function stopAdminLiveTimers() {
+  if (state.admin.logsTimer) {
+    clearInterval(state.admin.logsTimer);
+    state.admin.logsTimer = null;
+  }
+  if (state.admin.activityTimer) {
+    clearInterval(state.admin.activityTimer);
+    state.admin.activityTimer = null;
+  }
+}
+
+function syncAdminSubUi(sub) {
+  const next = ADMIN_SUBS.has(sub) ? sub : 'accounts';
+  document.querySelectorAll('[data-action="admin-sub"]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.sub === next);
+  });
+  document.querySelectorAll('[data-admin-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.adminPanel !== next;
+  });
+  return next;
+}
+
+function setAdminSub(sub) {
+  const prev = state.admin.sub;
+  const next = syncAdminSubUi(sub);
+  const same = prev === next;
+  state.admin.sub = next;
+  if (same && next === 'logs' && state.admin.logsTimer) return;
+  if (same && next === 'activity' && state.admin.activityTimer) return;
+  if (same && next === 'proxies' && state.admin.proxies) return;
+  if (same && next !== 'logs' && next !== 'activity' && next !== 'proxies') return;
+
+  stopAdminLiveTimers();
+  if (next === 'logs') {
+    loadAdminLogs(true).catch(() => {});
+    state.admin.logsTimer = setInterval(() => {
+      const live = document.getElementById('admin-logs-live');
+      if (live?.checked && state.activeTab === 'admin' && state.admin.sub === 'logs') {
+        loadAdminLogs(false).catch(() => {});
+      }
+    }, 4000);
+  }
+  if (next === 'proxies') {
+    loadAdminProxies().catch((err) => handleRequestError(err));
+  }
+  if (next === 'activity') {
+    loadAdminActivity().catch(() => {});
+    state.admin.activityTimer = setInterval(() => {
+      const live = document.getElementById('admin-activity-live');
+      if (live?.checked && state.activeTab === 'admin' && state.admin.sub === 'activity') {
+        loadAdminActivity().catch(() => {});
+      }
+    }, 5000);
+  }
+}
+
+async function loadAdminData({ force = false } = {}) {
+  if (!state.dashboard.isAdmin) return;
+  if (state.admin.loaded && !force && state.admin.console) {
+    renderAdmin();
+    if (state.activeTab === 'admin') setAdminSub(state.admin.sub);
+    return;
+  }
+  const live = document.getElementById('admin-live');
+  if (live) live.textContent = 'Загрузка…';
+  const [consoleRes, blRes, actRes] = await Promise.all([
+    api.getAdminConsole(),
+    api.getAdminBlacklist().catch(() => ({ blacklist: [] })),
+    api.getAdminActivity({ limit: 80 }).catch(() => ({ events: [] })),
+  ]);
+  state.admin.console = consoleRes.console || consoleRes;
+  state.admin.blacklist = blRes.blacklist || [];
+  state.admin.activity = actRes.events || actRes.items || actRes.activity || [];
+  state.admin.loaded = true;
+  renderAdmin();
+  if (state.activeTab === 'admin') setAdminSub(state.admin.sub);
+}
+
+function adminAddPayload() {
+  return {
+    phone: String(document.getElementById('admin-add-phone')?.value || '').trim(),
+    ownerTelegramId: String(document.getElementById('admin-add-owner')?.value || '').trim(),
+    prompt: String(document.getElementById('admin-add-prompt')?.value || '').trim(),
+  };
+}
+
+function setAdminAddStatus(msg) {
+  const el = document.getElementById('admin-add-status');
+  if (el) el.textContent = msg || '';
+}
+
+async function loadAdminProxies() {
+  const data = await api.getAdminProxies();
+  state.admin.proxies = data.proxies || { work: [], login: [] };
+  renderAdminProxies(null);
+}
+
+function renderAdminProxies(checkMap) {
+  const root = document.getElementById('admin-proxy-results');
+  const hint = document.getElementById('admin-proxy-hint');
+  const proxies = state.admin.proxies || { work: [], login: [] };
+  if (hint && !checkMap) {
+    hint.textContent = `Рабочие ${proxies.work?.length || 0} · Резидентские ${proxies.login?.length || 0}`;
+  }
+  if (!root) return;
+  const sections = [
+    {
+      kind: 'work',
+      list: proxies.work || [],
+      title: 'Рабочие',
+      desc: 'Через них ИИ общается в Telegram',
+    },
+    {
+      kind: 'login',
+      list: proxies.login || [],
+      title: 'Резидентские',
+      desc: 'Через них вход по коду и QR',
+    },
+  ];
+  root.innerHTML = sections
+    .map((sec) => {
+      const head = `<h3 class="admin-proxy-title">${escapeHtml(sec.title)} · ${sec.list.length}</h3><p class="options-hint">${escapeHtml(sec.desc)}</p>`;
+      if (!sec.list.length) {
+        return `<div class="admin-proxy-block">${head}<p class="empty">пусто</p></div>`;
+      }
+      const rows = sec.list
+        .map((p) => {
+          const key = `${sec.kind}:${p.index}`;
+          const chk = checkMap?.[key];
+          let badge = '';
+          if (chk) {
+            if (chk.skipped) badge = '<span class="badge badge-soft">skip</span>';
+            else if (chk.ok) badge = `<span class="badge success">ok ${chk.ms}ms</span>`;
+            else badge = '<span class="badge warn">fail</span>';
+          }
+          const err = chk?.error
+            ? `<div class="admin-acc__sub">${escapeHtml(chk.error)}</div>`
+            : '';
+          return `<div class="admin-proxy-row"><strong>${escapeHtml(p.label)}</strong> ${badge}${err}</div>`;
+        })
+        .join('');
+      return `<div class="admin-proxy-block">${head}${rows}</div>`;
+      })
+      .join('');
+}
+
+function formatAdminLogLine(line) {
+  let t = '—:—:—';
+  try {
+    t = new Date(line.ts).toLocaleTimeString('ru-RU', {
+      timeZone: 'Europe/Moscow',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+  } catch (_) {
+    t = String(line.ts || '').slice(11, 19);
+  }
+  return `<div class="admin-log-line admin-log-line--${escapeHtml(line.level || 'info')}"><span class="admin-log-ts">${escapeHtml(t)}</span> ${escapeHtml(line.text || '')}</div>`;
+}
+
+async function loadAdminLogs(reset) {
+  const box = document.getElementById('admin-log-console');
+  if (!box) return;
+  const data = await api.getAdminLogs(
+    reset ? { limit: 400 } : { limit: 200, afterId: state.admin.logsAfterId || 0 },
+  );
+  const lines = data.lines || [];
+  if (reset) {
+    box.innerHTML = lines.map(formatAdminLogLine).join('') || '<div class="empty">пусто</div>';
+    box.scrollTop = box.scrollHeight;
+  } else if (lines.length) {
+    box.insertAdjacentHTML('beforeend', lines.map(formatAdminLogLine).join(''));
+    box.scrollTop = box.scrollHeight;
+  }
+  state.admin.logsAfterId = data.latestId || state.admin.logsAfterId;
+}
+
+function activityMatchesGroup(kind, group) {
+  if (!group || group === 'all') return true;
+  if (group === 'media') return kind === 'media_miss' || kind === 'media_sent';
+  if (group === 'nft') return kind === 'nft_voice';
+  if (group === 'lead') return kind === 'lead_ready' || kind === 'help_agreed';
+  return kind === group;
+}
+
+function activityKindLabel(kind) {
+  if (kind === 'media_miss' || kind === 'media_sent') return 'Фото / кружок';
+  if (kind === 'nft_voice') return 'NFT / ГС';
+  if (kind === 'lead_ready' || kind === 'help_agreed') return 'Лид';
+  return kind || 'событие';
+}
+
+async function loadAdminActivity() {
+  const data = await api.getAdminActivity({ limit: 80 });
+  state.admin.activity = data.events || data.items || [];
+  renderAdminActivity();
+}
+
+function renderAdminActivity() {
+  const act = document.getElementById('admin-activity-list');
+  if (!act) return;
+  document.querySelectorAll('[data-action="admin-akind"]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.akind === state.admin.activityKind);
+  });
+  const rows = (state.admin.activity || []).filter((item) =>
+    activityMatchesGroup(item.kind, state.admin.activityKind),
+  );
+  if (!rows.length) {
+    act.innerHTML = '<p class="empty">Пока тихо</p>';
+    return;
+  }
+  act.innerHTML = rows
+    .map(
+      (item) => `
+      <div class="admin-activity-item">
+        <span class="admin-activity-kind">${escapeHtml(activityKindLabel(item.kind))}</span>
+        <strong>${escapeHtml(item.title || item.kind || 'событие')}</strong>
+        <p>${escapeHtml(item.body || '')}</p>
+      </div>`,
+    )
+    .join('');
+}
+
+function findAdminAccount(accountId) {
+  const list = state.admin.console?.accounts?.list;
+  if (!Array.isArray(list)) return null;
+  return list.find((a) => String(a.id) === String(accountId)) || null;
+}
+
+function openAdminAccountInfo(accountId) {
+  const account = findAdminAccount(accountId);
+  if (!account) {
+    notify(`Аккаунт #${accountId} не найден`);
+    return;
+  }
+  closeAccountModal();
+
+  const prompt = String(account.prompt || '').trim();
+  const media = String(account.mediaChatLink || account.media_chat_link || '').trim();
+  const hasPrompt = Boolean(prompt);
+  const hasMedia = Boolean(media);
+  const title = account.name || account.phone || `#${account.id}`;
+  const phone = account.phone || '—';
+  const owner = account.owner || account.ownerTg || '—';
+  const promptPreview = hasPrompt
+    ? escapeHtml(prompt.length > 900 ? `${prompt.slice(0, 900)}…` : prompt)
+    : 'Не задан — автоответы без характера / AI может молчать.';
+  const safeMedia = safeTelegramHref(media);
+  const mediaHtml = safeMedia
+    ? `<a class="admin-info-link" href="${escapeHtml(safeMedia)}" target="_blank" rel="noopener noreferrer">${escapeHtml(media)}</a>`
+    : hasMedia
+      ? escapeHtml(media)
+      : 'Не подключен — фото и кружки из канала не уйдут.';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'account-modal';
+  overlay.className = 'modal-overlay drawer-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card drawer-card" role="dialog" aria-modal="true" aria-label="Инфо аккаунта">
+      <div class="modal-card__header">
+        <div>
+          <p class="modal-card__eyebrow">Админ · #${escapeHtml(account.id)}</p>
+          <h3 class="modal-card__title">${escapeHtml(title)}</h3>
+          <p class="modal-card__subphone">${escapeHtml(phone)} · владелец ${escapeHtml(owner)}</p>
+        </div>
+        <button class="modal-close" type="button" aria-label="Закрыть" data-modal-close>×</button>
+      </div>
+
+      <div class="modal-meta">
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Сеть</span>
+          <span class="modal-meta__value ${account.online ? 'is-on' : 'is-off'}">${account.online ? 'Онлайн' : 'Офлайн'}</span>
+        </div>
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Автоответ</span>
+          <span class="modal-meta__value ${account.ai ? 'is-on' : 'is-off'}">${account.ai ? 'Включён' : 'Выключен'}</span>
+        </div>
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Промпт</span>
+          <span class="badge ${hasPrompt ? 'success' : 'warn'}">${hasPrompt ? 'Подключен' : 'Нет'}</span>
+        </div>
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Медиа ТГК</span>
+          <span class="badge ${hasMedia ? 'success' : 'warn'}">${hasMedia ? 'Подключен' : 'Нет'}</span>
+        </div>
+      </div>
+
+      <div class="modal-field">
+        <span>Медиа-канал</span>
+        <div class="admin-info-block">${mediaHtml}</div>
+      </div>
+
+      <div class="modal-field">
+        <span>Промпт ${hasPrompt ? `· ${prompt.length} знак.` : ''}</span>
+        <pre class="admin-info-prompt">${promptPreview}</pre>
+      </div>
+
+      <div class="modal-meta admin-info-stats">
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Сегодня</span>
+          <span class="modal-meta__value">${Number(account.sentToday || 0)}</span>
+        </div>
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Неделя</span>
+          <span class="modal-meta__value">${Number(account.sentWeek || 0)}</span>
+        </div>
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Диалогов</span>
+          <span class="modal-meta__value">${Number(account.peersTotal || 0)}</span>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" type="button" data-modal-close>Закрыть</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  document.addEventListener('keydown', onModalKeydown);
+  document.body.classList.add('modal-open');
+  setupMobileKeyboardHandling(overlay);
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay || event.target.hasAttribute('data-modal-close')) {
+      closeAccountModal();
+    }
+  });
+}
+
+function renderAdmin() {
+  if (!state.dashboard.isAdmin) return;
+  syncAdminVisibility();
+  syncAdminSubUi(state.admin.sub);
+
+  const snap = state.admin.console || {};
+  const acc = snap.accounts || {};
+  const live = document.getElementById('admin-live');
+  if (live) {
+    live.textContent = `${Number(acc.online || 0)} онлайн · AI ${Number(acc.aiOn || 0)} · горячих ${Number(snap.hotLeads || 0)}`;
+  }
+
+  const summary = document.getElementById('admin-summary');
+  if (summary) {
+    const day = snap.messages?.day || {};
+    summary.innerHTML = `
+      <div class="stat-card"><strong>${Number(acc.total || 0)}</strong><span>Аккаунтов</span></div>
+      <div class="stat-card"><strong>${Number(acc.online || 0)}</strong><span>Онлайн</span></div>
+      <div class="stat-card"><strong>${Number(acc.aiOn || 0)}</strong><span>AI вкл</span></div>
+      <div class="stat-card"><strong>${Number(snap.hotLeads || 0)}</strong><span>Горячие</span></div>
+      <div class="stat-card"><strong>${Number(day.sent || 0)}</strong><span>Ответов сегодня</span></div>
+      <div class="stat-card"><strong>${Number(day.incoming || 0)}</strong><span>Входящих сегодня</span></div>
+    `;
+  }
+
+  const list = document.getElementById('admin-accounts-list');
+  if (list) {
+    const rows = Array.isArray(acc.list) ? acc.list : [];
+    if (!rows.length) {
+      list.innerHTML = '<div class="empty-state"><p>Аккаунтов пока нет</p></div>';
+    } else {
+      list.innerHTML = rows
+        .map((a) => {
+          const title = escapeHtml(a.name || a.phone || `#${a.id}`);
+          const phone = a.phone ? escapeHtml(a.phone) : '';
+          const owner = escapeHtml(a.owner || a.ownerTg || '—');
+          const hasPrompt = Boolean(String(a.prompt || '').trim());
+          const hasMedia = Boolean(String(a.mediaChatLink || a.media_chat_link || '').trim());
+          return `
+            <article class="admin-acc" data-admin-acc="${escapeHtml(a.id)}">
+              <div class="admin-acc__top">
+                <div>
+                  <div class="admin-acc__title">
+                    <span class="online-dot ${a.online ? 'is-online' : 'is-offline'}"></span>
+                    ${title}
+                  </div>
+                  <div class="admin-acc__sub">${phone ? `${phone} · ` : ''}владелец ${owner}</div>
+                </div>
+                <span class="badge ${a.ai ? 'success' : 'warn'}">AI ${a.ai ? 'вкл' : 'выкл'}</span>
+              </div>
+              <div class="admin-acc__meta">
+                <span>${a.online ? 'онлайн' : 'офлайн'}</span>
+                <span>сегодня · <strong>${Number(a.sentToday || 0)}</strong></span>
+                <span>неделя · ${Number(a.sentWeek || 0)}</span>
+              </div>
+              <div class="admin-acc__flags">
+                <span class="admin-flag ${hasPrompt ? 'is-ok' : 'is-bad'}">Промпт ${hasPrompt ? 'есть' : 'нет'}</span>
+                <span class="admin-flag ${hasMedia ? 'is-ok' : 'is-bad'}">Медиа ${hasMedia ? 'есть' : 'нет'}</span>
+              </div>
+              <div class="admin-acc__actions admin-acc__actions--4">
+                ${
+                  a.ai
+                    ? `<button class="btn btn-secondary small" type="button" data-action="admin-ai-off" data-id="${escapeHtml(a.id)}">Стоп</button>`
+                    : `<button class="btn btn-primary small" type="button" data-action="admin-ai-on" data-id="${escapeHtml(a.id)}">AI</button>`
+                }
+                <button class="btn btn-secondary small" type="button" data-action="admin-ping" data-id="${escapeHtml(a.id)}">Пинг</button>
+                <button class="btn btn-secondary small" type="button" data-action="admin-acc-info" data-id="${escapeHtml(a.id)}">Инфо</button>
+                <button class="btn btn-danger small" type="button" data-action="admin-del" data-id="${escapeHtml(a.id)}">Удал.</button>
+              </div>
+            </article>`;
+        })
+        .join('');
+    }
+  }
+
+  const bl = document.getElementById('admin-bl-list');
+  if (bl) {
+    const rows = state.admin.blacklist || [];
+    if (!rows.length) {
+      bl.innerHTML = '<p class="empty">ЧС пуст</p>';
+    } else {
+      bl.innerHTML = rows
+        .map(
+          (row) => `
+          <div class="account-item">
+            <div class="account-item__head">
+              <strong>${escapeHtml(row.title || row.username || row.telegramId)}</strong>
+              <button class="btn btn-danger small" type="button" data-action="admin-bl-del" data-id="${escapeHtml(row.telegramId)}">Снять</button>
+            </div>
+            <div class="account-item__sub">ID ${escapeHtml(row.telegramId || '')}${
+              row.accounts != null ? ` · акк. ${escapeHtml(row.accounts)}` : ''
+            }</div>
+          </div>`,
+        )
+        .join('');
+    }
+  }
+
+  if (state.admin.proxies) renderAdminProxies(null);
+  renderAdminActivity();
+}
+
 function render() {
+  syncAdminVisibility();
   renderPanel();
   renderAccounts();
   renderConversations();
@@ -1834,6 +2511,9 @@ function render() {
   renderOptions();
   renderStats();
   renderNotifications();
+  if (state.dashboard.isAdmin && state.activeTab === 'admin') {
+    renderAdmin();
+  }
   setActiveTab(state.activeTab);
 }
 
@@ -1905,9 +2585,19 @@ function showQrVisual(loginUrl, qrImage) {
   const img = document.getElementById('connect-qr-img');
   const link = document.getElementById('connect-qr-link');
   if (box) box.hidden = false;
-  if (img && qrImage) {
-    img.src = qrImage;
-    img.hidden = false;
+  if (img) {
+    if (qrImage) {
+      // data: — без CDN; http — cache-bust, чтобы картинка менялась после входа
+      const next =
+        String(qrImage).startsWith('data:')
+          ? qrImage
+          : `${qrImage}${qrImage.includes('?') ? '&' : '?'}t=${Date.now()}`;
+      if (img.src !== next) img.src = next;
+      img.hidden = false;
+    } else {
+      img.removeAttribute('src');
+      img.hidden = true;
+    }
   }
   if (link) {
     link.textContent = loginUrl || '';
@@ -1966,12 +2656,12 @@ function setConnectStep(step) {
   const phoneField = document.getElementById('account-phone');
   const submitButton = document.getElementById('account-submit');
 
-  // QR: инструкция/картинка; 2FA — когда Telegram просит.
-  // Код: телефон + код + пароль + промпт всегда на виду (как раньше), шаги меняют кнопку.
+  // QR: инструкция/картинка. Пароль — ТОЛЬКО когда Telegram реально вернул needPassword.
+  // Раньше поле 2FA светилось на всём входе по коду → воркеры думали, что пароль обязателен.
   const showQr = method === 'qr' && step !== 'password';
   const showPhone = method === 'code';
-  const showCode = method === 'code';
-  const showPassword = method === 'code' || step === 'password';
+  const showCode = method === 'code' && step !== 'password';
+  const showPassword = step === 'password';
   // Промпт нужен и для QR — иначе AI молчит (пустой prompt).
   const showPrompt = true;
 
@@ -2005,13 +2695,17 @@ function setConnectStep(step) {
 
 /**
  * Сбрасывает форму подключения в начальное состояние.
+ * keepPrompt — после успешного входа оставляем промпт для следующего QR.
  */
-function resetConnectForm() {
+function resetConnectForm({ keepPrompt = false } = {}) {
   stopQrPoll();
   clearQrVisual();
   connectState.phone = '';
-  connectState.prompt = '';
   connectState.qrStartedAt = 0;
+  const savedPrompt = keepPrompt
+    ? connectState.prompt || document.getElementById('account-prompt')?.value?.trim() || ''
+    : '';
+  if (!keepPrompt) connectState.prompt = '';
 
   const phoneField = document.getElementById('account-phone');
   const codeField = document.getElementById('account-code');
@@ -2024,25 +2718,87 @@ function resetConnectForm() {
   }
   if (codeField) codeField.value = '';
   if (passwordField) passwordField.value = '';
-  if (promptField) promptField.value = '';
+  if (promptField) {
+    promptField.value = keepPrompt ? savedPrompt : '';
+  }
+  if (keepPrompt && savedPrompt) connectState.prompt = savedPrompt;
 
   setConnectMethod(connectState.method || 'qr');
   setConnectHint('');
 }
 
+/** Старт свежего QR (после входа или по кнопке). */
+async function startFreshQrSession({ afterConnect = false } = {}) {
+  const prompt =
+    connectState.prompt || document.getElementById('account-prompt')?.value?.trim() || '';
+  if (!prompt) {
+    setConnectHint('Сначала вставь промпт персонажа — без него AI не отвечает.');
+    notify('Нужен промпт');
+    return false;
+  }
+  connectState.prompt = prompt;
+  const promptField = document.getElementById('account-prompt');
+  if (promptField && !promptField.value.trim()) promptField.value = prompt;
+
+  stopQrPoll();
+  clearQrVisual();
+  setConnectStep('qr');
+  setConnectHint(afterConnect ? 'Готовлю новый QR для следующего номера…' : 'Готовлю QR…');
+
+  const started = await api.connectQrStart(prompt);
+  if (started.status === 'connected') {
+    // Уже авторизован на этом токене — не зацикливаем finish→start.
+    if (afterConnect) {
+      setConnectHint('Готово. Нажми «Показать QR», когда будешь подключать следующий номер.');
+      return true;
+    }
+    await finishConnect();
+    return true;
+  }
+  if (started.status === 'needPassword') {
+    connectState.phone = 'qr';
+    setConnectStep('password');
+    setConnectHint('Аккаунт защищён паролем. Введите облачный пароль (2FA).');
+    return true;
+  }
+  showQrVisual(started.loginUrl, started.qrImage);
+  connectState.qrStartedAt = Date.now();
+  setConnectHint(
+    'Отсканируй QR в Telegram → Устройства. После входа появится новый код — можно сразу следующий номер.',
+  );
+  stopQrPoll();
+  connectState.qrPollTimer = setInterval(handleQrPollTick, 3500);
+  setTimeout(handleQrPollTick, 2000);
+  return true;
+}
+
 /**
- * Завершение подключения: обновляем данные и сбрасываем форму.
+ * Завершение подключения: обновляем данные и сразу крутим новый QR.
  */
 async function finishConnect() {
   stopQrPoll();
+  const keepPrompt =
+    connectState.prompt || document.getElementById('account-prompt')?.value?.trim() || '';
   await Promise.all([
     loadDashboard(),
     loadAccounts(),
   ]);
 
-  resetConnectForm();
+  resetConnectForm({ keepPrompt: true });
   render();
   notify('Аккаунт подключён');
+
+  if (keepPrompt && connectState.method === 'qr') {
+    try {
+      await startFreshQrSession({ afterConnect: true });
+      notify('Новый QR готов — сканируй следующий');
+    } catch (err) {
+      setConnectHint(
+        'Аккаунт сохранён. Нажми «Показать QR» для следующего номера — перезаходить в миниапп не нужно.',
+      );
+      handleRequestError(err);
+    }
+  }
 }
 
 async function handleQrPollTick() {
@@ -2056,7 +2812,9 @@ async function handleQrPollTick() {
       stopQrPoll();
       connectState.phone = 'qr';
       setConnectStep('password');
-      setConnectHint('Аккаунт защищён паролем. Введите облачный пароль (2FA).');
+      setConnectHint(
+        'Telegram просит облачный пароль (Настройки → Конфиденциальность → Двухэтапная проверка). Если там пароля нет — отмени и войди заново новым QR.',
+      );
       return;
     }
     if (st.status === 'connected') {
@@ -2090,26 +2848,8 @@ async function addAccount(event) {
     if (connectState.step === 'qr') {
       if (submitButton) submitButton.textContent = 'Готовлю QR…';
       setConnectHint('Подключаюсь через прокси (обычно 3–8 сек)…');
-      stopQrPoll();
-      const started = await api.connectQrStart(connectState.prompt);
-      if (started.status === 'connected') {
-        await finishConnect();
-        return;
-      }
-      if (started.status === 'needPassword') {
-        connectState.phone = 'qr';
-        setConnectStep('password');
-        setConnectHint('Аккаунт защищён паролем. Введите облачный пароль (2FA).');
-        return;
-      }
-      showQrVisual(started.loginUrl, started.qrImage);
-      connectState.qrStartedAt = Date.now();
-      setConnectHint('Отсканируй QR в Telegram → Устройства. Код обновляется сам, пока не отсканируешь.');
+      await startFreshQrSession();
       notify('QR готов — сканируй');
-      stopQrPoll();
-      // Без лимита по времени/количеству — токен крутится, пока не скан или смена вкладки.
-      connectState.qrPollTimer = setInterval(handleQrPollTick, 3500);
-      setTimeout(handleQrPollTick, 2000);
       return;
     }
 
@@ -2151,7 +2891,9 @@ async function addAccount(event) {
 
       if (result.status === 'needPassword') {
         setConnectStep('password');
-        setConnectHint('Аккаунт защищён паролем. Введите облачный пароль (2FA).');
+        setConnectHint(
+          'Telegram просит облачный пароль (Настройки → Конфиденциальность → Двухэтапная проверка). Если там пароля нет — отмени и запроси код заново.',
+        );
         return;
       }
 
@@ -2838,7 +3580,12 @@ function handleDetails(accountId) {
       <div class="modal-card__header">
         <div>
           <p class="modal-card__eyebrow">Карточка аккаунта</p>
-          <h3 class="modal-card__title">${escapeHtml(account.phone || '')}</h3>
+          <h3 class="modal-card__title">${escapeHtml(formatAccountTitle(account))}</h3>
+          ${
+            formatAccountSub(account)
+              ? `<p class="modal-card__subphone">${escapeHtml(formatAccountSub(account))}</p>`
+              : ''
+          }
         </div>
         <button class="modal-close" type="button" aria-label="Закрыть" data-modal-close>×</button>
       </div>
@@ -3034,6 +3781,24 @@ function bindEvents() {
       return;
     }
 
+    if (action === 'refresh-tasks') {
+      loadWorkerTasks().catch(() => {});
+      return;
+    }
+
+    if (action === 'done-task') {
+      (async () => {
+        try {
+          await api.doneWorkerTask(id);
+          notify('Задача закрыта');
+          await loadWorkerTasks();
+        } catch (e) {
+          handleRequestError(e);
+        }
+      })();
+      return;
+    }
+
     if (action === 'logout') {
       const webApp = getTg();
       if (webApp && typeof webApp.close === 'function') {
@@ -3128,6 +3893,307 @@ function bindEvents() {
       return;
     }
 
+    if (action === 'open-admin') {
+      if (!state.dashboard.isAdmin) {
+        notify('Только для админов');
+        return;
+      }
+      setActiveTab('admin');
+      return;
+    }
+
+    if (action === 'admin-refresh' || action === 'admin-activity-refresh' || action === 'admin-bl-refresh') {
+      loadAdminData({ force: true }).catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-sub') {
+      setAdminSub(target.dataset.sub);
+      return;
+    }
+
+    if (action === 'admin-akind') {
+      state.admin.activityKind = target.dataset.akind || 'all';
+      renderAdminActivity();
+      return;
+    }
+
+    if (action === 'admin-ai-on') {
+      api
+        .adminStartAi(id)
+        .then(() => loadAdminData({ force: true }))
+        .then(() => notify('AI включён'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-ai-off') {
+      api
+        .adminStopAi(id)
+        .then(() => loadAdminData({ force: true }))
+        .then(() => notify('AI выключен'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-ping') {
+      api
+        .adminPing(id)
+        .then((r) => notify(r.ok || r.online ? 'Связь ок' : r.error || 'Пинг без ответа'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-card-hint' || action === 'admin-acc-info') {
+      openAdminAccountInfo(id);
+      return;
+    }
+
+    if (action === 'admin-del') {
+      if (!confirm(`Удалить аккаунт #${id}? Сессия тоже сбросится.`)) return;
+      api
+        .adminDeleteAccount(id)
+        .then(() => loadAdminData({ force: true }))
+        .then(() => notify(`Удалён #${id}`))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-bulk-ai-on') {
+      if (!confirm('Включить AI на всех аккаунтах?')) return;
+      api
+        .adminBulkAiOn()
+        .then((r) => {
+          notify(`AI включён: ${r.ok ?? 0}` + (r.fail ? `, ошибок ${r.fail}` : ''));
+          return loadAdminData({ force: true });
+        })
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-bulk-ai-off') {
+      if (!confirm('Выключить AI на всех аккаунтах?')) return;
+      api
+        .adminBulkAiOff()
+        .then((r) => {
+          notify(`AI выключен: ${r.ok ?? 0}` + (r.fail ? `, ошибок ${r.fail}` : ''));
+          return loadAdminData({ force: true });
+        })
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-bl-add') {
+      const input = document.getElementById('admin-bl-input');
+      const raw = String(input?.value || '').trim();
+      if (!raw) {
+        notify('Укажи @username или ID');
+        return;
+      }
+      if (!confirm(`В ЧС: ${raw}?`)) return;
+      api
+        .addAdminBlacklist(raw)
+        .then(() => {
+          if (input) input.value = '';
+          notify('В чёрном списке');
+          return loadAdminData({ force: true });
+        })
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-bl-del') {
+      if (!confirm('Снять с ЧС?')) return;
+      api
+        .deleteAdminBlacklist(id)
+        .then(() => {
+          notify('Снято с ЧС');
+          return loadAdminData({ force: true });
+        })
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-add-create') {
+      const payload = adminAddPayload();
+      if (!payload.phone) {
+        notify('Укажи телефон');
+        return;
+      }
+      setAdminAddStatus('Создаю…');
+      api
+        .adminCreateAccount(payload)
+        .then((r) => {
+          setAdminAddStatus(`Создан #${r.account?.id} ${r.account?.phone || ''}`);
+          notify('Аккаунт создан');
+          return loadAdminData({ force: true });
+        })
+        .catch((err) => {
+          setAdminAddStatus(err.message || 'Ошибка');
+          handleRequestError(err);
+        });
+      return;
+    }
+
+    if (action === 'admin-add-code') {
+      const payload = adminAddPayload();
+      if (!payload.phone) {
+        notify('Укажи телефон');
+        return;
+      }
+      setAdminAddStatus('Запрашиваю код…');
+      api
+        .adminConnectStart(payload)
+        .then((r) => {
+          state.admin.connect = { ...payload, phone: r.phone || payload.phone };
+          const codeWrap = document.getElementById('admin-add-code-wrap');
+          const twoWrap = document.getElementById('admin-add-2fa-wrap');
+          if (codeWrap) codeWrap.hidden = false;
+          if (twoWrap) twoWrap.hidden = true;
+          setAdminAddStatus(
+            r.viaApp
+              ? 'Код ушёл в приложение Telegram — введи ниже'
+              : 'Код отправлен — введи ниже',
+          );
+          notify('Код запрошен');
+        })
+        .catch((err) => {
+          setAdminAddStatus(err.message || 'Ошибка');
+          handleRequestError(err);
+        });
+      return;
+    }
+
+    if (action === 'admin-add-resend') {
+      if (!state.admin.connect) {
+        notify('Сначала запроси код');
+        return;
+      }
+      api
+        .adminConnectResend(state.admin.connect)
+        .then(() => {
+          setAdminAddStatus('Код запрошен снова');
+          notify('Код снова');
+        })
+        .catch((err) => {
+          setAdminAddStatus(err.message || 'Ошибка');
+          handleRequestError(err);
+        });
+      return;
+    }
+
+    if (action === 'admin-add-confirm-code') {
+      if (!state.admin.connect) {
+        notify('Сначала запроси код');
+        return;
+      }
+      const code = String(document.getElementById('admin-add-code')?.value || '').trim();
+      if (!code) {
+        notify('Введи код');
+        return;
+      }
+      setAdminAddStatus('Проверяю код…');
+      api
+        .adminConnectCode({ ...state.admin.connect, code })
+        .then((r) => {
+          if (r.status === 'needPassword') {
+            const twoWrap = document.getElementById('admin-add-2fa-wrap');
+            if (twoWrap) twoWrap.hidden = false;
+            setAdminAddStatus('Нужен облачный пароль 2FA');
+            return;
+          }
+          document.getElementById('admin-add-code-wrap').hidden = true;
+          document.getElementById('admin-add-2fa-wrap').hidden = true;
+          setAdminAddStatus(
+            `Подключен #${r.accountId} · ${r.online ? 'online' : 'offline'}`,
+          );
+          notify('Подключен');
+          return loadAdminData({ force: true });
+        })
+        .catch((err) => {
+          setAdminAddStatus(err.message || 'Ошибка');
+          handleRequestError(err);
+        });
+      return;
+    }
+
+    if (action === 'admin-add-confirm-2fa') {
+      if (!state.admin.connect) {
+        notify('Сначала запроси код');
+        return;
+      }
+      const password = String(document.getElementById('admin-add-2fa')?.value || '');
+      if (!password) {
+        notify('Введи пароль 2FA');
+        return;
+      }
+      setAdminAddStatus('Проверяю 2FA…');
+      api
+        .adminConnectPassword({ ...state.admin.connect, password })
+        .then((r) => {
+          document.getElementById('admin-add-code-wrap').hidden = true;
+          document.getElementById('admin-add-2fa-wrap').hidden = true;
+          setAdminAddStatus(
+            `Подключен #${r.accountId} · ${r.online ? 'online' : 'offline'}`,
+          );
+          notify('Подключен');
+          return loadAdminData({ force: true });
+        })
+        .catch((err) => {
+          setAdminAddStatus(err.message || 'Ошибка');
+          handleRequestError(err);
+        });
+      return;
+    }
+
+    if (action === 'admin-proxy-refresh') {
+      loadAdminProxies()
+        .then(() => notify('Прокси обновлены'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-proxy-check') {
+      const hint = document.getElementById('admin-proxy-hint');
+      if (hint) hint.textContent = 'Проверяю SOCKS…';
+      const run = async () => {
+        if (!state.admin.proxies) await loadAdminProxies();
+        const data = await api.checkAdminProxies('all');
+        const map = {};
+        for (const r of data.results || []) {
+          map[`${r.kind}:${r.index}`] = r;
+        }
+        renderAdminProxies(map);
+        if (hint) {
+          hint.textContent = `ok ${data.ok} · fail ${data.fail} · skip ${data.skipped} → ${data.dest}`;
+        }
+        notify(`ok ${data.ok} / fail ${data.fail}`);
+      };
+      run().catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-logs-refresh') {
+      loadAdminLogs(true)
+        .then(() => notify('Логи обновлены'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-logs-clear') {
+      if (!confirm('Очистить буфер логов?')) return;
+      api
+        .clearAdminLogs()
+        .then(() => {
+          state.admin.logsAfterId = 0;
+          const box = document.getElementById('admin-log-console');
+          if (box) box.innerHTML = '<div class="empty">пусто</div>';
+          notify('Логи очищены');
+        })
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
     if (action === 'clear-history') {
       handleClearHistory(target.dataset.account, target.dataset.peer);
       return;
@@ -3194,7 +4260,7 @@ function bindEvents() {
   document.addEventListener('change', (event) => {
     const select = event.target.closest('select[data-action="funnel-stage"]');
     if (select) {
-      handleFunnelStage(select.dataset.account, select.dataset.peer, select.value);
+    handleFunnelStage(select.dataset.account, select.dataset.peer, select.value);
       return;
     }
 
@@ -3225,6 +4291,176 @@ function bindEvents() {
  * Основной запуск: биндим события, рисуем интерфейс
  * и подтягиваем реальные данные из backend.
  */
+/** Именительный → «в X» (предложный). Зеркало personaFacts.inCityPrep. */
+function cityInPrep(name) {
+  const n = String(name || '').trim();
+  if (!n) return n;
+  if (
+    /^(?:Москве|Анапе|Сочи|Липецке|Белгороде|Курске|Калуге|Воронеже|Краснодаре|Ростове|Самаре|Казани|Твери|Туле|Рязани|Тимашевске|Красноярске|Иванове|Нижнем(?:\s+Новгороде)?|Великом\s+Новгороде)$/i.test(
+      n,
+    )
+  ) {
+    return n;
+  }
+  if (/^нижн/i.test(n)) return /новгород/i.test(n) ? 'Нижнем Новгороде' : 'Нижнем';
+  if (/^велик/i.test(n) && /новгород/i.test(n)) return 'Великом Новгороде';
+  if (/^москв/i.test(n)) return 'Москве';
+  if (/^анап/i.test(n)) return 'Анапе';
+  if (/^липецк/i.test(n)) return 'Липецке';
+  if (/^тимашевск/i.test(n)) return 'Тимашевске';
+  if (/^красноярск/i.test(n)) return 'Красноярске';
+  if (/^иванов/i.test(n)) return 'Иванове';
+  const map = {
+    Москва: 'Москве',
+    Анапа: 'Анапе',
+    Сочи: 'Сочи',
+    Липецк: 'Липецке',
+    Белгород: 'Белгороде',
+    Курск: 'Курске',
+    Калуга: 'Калуге',
+    Воронеж: 'Воронеже',
+    Краснодар: 'Краснодаре',
+    Ростов: 'Ростове',
+    Самара: 'Самаре',
+    Казань: 'Казани',
+    Тверь: 'Твери',
+    Тула: 'Туле',
+    Рязань: 'Рязани',
+    Тимашевск: 'Тимашевске',
+    Красноярск: 'Красноярске',
+    Иваново: 'Иванове',
+    'Нижний Новгород': 'Нижнем Новгороде',
+    Нижний: 'Нижнем',
+    'Великий Новгород': 'Великом Новгороде',
+  };
+  if (map[n]) return map[n];
+  if (/[ая]$/i.test(n)) return n.replace(/[ая]$/i, 'е');
+  if (/о$/i.test(n)) return n.replace(/о$/i, 'е');
+  if (/ь$/i.test(n)) return n.replace(/ь$/i, 'и');
+  if (/ий$/i.test(n)) return n.replace(/ий$/i, 'ем');
+  if (/([бвгджзклмнпрстфхцчшщ])$/i.test(n)) return `${n}е`;
+  return n;
+}
+
+/** Именительный → «в X» (винительный). Зеркало personaFacts.inCityAcc. */
+function cityInAcc(name) {
+  const n = String(name || '').trim();
+  if (!n) return n;
+  if (/^москв/i.test(n)) return 'Москву';
+  if (/^анап/i.test(n)) return 'Анапу';
+  if (/^калуг/i.test(n)) return 'Калугу';
+  if (/^самар/i.test(n)) return 'Самару';
+  if (/^казан/i.test(n)) return 'Казань';
+  if (/^рязан/i.test(n)) return 'Рязань';
+  if (/^твер/i.test(n)) return 'Тверь';
+  if (/^тул/i.test(n)) return 'Тулу';
+  if (/^нижн/i.test(n)) return /новгород/i.test(n) ? 'Нижний Новгород' : 'Нижний';
+  if (/^сочи$/i.test(n)) return 'Сочи';
+  if (/[ая]$/i.test(n)) return n.replace(/[ая]$/i, 'у');
+  return n;
+}
+
+function fillPromptFromPersonaVars() {
+  const sel = document.getElementById('persona-template');
+  const ta = document.getElementById('account-prompt');
+  const varsBox = document.getElementById('persona-vars');
+  if (!sel || !ta) return;
+  const opt = sel.selectedOptions[0];
+  if (!opt || !opt.value) return;
+  const raw = opt.dataset.template || '';
+  if (!raw) return;
+  const name = document.getElementById('persona-name')?.value?.trim() || 'Аня';
+  const age = document.getElementById('persona-age')?.value?.trim() || '26';
+  const fromCity = document.getElementById('persona-from')?.value?.trim() || 'Липецк';
+  const toCity = document.getElementById('persona-to')?.value?.trim() || 'город';
+  const lc = (s) => String(s).toLocaleLowerCase('ru-RU');
+  const fromIn = cityInPrep(fromCity);
+  const toIn = cityInPrep(toCity);
+  const toAcc = cityInAcc(toCity);
+  const map = {
+    NAME: name,
+    AGE: age,
+    FROM_CITY: fromCity,
+    TO_CITY: toCity,
+    FROM_CITY_LC: lc(fromCity),
+    TO_CITY_LC: lc(toCity),
+    FROM_CITY_IN: fromIn,
+    TO_CITY_IN: toIn,
+    FROM_CITY_ACC: cityInAcc(fromCity),
+    TO_CITY_ACC: toAcc,
+    FROM_CITY_IN_LC: lc(fromIn),
+    TO_CITY_IN_LC: lc(toIn),
+    TO_CITY_ACC_LC: lc(toAcc),
+  };
+  ta.value = raw.replace(/\{\{\s*([A-Z0-9_]+)\s*\}\}/g, (_, key) =>
+    map[key] != null ? map[key] : '',
+  );
+  sel.dataset.lastTemplatePrompt = ta.value;
+  if (varsBox) varsBox.hidden = false;
+}
+
+function setPersonaVarsVisible(show, defaults = {}) {
+  const varsBox = document.getElementById('persona-vars');
+  if (!varsBox) return;
+  varsBox.hidden = !show;
+  if (!show) return;
+  const nameEl = document.getElementById('persona-name');
+  const ageEl = document.getElementById('persona-age');
+  const fromEl = document.getElementById('persona-from');
+  const toEl = document.getElementById('persona-to');
+  if (nameEl) nameEl.value = defaults.name || '';
+  if (ageEl) ageEl.value = defaults.age || '';
+  if (fromEl) fromEl.value = defaults.fromCity || '';
+  if (toEl) toEl.value = defaults.toCity || '';
+}
+
+async function loadPersonaTemplates() {
+  const sel = document.getElementById('persona-template');
+  if (!sel || sel.dataset.loaded === '1') return;
+  try {
+    const data = await api.personaTemplates();
+    const list = data.templates || [];
+    for (const t of list) {
+      const opt = document.createElement('option');
+      opt.value = t.id;
+      opt.textContent = t.title;
+      opt.dataset.prompt = t.prompt || '';
+      opt.dataset.template = t.template || '';
+      opt.dataset.defaults = JSON.stringify(t.defaults || {});
+      sel.appendChild(opt);
+    }
+    sel.dataset.loaded = '1';
+    sel.dataset.lastTemplatePrompt = '';
+    sel.addEventListener('change', () => {
+      const opt = sel.selectedOptions[0];
+      const ta = document.getElementById('account-prompt');
+      if (!ta) return;
+      if (!opt || !opt.value) {
+        ta.value = '';
+        sel.dataset.lastTemplatePrompt = '';
+        setPersonaVarsVisible(false);
+        return;
+      }
+      let defaults = {};
+      try {
+        defaults = JSON.parse(opt.dataset.defaults || '{}');
+      } catch (_) {
+        defaults = {};
+      }
+      setPersonaVarsVisible(true, defaults);
+      fillPromptFromPersonaVars();
+    });
+    for (const id of ['persona-name', 'persona-age', 'persona-from', 'persona-to']) {
+      const el = document.getElementById(id);
+      if (!el || el.dataset.bound === '1') continue;
+      el.dataset.bound = '1';
+      el.addEventListener('input', () => fillPromptFromPersonaVars());
+    }
+  } catch (e) {
+    console.warn('persona templates:', e.message);
+  }
+}
+
 async function startApp() {
   cacheInitDataIfAny();
   ensureAuthBanner();
@@ -3232,7 +4468,8 @@ async function startApp() {
   render();
   setBootStatus('Загружаем данные…');
   try {
-    await loadAllData();
+  await loadAllData();
+  await loadPersonaTemplates();
   } finally {
     setBootStatus('');
   }
@@ -3353,7 +4590,7 @@ async function initializeApp() {
   if (isTelegramShell() && gateEl) gateEl.hidden = true;
 
   try {
-    if (isTelegramWebApp()) {
+  if (isTelegramWebApp()) {
       await startApp();
       return;
     }
