@@ -99,6 +99,9 @@ function isOpenAiProxyTransportError(err) {
  * OpenAI create с мгновенной сменой SOCKS при транспортной ошибке.
  */
 async function openaiCreateWithProxyFailover(run) {
+  if (!openai) {
+    throw new Error('OpenAI client is null (AUDIT_SMOKE?). Не могу ответить.');
+  }
   const list = socks5ListFromEnv();
   if (!list.length) return run(openai);
   let lastErr;
@@ -163,12 +166,34 @@ function buildOpenAIOptions(socksOverride = null) {
   return opts;
 }
 
-let openai = new OpenAI(buildOpenAIOptions());
+// Smoke/audit: не поднимаем OpenAI+SOCKS на require — иначе node не выходит после process.exit.
+// Под PM2 флаг AUDIT_SMOKE игнорируем: он иногда залипает в dump после deploy-smoke
+// и тогда client=null → TypeError reading 'chat'.
+const underPm2 =
+  process.env.pm_id != null ||
+  process.env.PM2_USAGE != null ||
+  String(process.env.name || '') === 'tgbot';
+const skipOpenAiBoot = process.env.AUDIT_SMOKE === '1' && !underPm2;
+let openai = skipOpenAiBoot ? null : new OpenAI(buildOpenAIOptions());
+
+function isOpenAiClientReady() {
+  return Boolean(openai);
+}
+
+function openAiProxyPoolLen() {
+  try {
+    return socks5ListFromEnv().length;
+  } catch (_) {
+    return 0;
+  }
+}
 
 // Экспортируем конструктор опций, чтобы другие модули (напр. learningDb.js)
 // могли создать свой OpenAI-клиент через тот же SOCKS5-прокси, а не биться
 // в бан по IP (403 Country, region, or territory not supported).
 module.exports.buildOpenAIOptions = buildOpenAIOptions;
+module.exports.isOpenAiClientReady = isOpenAiClientReady;
+module.exports.openAiProxyPoolLen = openAiProxyPoolLen;
 
 // Модель для чата (ответы). Задаётся через .env: OPENAI_MODEL=gpt-4o.
 // Значение читается один раз при старте процесса и не меняется во время
@@ -227,9 +252,13 @@ const DEFAULT_PROMPT =
 function stripMetaForLangDetect(text) {
   return String(text || '')
     .replace(/\[фото от собеседника\]:\s*[^\n]*/gi, ' ')
-    .replace(/\[(?:голос(?:овое)?|voice|аудио)[^\]]*\]:\s*[^\n]*/gi, ' ')
+    .replace(/\[фото от меня[^\]]*\]:\s*[^\n]*/gi, ' ')
+    .replace(/\[(?:кружок|видео|стикер)\s+от\s+собеседника\]:\s*[^\n]*/gi, ' ')
+    .replace(/\[(?:голос(?:овое)?|voice|аудио|whisper)[^\]]*\]:\s*[^\n]*/gi, ' ')
     .replace(/\[геоконтекст[^\]]*\]:\s*/gi, ' ')
     .replace(/\[(?:ответ на|уточнение к|Ответ на сообщение)[^\]]*\]:?\s*/gi, ' ')
+    // Vision-описания иногда без скобок: «Photo shows… / Image of…»
+    .replace(/\b(?:photo|image|picture|screenshot)\s+(?:shows?|of|depicts?)\b[^.!?\n]*/gi, ' ')
     .replace(/\[[^\]]*\]/g, ' ')
     .replace(/<<[^>]+>>/g, ' ')
     .replace(/https?:\/\/\S+/gi, ' ')
@@ -1132,10 +1161,18 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     let withJobFlip = slanged;
     try {
       const jobFlip = require('./jobFlipAsk');
-      withJobFlip = jobFlip.ensureJobFlipHeardAsk(slanged, contextualUserMessage, {
+      const jobOpts = {
         ageHours: options.dialogAgeHours,
         history,
-      });
+      };
+      withJobFlip = jobFlip.ensureJobFlipHeardAsk(slanged, contextualUserMessage, jobOpts);
+      if (typeof jobFlip.maybeAppendHeardAskOnWorkTalk === 'function') {
+        withJobFlip = jobFlip.maybeAppendHeardAskOnWorkTalk(
+          withJobFlip,
+          contextualUserMessage,
+          jobOpts,
+        );
+      }
     } catch (_) {
       /* optional */
     }
@@ -2800,17 +2837,18 @@ const BOT_DEFENSE_ALIVE_RE =
 const BOT_DEFENSE_COMFORT_RE =
   /(просто\s+обща(юсь|емся)\s+так|мы\s+просто\s+обща(емся|емся)|не\s+переживай|вс[её]\s+нормально|не\s+волнуйся|давай\s+просто\s+общать)[^.!?\n]*[.!)]*/gi;
 const BOT_ACCUSATION_USER_RE =
-  /(ты\s+бот|это\s+бот|бот\s+ли\s+ты|какой[- ]?то\s+бот|как\s+бот|как\s+робот|с\s+роботом|обща(ешьс|ешс)я\s+как\s+(бот|робот)|как\s+будто\s+с\s+роботом|прогоня(ешь|ете)\s*.{0,30}нейросет|через\s+нейросет|кажется[^.!?\n]{0,40}бот|похоже[^.!?\n]{0,30}бот|как\s+будто[^.!?\n]{0,20}бот|отвечаешь[^.!?\n]{0,30}бот|(снова|опять)\s+кажется|мне\s+снова\s+кажется|нейросеть|chatgpt|gpt[- ]?\d|ты\s+не\s+человек|you('?re|\s+are)\s+a?\s*bot|are\s+you\s+a?\s*bot)/i;
+  /(у\s+тебя\s+(?:бот|робот)|бот\s+поплыл|поплыл.{0,20}бот|ты\s+бот|это\s+бот|бот\s+ли\s+ты|какой[- ]?то\s+бот|как\s+бот|как\s+робот|с\s+роботом|обща(ешьс|ешс)я\s+как\s+(бот|робот)|как\s+будто\s+с\s+роботом|прогоня(ешь|ете)\s*.{0,30}нейросет|через\s+нейросет|кажется[^.!?\n]{0,40}бот|похоже[^.!?\n]{0,30}бот|как\s+будто[^.!?\n]{0,20}бот|отвечаешь[^.!?\n]{0,30}бот|(снова|опять)\s+кажется|мне\s+снова\s+кажется|нейросеть|chatgpt|gpt[- ]?\d|ты\s+не\s+человек|you('?re|\s+are)\s+a?\s*bot|are\s+you\s+a?\s*bot)/i;
 
 const BOT_DEFENSE_SCRIPT_RE =
   /(?:никто|нкито)\s+ещё\s+так\s+не\s+говорил[^.!?\n]*[.!)]*|я\s+просто\s+общаюсь\s+как\s+могу[^.!?\n]*[.!)]*|просто\s+общаюсь\s+как\s+могу[^.!?\n]*[.!)]*/gi;
 
 const BOT_ACCUSATION_FIRST_RU = [
-  'хах ну ты серьёзно)',
+  'хах ну ты чего)',
+  'живая, расслабься)',
+  'хах ну серьёзно)',
   'странно звучит)',
   'да ладно тебе)',
-  'ну ок)',
-  'хах)',
+  'эм?)',
 ];
 const BOT_ACCUSATION_AGAIN_RU = [
   'хах опять)',
@@ -2888,10 +2926,11 @@ function humanizeBotAccusationReply(reply, history, userMessage) {
   const stillSoft =
     !text ||
     text.length < 4 ||
-    /(вс[её]\s+нормально|не\s+переживай|просто\s+обща|я\s+жив|обидно|мы\s+просто|никто\s+ещё|общаюсь\s+как\s+могу)/i.test(
+    /(вс[её]\s+нормально|не\s+переживай|просто\s+обща|я\s+жив|обидно|мы\s+просто|никто\s+ещё|общаюсь\s+как\s+могу|не\s+бот|не\s+ии|просто\s+я\s+не\s+бот)/i.test(
       text,
     ) ||
-    /\?/.test(text);
+    /\?/.test(text) ||
+    /(?:^|\s)(?:а\s+)?(?:я\s+)?[А-ЯЁA-Z][а-яёa-z]{1,14}\s*\)?\s*$/.test(text);
 
   const isEn =
     /[a-z]{3,}/i.test(String(userMessage || '')) && !/[а-яё]{3,}/i.test(String(userMessage || ''));
@@ -3456,6 +3495,10 @@ async function describeImage(buffer, caption = '') {
     }
     const base64 = buffer.toString('base64');
 
+    if (!mediaClient) {
+      console.error('Ошибка распознавания фото: OpenAI mediaClient is null');
+      return caption ? `стикер ${caption}`.trim() : '';
+    }
     const completion = await mediaClient.chat.completions.create({
       model: 'gpt-4o-mini',
       max_tokens: 200,
@@ -3489,6 +3532,51 @@ async function describeImage(buffer, caption = '') {
       console.error('Ошибка распознавания фото:', msg);
     }
     return caption ? `стикер ${caption}`.trim() : '';
+  }
+}
+
+/**
+ * Сверка входящего фото с 1–3 аватарками профиля: тот же кадр / та же девушка.
+ * Ответ строго YES/NO — для постфильтра «это я» vs «это не я».
+ */
+async function samePersonAsProfilePhotos(incomingBuffer, profileBuffers = []) {
+  const profiles = (profileBuffers || []).filter((b) => b && b.length).slice(0, 3);
+  if (!incomingBuffer?.length || !profiles.length) return false;
+  const inMime = detectVisionImageMime(incomingBuffer);
+  if (!inMime) return false;
+  const content = [
+    {
+      type: 'text',
+      text:
+        'Первое фото — прислал собеседник. Дальше — аватарки девушки из Telegram-профиля. ' +
+        'Ответь ОДНИМ словом YES если это тот же кадр/та же девушка (её аватарка или то же лицо), ' +
+        'иначе NO. Без пояснений.',
+    },
+    {
+      type: 'image_url',
+      image_url: { url: `data:${inMime};base64,${incomingBuffer.toString('base64')}` },
+    },
+  ];
+  for (const buf of profiles) {
+    const mime = detectVisionImageMime(buf) || 'image/jpeg';
+    content.push({
+      type: 'image_url',
+      image_url: { url: `data:${mime};base64,${buf.toString('base64')}` },
+    });
+  }
+  try {
+    const completion = await mediaClient.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 8,
+      messages: [{ role: 'user', content }],
+    });
+    const ans = String(completion.choices[0]?.message?.content || '')
+      .trim()
+      .toUpperCase();
+    return /\bYES\b/.test(ans) && !/\bNO\b/.test(ans.replace(/YES/g, ''));
+  } catch (err) {
+    console.warn('Vision avatar compare fail:', err?.message || err);
+    return false;
   }
 }
 
@@ -3593,6 +3681,8 @@ function heJustGreeted(userMessage) {
 
 Object.assign(module.exports, {
   firstSocks5FromEnv,
+  isOpenAiClientReady,
+  openAiProxyPoolLen,
   heJustGreeted,
   generateReply,
   describeOwnMedia,
@@ -3600,6 +3690,7 @@ Object.assign(module.exports, {
   extractUserQuestions,
   transcribeAudio,
   describeImage,
+  samePersonAsProfilePhotos,
   detectReplyLanguage,
   isRussianConversation,
   fixSwappedCurrentCity,

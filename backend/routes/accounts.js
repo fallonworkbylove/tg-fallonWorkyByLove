@@ -6,22 +6,29 @@ const {
   pollQrLogin,
   resendLoginCode,
   confirmCode,
+  releaseLoginHandoff,
   confirmPassword,
   extractLoginCode,
   normalizeLoginPhone,
-  qrImageUrl,
+  qrImageDataUrl,
   QR_MARKER,
   isActive,
   activateAccount,
   deactivateAccount,
+  markFreshSession,
   pingActiveSession,
   scanUnansweredDialogs,
   flushAllDeferredNow,
+  accountDisplayName,
+  getAccountUsername,
 } = require('../services/telegramClient');
 const { purgeAccount, renumberAccountSeq } = require('../services/accountCleanup');
 const leadScoring = require('../services/leadScoring');
 const ragExamples = require('../services/ragExamples');
 const { getDialogAgeHours } = require('../services/history');
+const { nameFromPrompt } = require('../services/adminConsoleStats');
+const scaleOps = require('../services/scaleOps');
+const { allowLoginAttempt } = require('../services/loginRate');
 
 const router = express.Router();
 const getUserId = require('../lib/getUserId');
@@ -89,6 +96,8 @@ router.get('/', async (req, res) => {
       `SELECT a.id, a.phone, a.prompt, a.status, a.is_autoreply_enabled,
               a.reply_delay_min, a.reply_delay_max, a.media_chat_link,
               a.created_at, a.updated_at,
+              CASE WHEN LENGTH(COALESCE(a.session_string,'')) > 50 THEN 1 ELSE 0 END AS has_session,
+              LENGTH(COALESCE(a.session_string,'')) AS session_len,
               (SELECT COUNT(*) FROM conversation_messages m
                 WHERE m.account_id = a.id AND m.role = 'assistant'
                   AND m.created_at >= ${dayStart}) AS sent_today
@@ -101,16 +110,120 @@ router.get('/', async (req, res) => {
     // is_online = аккаунт РЕАЛЬНО подключён в текущем процессе (живой клиент
     // в памяти, слушает входящие). Отличается от is_autoreply_enabled — это
     // настройка в БД, которая может быть включена, но клиент ещё не поднят.
-    const withOnline = accounts.map((account) => ({
-      ...account,
-      is_online: isActive(account.id),
-      sent_today: Number(account.sent_today) || 0,
-    }));
+    const withOnline = await Promise.all(
+      accounts.map(async (account) => {
+        const liveName = accountDisplayName(account.id);
+        let username = '';
+        try {
+          username = String((await getAccountUsername(account.id)) || '').replace(/^@/, '');
+        } catch (_) {
+          username = '';
+        }
+        const promptName = nameFromPrompt(account.prompt);
+        const unameLabel = username ? `@${username}` : null;
+        const name = liveName || promptName || unameLabel || null;
+        const online = isActive(account.id);
+        const health = scaleOps.checklistForAccount(account, { online });
+        // Не отдаём session_string / сырой session_len клиенту.
+        const { session_string: _sess, session_len: _slen, ...safe } = account;
+        return {
+          ...safe,
+          has_session: Number(account.has_session) === 1,
+          is_online: online,
+          sent_today: Number(account.sent_today) || 0,
+          name,
+          username: username || null,
+          health_state: health.state,
+          health_missing: health.missing,
+          can_enable_ai: health.canEnableAi,
+        };
+      }),
+    );
 
     res.json({ success: true, accounts: withOnline });
   } catch (error) {
     console.error('Get accounts error:', error);
     res.status(500).json({ success: false, error: 'Не удалось получить аккаунты' });
+  }
+});
+
+/** Шаблоны персонажей (#11) */
+/** Лента событий по аккаунтам текущего воркера (фото/NFT/лиды). */
+router.get('/activity', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const [owned] = await db.execute(
+      'SELECT id FROM accounts WHERE user_id = ? ORDER BY id ASC',
+      [userId],
+    );
+    const accountIds = (owned || [])
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    if (!accountIds.length) {
+      return res.json({ success: true, events: [], latestId: 0 });
+    }
+    const { listActivity } = require('../services/opsActivityLog');
+    const data = await listActivity({
+      limit: req.query.limit,
+      afterId: req.query.afterId,
+      kind: req.query.kind || null,
+      accountIds,
+    });
+    return res.json({ success: true, ...data });
+  } catch (error) {
+    console.error('Worker activity error:', error);
+    return res.status(500).json({ success: false, error: 'Не удалось загрузить события' });
+  }
+});
+
+router.get('/persona-templates', async (_req, res) => {
+  res.json({ success: true, templates: scaleOps.PERSONA_TEMPLATES });
+});
+
+/** Пулы по ролям (#5) */
+router.get('/pool-roles', async (req, res) => {
+  try {
+    if (!requireOpsLoopback(req, res)) return;
+    res.json({ success: true, pools: scaleOps.getPoolRoleCounts() });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+/** Очередь задач воркеру (#6) — только OPS loopback + bypass key */
+router.get('/worker-tasks', async (req, res) => {
+  try {
+    if (!requireOpsLoopback(req, res)) return;
+    const tasks = await scaleOps.listOpenTasks(50);
+    res.json({ success: true, tasks });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+router.post('/worker-tasks', async (req, res) => {
+  try {
+    if (!requireOpsLoopback(req, res)) return;
+    const id = await scaleOps.enqueueTask({
+      accountId: req.body.accountId || null,
+      peerId: req.body.peerId || null,
+      kind: req.body.kind || 'manual',
+      title: req.body.title || 'Задача',
+      dueAt: req.body.dueAt || null,
+    });
+    res.json({ success: true, id });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+router.post('/worker-tasks/:id/done', async (req, res) => {
+  try {
+    if (!requireOpsLoopback(req, res)) return;
+    await scaleOps.closeTask(req.params.id);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -622,8 +735,30 @@ router.post('/connect/start', async (req, res) => {
     if (!phone) {
       return res.status(400).json({ success: false, error: 'Поле phone обязательно' });
     }
+    const rate = allowLoginAttempt({ userId: getUserId(req), phone });
+    if (!rate.ok) {
+      return res.status(rate.status || 429).json({ success: false, error: rate.error });
+    }
 
     const result = await startLogin(getUserId(req), phone);
+    if (result?.alreadyAuthorized && result.sessionString) {
+      const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+      const accountId = await saveSession(
+        getUserId(req),
+        result.phone || phone,
+        result.sessionString,
+        prompt,
+      );
+      markFreshSession(accountId, result.sessionString);
+      await deactivateAccount(accountId);
+      const online = (await activateAccount(accountId, result.sessionString)) === true;
+      return res.json({
+        success: true,
+        status: 'connected',
+        phone: result.phone || phone,
+        is_online: online,
+      });
+    }
     return res.json({
       success: true,
       status: 'codeSent',
@@ -638,6 +773,10 @@ router.post('/connect/start', async (req, res) => {
 // QR-вход: старт (токен + картинка).
 router.post('/connect/qr/start', async (req, res) => {
   try {
+    const rate = allowLoginAttempt({ userId: getUserId(req), phone: 'qr' });
+    if (!rate.ok) {
+      return res.status(rate.status || 429).json({ success: false, error: rate.error });
+    }
     const result = await startQrLogin(getUserId(req));
     if (result.status === 'ok' && result.sessionString) {
       const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
@@ -647,6 +786,8 @@ router.post('/connect/qr/start', async (req, res) => {
         result.sessionString,
         prompt,
       );
+      await releaseLoginHandoff(getUserId(req), QR_MARKER).catch(() => {});
+      markFreshSession(accountId, result.sessionString);
       await deactivateAccount(accountId);
       const online = (await activateAccount(accountId, result.sessionString)) === true;
       return res.json({
@@ -659,12 +800,13 @@ router.post('/connect/qr/start', async (req, res) => {
     if (result.status === 'needPassword') {
       return res.json({ success: true, status: 'needPassword', phone: QR_MARKER });
     }
+    const loginUrl = result.loginUrl || null;
     return res.json({
       success: true,
       status: 'pending',
-      loginUrl: result.loginUrl,
+      loginUrl,
       expires: result.expires,
-      qrImage: result.loginUrl ? qrImageUrl(result.loginUrl) : null,
+      qrImage: loginUrl ? await qrImageDataUrl(loginUrl) : null,
     });
   } catch (error) {
     console.error('Connect QR start error:', error);
@@ -687,6 +829,8 @@ router.post('/connect/qr/poll', async (req, res) => {
         result.sessionString,
         prompt,
       );
+      await releaseLoginHandoff(getUserId(req), QR_MARKER).catch(() => {});
+      markFreshSession(accountId, result.sessionString);
       await deactivateAccount(accountId);
       const online = (await activateAccount(accountId, result.sessionString)) === true;
       return res.json({
@@ -696,12 +840,13 @@ router.post('/connect/qr/poll', async (req, res) => {
         is_online: online,
       });
     }
+    const loginUrl = result.loginUrl || null;
     return res.json({
       success: true,
       status: 'pending',
-      loginUrl: result.loginUrl || null,
+      loginUrl,
       expires: result.expires || null,
-      qrImage: result.loginUrl ? qrImageUrl(result.loginUrl) : null,
+      qrImage: loginUrl ? await qrImageDataUrl(loginUrl) : null,
     });
   } catch (error) {
     if (error.statusCode) {
@@ -749,8 +894,10 @@ router.post('/connect/code', async (req, res) => {
       return res.json({ success: true, status: 'needPassword' });
     }
 
-    // Успех -> сохраняем session_string (и промпт) в базу
+    // Успех -> сохраняем session_string, потом release pending, потом activate
     const accountId = await saveSession(getUserId(req), phone, result.sessionString, prompt);
+    await releaseLoginHandoff(getUserId(req), phone).catch(() => {});
+    markFreshSession(accountId, result.sessionString);
     await deactivateAccount(accountId);
     const online = (await activateAccount(accountId, result.sessionString)) === true;
     return res.json({ success: true, status: 'connected', is_online: online });
@@ -782,6 +929,8 @@ router.post('/connect/password', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Не удалось определить номер после 2FA' });
     }
     const accountId = await saveSession(getUserId(req), savePhone, result.sessionString, prompt);
+    await releaseLoginHandoff(getUserId(req), phone).catch(() => {});
+    markFreshSession(accountId, result.sessionString);
     await deactivateAccount(accountId);
     const online = (await activateAccount(accountId, result.sessionString)) === true;
     return res.json({ success: true, status: 'connected', is_online: online });
@@ -898,18 +1047,35 @@ router.post('/:id/start-ai', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
     }
 
-    if (!account.prompt || !String(account.prompt).trim()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Сначала задай промпт аккаунта — без него AI не включаем',
-      });
+    const health = scaleOps.checklistForAccount(account, {
+      online: isActive(account.id),
+    });
+    if (!health.canEnableAi) {
+      const miss = health.missing.filter((m) => m === 'промпт' || m === 'сессия');
+      if (miss.includes('промпт')) {
+        return res.status(400).json({
+          success: false,
+          error: 'Сначала задай промпт аккаунта — без него AI не включаем',
+          health,
+        });
+      }
+      if (miss.includes('сессия')) {
+        return res.status(410).json({
+          success: false,
+          error: 'Нет сессии — подключи аккаунт заново (QR или код)',
+          health,
+        });
+      }
     }
-
-    if (!account.session_string) {
-      return res.status(410).json({
-        success: false,
-        error: 'Нет сессии — подключи аккаунт заново (QR или код)',
-      });
+    // #9: медиа желательно — иначе задача воркеру, но AI можно включить
+    if (health.missing.includes('медиа-чат')) {
+      scaleOps
+        .enqueueTask({
+          accountId: account.id,
+          kind: 'media',
+          title: `Анкета #${account.id}: привяжи медиа-чат`,
+        })
+        .catch(() => {});
     }
 
     await db.execute(

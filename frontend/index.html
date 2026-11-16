@@ -15,59 +15,51 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&display=swap"
       media="print"
       onload="this.media='all'"
     />
     <noscript>
       <link
         rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&display=swap"
       />
     </noscript>
-    <link rel="stylesheet" href="styles.css?v=78" />
-    <!-- 0je: розово-фиолетовый стиль + текст карточек -->
-    <style id="fix-acc-text-0je">
-      .account-card {
-        color: #f8f0f6 !important;
-        -webkit-text-fill-color: #f8f0f6 !important;
-      }
-      .account-card__phone,
-      .account-card__sub,
-      .account-card__meta {
-        color: #f8f0f6 !important;
-        -webkit-text-fill-color: #f8f0f6 !important;
-        opacity: 1 !important;
-        visibility: visible !important;
-      }
-      .account-card__sub,
-      .account-card__meta {
-        color: #c4a8c0 !important;
-        -webkit-text-fill-color: #c4a8c0 !important;
-      }
-      .account-card .badge.success {
-        color: #9be7c4 !important;
-        -webkit-text-fill-color: #9be7c4 !important;
-      }
-      .account-card .badge.warn {
-        color: #f0d29a !important;
-        -webkit-text-fill-color: #f0d29a !important;
-      }
-      .account-card .btn {
-        -webkit-text-fill-color: currentColor !important;
-      }
-      .account-card--select-all {
-        display: flex !important;
-        flex-direction: row !important;
-        align-items: center !important;
-        gap: 10px !important;
-      }
-    </style>
+    <link rel="stylesheet" href="styles.css?v=106" />
   </head>
   <body>
+    <div id="app-splash" class="app-splash" aria-busy="true" aria-live="polite">
+      <div class="app-splash__brand">
+        <span class="app-splash__mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48" width="44" height="44" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="2" y="2" width="44" height="44" rx="14" fill="url(#lrSplashBg)" />
+            <path
+              d="M24 36.2c-.4 0-.8-.1-1.1-.4l-9.2-8.6C10.4 24.1 9 21.4 9 18.5 9 13.9 12.6 10 17.1 10c2.4 0 4.6 1.1 6.1 2.9C24.7 11.1 26.9 10 29.3 10 33.8 10 37.4 13.9 37.4 18.5c0 2.9-1.4 5.6-3.7 7.7l-8.6 8.6c-.3.3-.7.4-1.1.4z"
+              fill="url(#lrSplashHeart)"
+            />
+            <defs>
+              <linearGradient id="lrSplashBg" x1="6" y1="4" x2="42" y2="44" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#1a2418" />
+                <stop offset="1" stop-color="#0d120d" />
+              </linearGradient>
+              <linearGradient id="lrSplashHeart" x1="12" y1="12" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#e8ffe0" />
+                <stop offset="1" stop-color="#b8ff3c" />
+              </linearGradient>
+            </defs>
+          </svg>
+        </span>
+        <span class="app-splash__name"><span class="app-splash__love">Love</span><span class="app-splash__russian">Russian</span></span>
+      </div>
+      <p id="app-splash-status" class="app-splash__status">Загрузка…</p>
+      <div class="app-splash__dots" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+
     <div id="tg-gate" class="tg-gate" hidden>
       <div class="tg-gate__card card">
-        <p class="brand-mark">LoveRussian</p>
+        <p class="brand-mark"><span class="brand-mark__love">Love</span><span class="brand-mark__russian">Russian</span></p>
         <p class="eyebrow">Telegram Mini App</p>
         <h2>Откройте в Telegram</h2>
         <p class="tg-gate__text">Приложение работает внутри Telegram. Открой его через бота, чтобы войти и загрузить данные.</p>
@@ -78,7 +70,7 @@
 
     <div class="workspace">
     <aside class="side-nav" aria-label="Навигация">
-      <p class="side-nav__brand">LoveRussian</p>
+      <p class="side-nav__brand"><span class="brand-mark__love">Love</span><span class="brand-mark__russian">Russian</span></p>
       <p class="side-nav__tag">операторская</p>
       <button class="side-nav__btn active" data-tab="panel" type="button">Панель</button>
       <button class="side-nav__btn" data-tab="leads" type="button">Лиды</button>
@@ -94,8 +86,31 @@
       <header class="topbar">
         <div class="topbar__content">
           <div class="topbar__brand">
-            <p class="brand-mark">LoveRussian</p>
-            <h1 id="page-title">Панель</h1>
+            <p class="brand-mark">
+              <span class="brand-mark__love">Love</span><span class="brand-mark__russian">Russian</span>
+            </p>
+            <div class="topbar__title-row">
+              <h1 id="page-title">Панель</h1>
+              <span class="topbar__logo" aria-hidden="true" title="LoveRussian">
+                <svg viewBox="0 0 48 48" width="28" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="2" y="2" width="44" height="44" rx="14" fill="url(#lrTopLogoBg)" />
+                  <path
+                    d="M24 36.2c-.4 0-.8-.1-1.1-.4l-9.2-8.6C10.4 24.1 9 21.4 9 18.5 9 13.9 12.6 10 17.1 10c2.4 0 4.6 1.1 6.1 2.9C24.7 11.1 26.9 10 29.3 10 33.8 10 37.4 13.9 37.4 18.5c0 2.9-1.4 5.6-3.7 7.7l-8.6 8.6c-.3.3-.7.4-1.1.4z"
+                    fill="url(#lrTopLogoHeart)"
+                  />
+                  <defs>
+                    <linearGradient id="lrTopLogoBg" x1="6" y1="4" x2="42" y2="44" gradientUnits="userSpaceOnUse">
+                      <stop stop-color="#1a2418" />
+                      <stop offset="1" stop-color="#0d120d" />
+                    </linearGradient>
+                    <linearGradient id="lrTopLogoHeart" x1="12" y1="12" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+                      <stop stop-color="#e8ffe0" />
+                      <stop offset="1" stop-color="#b8ff3c" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+              </span>
+            </div>
           </div>
           <div class="topbar__actions">
             <button
@@ -161,6 +176,30 @@
             <button class="btn btn-secondary small" type="button" data-action="open-accounts">Все</button>
           </div>
           <div id="panel-accounts" class="stack panel-rise"></div>
+
+          <div class="section-card card activity-card panel-rise">
+            <header class="activity-card__head">
+              <div class="activity-card__titles">
+                <p class="activity-card__kicker">Лента</p>
+                <h3>События</h3>
+                <p class="activity-card__lead">Фото, голосовые NFT и лиды по вашим аккаунтам</p>
+              </div>
+              <div class="activity-card__tools">
+                <button class="btn btn-secondary small" type="button" data-action="worker-activity-refresh">Обновить</button>
+                <label class="admin-live-chk">
+                  <input type="checkbox" id="worker-activity-live" checked />
+                  <span>live</span>
+                </label>
+              </div>
+            </header>
+            <div class="activity-filters" id="worker-activity-filters" role="group" aria-label="Фильтр событий">
+              <button class="activity-chip is-active" type="button" data-action="worker-akind" data-akind="all">Все</button>
+              <button class="activity-chip" type="button" data-action="worker-akind" data-akind="media">Фото</button>
+              <button class="activity-chip" type="button" data-action="worker-akind" data-akind="nft">NFT</button>
+              <button class="activity-chip" type="button" data-action="worker-akind" data-akind="lead">Лиды</button>
+            </div>
+            <div id="worker-activity-list" class="stack activity-list"></div>
+          </div>
         </section>
 
         <section class="tab-panel" data-panel="accounts">
@@ -204,25 +243,29 @@
             </div>
           </div>
 
-          <div class="section-card card">
-            <h2>Подключить аккаунт</h2>
-            <form id="account-form" class="form-grid">
+          <div class="section-card card connect-card">
+            <header class="connect-card__head">
+              <p class="connect-card__kicker">Вход</p>
+              <h2>Подключить аккаунт</h2>
+              <p class="connect-card__lead">QR без SMS или код из Telegram — на выбор</p>
+            </header>
+            <form id="account-form" class="form-grid connect-form">
               <div class="connect-method" role="group" aria-label="Способ входа">
-                <button type="button" class="btn btn-secondary connect-method__btn is-active" data-connect-method="qr">
+                <button type="button" class="connect-method__btn is-active" data-connect-method="qr">
                   QR-код
                 </button>
-                <button type="button" class="btn btn-secondary connect-method__btn" data-connect-method="code">
+                <button type="button" class="connect-method__btn" data-connect-method="code">
                   Код
                 </button>
               </div>
 
               <div id="connect-qr-panel" class="connect-qr-panel">
-                <p class="form-hint" style="display:block;margin:0">
+                <p class="form-hint connect-hint">
                   Открой Telegram на нужном номере → Настройки → Устройства → Подключить устройство → скан QR. Без SMS.
                 </p>
                 <div id="connect-qr-box" class="connect-qr-box" hidden>
                   <img id="connect-qr-img" alt="QR для входа" width="240" height="240" />
-                  <p id="connect-qr-link" class="form-hint" style="display:block;word-break:break-all;margin:0"></p>
+                  <p id="connect-qr-link" class="connect-qr-link"></p>
                 </div>
               </div>
 
@@ -241,8 +284,11 @@
                 <input id="account-password" type="password" placeholder="Ваш пароль двухфакторной защиты" />
               </label>
 
-              <label id="account-prompt-field" class="prompt-field">
-                <span class="field-label">Промпт персонажа <em class="req-mark">обязательно</em></span>
+              <div id="account-prompt-field" class="prompt-field">
+                <div class="prompt-field__head">
+                  <span class="field-label">Промпт персонажа</span>
+                  <em class="req-mark">обязательно</em>
+                </div>
                 <select id="persona-template" class="field-select" aria-label="Шаблон персонажа">
                   <option value="">Шаблон (необязательно)</option>
                 </select>
@@ -271,7 +317,7 @@
                   placeholder="Кто она, город, возраст, как пишет. Без промпта AI не отвечает."
                 ></textarea>
                 <span class="field-hint">Выбери шаблон, поправь имя и города. Дни 1, 2, 3 прогрева уже в боте, «ДЕНЬ 1/2/3» в промпт не копируй.</span>
-              </label>
+              </div>
 
               <p id="account-form-hint" class="form-hint" hidden></p>
 
@@ -536,6 +582,7 @@
               </div>
             </div>
             <p id="admin-proxy-hint" class="options-hint">Рабочие: чаты ИИ. Резидентские: вход по коду и QR.</p>
+            <div id="admin-proxy-health" class="admin-proxy-health" aria-live="polite"></div>
             <div id="admin-proxy-results" class="stack admin-proxy-results"></div>
           </div>
 
@@ -554,30 +601,34 @@
             <pre class="admin-log-console" id="admin-log-console" aria-live="polite"></pre>
           </div>
 
-          <div id="admin-panel-activity" class="section-card card admin-block" data-admin-panel="activity" hidden>
-            <div class="section-card__header">
-              <h3>Логи событий</h3>
-              <div class="admin-bulk">
+          <div id="admin-panel-activity" class="section-card card admin-block activity-card" data-admin-panel="activity" hidden>
+            <header class="activity-card__head">
+              <div class="activity-card__titles">
+                <p class="activity-card__kicker">Админ</p>
+                <h3>Логи событий</h3>
+                <p class="activity-card__lead">Фото / кружок, ГС NFT, лид готов, согласие помочь</p>
+              </div>
+              <div class="activity-card__tools">
                 <button class="btn btn-secondary small" type="button" data-action="admin-activity-refresh">Обновить</button>
                 <label class="admin-live-chk">
                   <input type="checkbox" id="admin-activity-live" checked />
                   <span>live</span>
                 </label>
               </div>
+            </header>
+            <div class="activity-filters" id="admin-activity-filters" role="group" aria-label="Фильтр событий">
+              <button class="activity-chip is-active" type="button" data-action="admin-akind" data-akind="all">Все</button>
+              <button class="activity-chip" type="button" data-action="admin-akind" data-akind="media">Фото</button>
+              <button class="activity-chip" type="button" data-action="admin-akind" data-akind="nft">NFT</button>
+              <button class="activity-chip" type="button" data-action="admin-akind" data-akind="lead">Лиды</button>
             </div>
-            <p class="options-hint">Как в боте: просьба фото/кружка, ГС NFT, лид готов, согласие помочь.</p>
-            <div class="admin-subnav admin-subnav--tight" id="admin-activity-filters">
-              <button class="btn btn-secondary small chip-btn is-active" type="button" data-action="admin-akind" data-akind="all">Все</button>
-              <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-akind" data-akind="media">Фото / кружок</button>
-              <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-akind" data-akind="nft">NFT / ГС</button>
-              <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-akind" data-akind="lead">Лиды</button>
-            </div>
-            <div id="admin-activity-list" class="stack admin-activity-list"></div>
+            <div id="admin-activity-list" class="stack activity-list"></div>
           </div>
         </section>
       </main>
 
       <nav class="bottom-nav" aria-label="Вкладки">
+        <span class="nav-indicator" aria-hidden="true"></span>
         <button class="nav-btn active" data-tab="panel" type="button"><span class="nav-btn__label">Панель</span></button>
         <button class="nav-btn" data-tab="leads" type="button"><span class="nav-btn__label">Лиды</span></button>
         <button class="nav-btn" data-tab="accounts" type="button"><span class="nav-btn__label">TG</span></button>
@@ -590,7 +641,7 @@
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="updates.js?v=202"></script>
-    <script src="app.js?v=169"></script>
+    <script src="updates.js?v=243"></script>
+    <script src="app.js?v=185"></script>
     </body>
     </html>

@@ -47,10 +47,11 @@ function applyTelegramChrome(webApp) {
       if (tp.hint_color && mutedLuma != null && mutedLuma >= 0.35) {
         root.style.setProperty('--muted', tp.hint_color);
       }
-      if (tp.button_color) {
-        root.style.setProperty('--primary', tp.button_color);
-        root.style.setProperty('--primary-strong', tp.button_color);
-      }
+      // Акцент всегда наш кислотный — button_color Telegram часто голубой.
+      root.style.setProperty('--primary', '#b8ff3c');
+      root.style.setProperty('--primary-strong', '#86e000');
+      root.style.setProperty('--primary-soft', 'rgba(184, 255, 60, 0.14)');
+      root.style.setProperty('--acid', '#b8ff3c');
       if (tp.destructive_text_color) root.style.setProperty('--danger', tp.destructive_text_color);
     }
 
@@ -196,7 +197,7 @@ function ensureAuthBanner() {
   el.id = 'tg-auth-banner';
   el.setAttribute(
     'style',
-    'position:sticky;top:0;z-index:9999;padding:10px 14px;background:#5c1a1a;color:#ffe8e8;font:500 13px/1.35 Figtree,system-ui,sans-serif;text-align:center',
+    'position:sticky;top:0;z-index:9999;padding:10px 14px;background:#5c1a1a;color:#ffe8e8;font:500 13px/1.35 Syne,system-ui,sans-serif;text-align:center',
   );
   el.textContent =
     'Нет Telegram-авторизации — показан тестовый пустой профиль. Закрой Mini App и открой снова из бота (лучше с телефона).';
@@ -295,6 +296,12 @@ const api = {
       body,
     }),
   getAdminProxies: () => request('/admin/console/proxies'),
+  getAdminPersonaPreview: (id) =>
+    request(`/admin/console/accounts/${id}/persona-preview`),
+  adminFlagBadReply: (body) =>
+    request('/admin/console/learn/bad-reply', { method: 'POST', body }),
+  adminExpireNftStale: () =>
+    request('/admin/console/nft/expire-stale', { method: 'POST' }),
   checkAdminProxies: (pool = 'all') =>
     request('/admin/console/proxies/check', {
       method: 'POST',
@@ -314,6 +321,13 @@ const api = {
     if (opts.afterId) params.set('afterId', String(opts.afterId));
     const qs = params.toString();
     return request(`/admin/console/activity${qs ? `?${qs}` : ''}`);
+  },
+  getWorkerActivity: (opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts.limit) params.set('limit', String(opts.limit));
+    if (opts.afterId) params.set('afterId', String(opts.afterId));
+    const qs = params.toString();
+    return request(`/accounts/activity${qs ? `?${qs}` : ''}`);
   },
 
   getAccounts: () => request('/accounts'),
@@ -565,6 +579,12 @@ const state = {
     logsTimer: null,
     activityTimer: null,
     loaded: false,
+  },
+
+  workerActivity: {
+    items: [],
+    kind: 'all',
+    timer: null,
   },
 
   accounts: [],
@@ -934,6 +954,34 @@ function formatAccountSub(account) {
   return '';
 }
 
+function syncNavIndicator() {
+  const nav = document.querySelector('.bottom-nav');
+  if (!nav) return;
+  const indicator = nav.querySelector('.nav-indicator');
+  const active = Array.from(nav.querySelectorAll('.nav-btn')).find(
+    (btn) => btn.classList.contains('active') && !btn.hidden,
+  );
+  if (!indicator || !active) {
+    if (indicator) indicator.classList.add('is-hidden');
+    return;
+  }
+  const nr = nav.getBoundingClientRect();
+  const ar = active.getBoundingClientRect();
+  nav.style.setProperty('--nav-x', `${Math.max(0, ar.left - nr.left)}px`);
+  nav.style.setProperty('--nav-w', `${ar.width}px`);
+  nav.style.setProperty('--nav-h', `${ar.height}px`);
+  nav.style.setProperty('--nav-top', `${Math.max(0, ar.top - nr.top)}px`);
+  indicator.classList.remove('is-hidden');
+}
+
+function bumpPageTitle(label) {
+  if (!elements.pageTitle) return;
+  elements.pageTitle.textContent = label;
+  elements.pageTitle.classList.remove('is-swap');
+  void elements.pageTitle.offsetWidth;
+  elements.pageTitle.classList.add('is-swap');
+}
+
 function setActiveTab(tabName) {
   state.activeTab = tabName;
   localStorage.setItem('currentTab', tabName);
@@ -954,22 +1002,31 @@ function setActiveTab(tabName) {
     state.activeTab = 'panel';
   }
 
-  if (elements.pageTitle) {
-    elements.pageTitle.textContent = titles[tabName] || 'Панель';
-  }
+  bumpPageTitle(titles[tabName] || 'Панель');
 
   elements.tabs.forEach((button) => {
     button.classList.toggle('active', button.dataset.tab === tabName);
   });
 
   elements.panels.forEach((panel) => {
-    panel.classList.toggle('active', panel.dataset.panel === tabName);
+    const on = panel.dataset.panel === tabName;
+    panel.classList.toggle('active', on);
+    if (on) {
+      panel.classList.remove('is-anim');
+      void panel.offsetWidth;
+      panel.classList.add('is-anim');
+    } else {
+      panel.classList.remove('is-anim');
+    }
   });
 
   // Контент скроллится отдельно от shell — при смене вкладки всегда сверху.
   if (elements.content) {
     elements.content.scrollTop = 0;
   }
+
+  syncNavIndicator();
+  window.requestAnimationFrame(syncNavIndicator);
 
   if (tabName === 'admin' && state.dashboard.isAdmin) {
     loadAdminData().catch((err) => handleRequestError(err));
@@ -1150,8 +1207,10 @@ async function loadAllData() {
     loadConversations(),
     loadStats(),
     loadWorkerTasks(),
+    loadWorkerActivity(),
   ]);
 
+  syncWorkerActivityLive();
   render();
 
   const errors = results
@@ -1206,20 +1265,20 @@ function renderPanel() {
 
   elements.panelSummary.innerHTML = `
     <div class="stat-card stat-card--accent">
-      <strong>${accountsUsed}/${accountsLimit}</strong>
-      <span>Аккаунты</span>
+      <strong class="stat-card__value">${accountsUsed}/${accountsLimit}</strong>
+      <span class="stat-card__label">Аккаунты</span>
     </div>
     <div class="stat-card">
-      <strong>${online}<span class="stat-card__split">/</span>${aiOn}</strong>
-      <span>Онлайн / AI</span>
+      <strong class="stat-card__value">${online}/${aiOn}</strong>
+      <span class="stat-card__label">Онлайн / AI</span>
     </div>
     <div class="stat-card">
-      <strong>${messages}</strong>
-      <span>Сообщения</span>
+      <strong class="stat-card__value">${messages}</strong>
+      <span class="stat-card__label">Сообщения</span>
     </div>
     <div class="stat-card ${hotLeads ? 'stat-card--hot' : ''}">
-      <strong>${hotLeads || '—'}</strong>
-      <span>Горячие лиды</span>
+      <strong class="stat-card__value">${hotLeads || '—'}</strong>
+      <span class="stat-card__label">Горячие лиды</span>
     </div>
   `;
 
@@ -1252,27 +1311,27 @@ function renderPanel() {
         <div class="account-item">
           <div class="account-item__head">
             <strong>
-                    <span class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"></span>
-                    ${escapeHtml(formatAccountTitle(account))}
+              <span class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"></span>
+              <span class="account-item__title">${escapeHtml(formatAccountTitle(account))}</span>
             </strong>
-                  ${
-                    formatAccountSub(account)
-                      ? `<span class="account-item__sub">${escapeHtml(formatAccountSub(account))}</span>`
-                      : ''
-                  }
             <span class="badge ${aiEnabled ? 'success' : 'warn'}">
               ${escapeHtml(account.status || (aiEnabled ? 'AI включен' : 'Остановлен'))}
-                </span>
-              </div>
-                <div class="action-row" style="margin-top:8px;">
-                  <button class="btn btn-secondary" data-action="details" data-id="${account.id}" type="button">Карточка</button>
-                ${
-                  aiEnabled
-                      ? `<button class="btn btn-secondary" data-action="stop" data-id="${account.id}" type="button">Стоп</button>`
-                      : `<button class="btn btn-primary" data-action="ai" data-id="${account.id}" type="button">AI</button>`
-                  }
-                </div>
-              </div>
+            </span>
+            ${
+              formatAccountSub(account)
+                ? `<span class="account-item__sub">${escapeHtml(formatAccountSub(account))}</span>`
+                : ''
+            }
+          </div>
+          <div class="action-row">
+            <button class="btn btn-secondary" data-action="details" data-id="${account.id}" type="button">Карточка</button>
+            ${
+              aiEnabled
+                ? `<button class="btn btn-secondary" data-action="stop" data-id="${account.id}" type="button">Стоп</button>`
+                : `<button class="btn btn-primary" data-action="ai" data-id="${account.id}" type="button">AI</button>`
+            }
+          </div>
+        </div>
             `;
           })
           .join('')}
@@ -1401,10 +1460,6 @@ function renderAccounts() {
     const allSelected =
       state.accounts.length > 0 &&
       state.accounts.every((a) => isAccountSelected(a.id));
-    const textStyle =
-      'color:#f8f0f6!important;-webkit-text-fill-color:#f8f0f6!important;opacity:1!important;visibility:visible!important;font-size:16px!important;line-height:1.35!important';
-    const mutedStyle =
-      'color:#c4a8c0!important;-webkit-text-fill-color:#c4a8c0!important;opacity:1!important;visibility:visible!important;font-size:13px!important;line-height:1.35!important';
     elements.accountsList.innerHTML = `
       <div class="accounts-cards">
         <div class="account-card account-card--select-all" role="group" aria-label="Выбрать все">
@@ -1415,7 +1470,7 @@ function renderAccounts() {
             ${allSelected ? 'checked' : ''}
             aria-label="Выбрать все"
           />
-          <span class="account-card__phone" style="${textStyle}">Выбрать все</span>
+          <span class="account-card__phone">Выбрать все</span>
         </div>
         ${state.accounts
         .map((account) => {
@@ -1442,22 +1497,22 @@ function renderAccounts() {
                     aria-label="Выбрать ${title}"
                   />
                   <div class="account-card__main">
-                    <div class="account-card__phone" style="${textStyle}">
+                    <div class="account-card__phone">
                       <span class="online-dot ${isOnline ? 'is-online' : 'is-offline'}"></span>
                       ${title}
                     </div>
                     ${
                       sub
-                        ? `<div class="account-card__sub" style="${mutedStyle}">${escapeHtml(sub)}</div>`
+                        ? `<div class="account-card__sub">${escapeHtml(sub)}</div>`
                         : ''
                     }
-                    <div class="account-card__meta" style="${mutedStyle}">
-                <span class="badge ${aiEnabled ? 'success' : 'warn'}">
+                    <div class="account-card__meta">
+                      <span class="badge ${aiEnabled ? 'success' : 'warn'}">
                         AI ${aiEnabled ? 'вкл' : 'выкл'}
-                </span>
-                      <span style="${mutedStyle}">${isOnline ? 'онлайн' : 'офлайн'}</span>
-                      <span style="${mutedStyle}" title="Сообщений с 00:00 МСК">сегодня · <strong style="color:#f0abfc!important;-webkit-text-fill-color:#f0abfc!important">${sentToday}</strong></span>
-                      <span style="${mutedStyle}">медиа · ${account.media_chat_link ? 'есть' : 'нет'}</span>
+                      </span>
+                      <span>${isOnline ? 'онлайн' : 'офлайн'}</span>
+                      <span title="Сообщений с 00:00 МСК">сегодня · <strong>${sentToday}</strong></span>
+                      <span>медиа · ${account.media_chat_link ? 'есть' : 'нет'}</span>
                       ${
                         account.health_missing && account.health_missing.length
                           ? `<span class="badge warn" title="Не хватает для спокойной работы">нужно: ${escapeHtml(
@@ -1465,7 +1520,7 @@ function renderAccounts() {
                             )}</span>`
                           : `<span class="badge success">готово</span>`
                       }
-              </div>
+                    </div>
                   </div>
                 </div>
                 <div class="account-card__actions">
@@ -2064,6 +2119,7 @@ function syncAdminVisibility() {
     state.activeTab = 'panel';
     localStorage.setItem('currentTab', 'panel');
   }
+  window.requestAnimationFrame(syncNavIndicator);
 }
 
 const ADMIN_SUBS = new Set(['accounts', 'blacklist', 'add', 'proxies', 'logs', 'activity']);
@@ -2085,7 +2141,13 @@ function syncAdminSubUi(sub) {
     btn.classList.toggle('is-active', btn.dataset.sub === next);
   });
   document.querySelectorAll('[data-admin-panel]').forEach((panel) => {
-    panel.hidden = panel.dataset.adminPanel !== next;
+    const on = panel.dataset.adminPanel === next;
+    panel.hidden = !on;
+    panel.classList.remove('is-anim');
+    if (on) {
+      void panel.offsetWidth;
+      panel.classList.add('is-anim');
+    }
   });
   return next;
 }
@@ -2165,12 +2227,34 @@ async function loadAdminProxies() {
   renderAdminProxies(null);
 }
 
+function renderAdminProxyHealthStrip(proxies) {
+  const strip = document.getElementById('admin-proxy-health');
+  if (!strip) return;
+  const s = proxies?.summary || {};
+  const workAlive = Number(s.work_alive ?? proxies?.work?.filter((p) => !p.dead).length ?? 0);
+  const workTotal = Number(s.work ?? proxies?.work?.length ?? 0);
+  const loginAlive = Number(s.login_alive ?? proxies?.login?.filter((p) => !p.dead).length ?? 0);
+  const loginTotal = Number(s.login ?? proxies?.login?.length ?? 0);
+  const openaiOk = Boolean(s.openai_ready);
+  const openaiLen = Number(s.openai_proxy_len || 0);
+  const ok = Boolean(s.ok);
+  strip.className = `admin-proxy-health ${ok ? 'is-ok' : 'is-bad'}`;
+  strip.innerHTML = `
+    <div class="admin-proxy-health__item"><span>TG живые</span><strong>${workAlive}/${workTotal}</strong></div>
+    <div class="admin-proxy-health__item"><span>Вход</span><strong>${loginAlive}/${loginTotal}</strong></div>
+    <div class="admin-proxy-health__item"><span>ИИ</span><strong>${openaiOk ? 'ок' : 'нет'}${openaiLen ? ` · ${openaiLen}` : ''}</strong></div>
+  `;
+}
+
 function renderAdminProxies(checkMap) {
   const root = document.getElementById('admin-proxy-results');
   const hint = document.getElementById('admin-proxy-hint');
   const proxies = state.admin.proxies || { work: [], login: [] };
+  renderAdminProxyHealthStrip(proxies);
   if (hint && !checkMap) {
-    hint.textContent = `Рабочие ${proxies.work?.length || 0} · Резидентские ${proxies.login?.length || 0}`;
+    const s = proxies.summary || {};
+    const wa = s.work_alive != null ? s.work_alive : proxies.work?.filter((p) => !p.dead).length;
+    hint.textContent = `Рабочие ${wa ?? 0}/${proxies.work?.length || 0} живые · Резидентские ${proxies.login?.length || 0}`;
   }
   if (!root) return;
   const sections = [
@@ -2189,7 +2273,8 @@ function renderAdminProxies(checkMap) {
   ];
   root.innerHTML = sections
     .map((sec) => {
-      const head = `<h3 class="admin-proxy-title">${escapeHtml(sec.title)} · ${sec.list.length}</h3><p class="options-hint">${escapeHtml(sec.desc)}</p>`;
+      const alive = sec.list.filter((p) => !p.dead).length;
+      const head = `<h3 class="admin-proxy-title">${escapeHtml(sec.title)} · ${alive}/${sec.list.length}</h3><p class="options-hint">${escapeHtml(sec.desc)}</p>`;
       if (!sec.list.length) {
         return `<div class="admin-proxy-block">${head}<p class="empty">пусто</p></div>`;
       }
@@ -2202,11 +2287,15 @@ function renderAdminProxies(checkMap) {
             if (chk.skipped) badge = '<span class="badge badge-soft">skip</span>';
             else if (chk.ok) badge = `<span class="badge success">ok ${chk.ms}ms</span>`;
             else badge = '<span class="badge warn">fail</span>';
+          } else if (p.dead) {
+            badge = '<span class="badge warn">мертвый</span>';
+          } else {
+            badge = '<span class="badge success">живой</span>';
           }
           const err = chk?.error
             ? `<div class="admin-acc__sub">${escapeHtml(chk.error)}</div>`
             : '';
-          return `<div class="admin-proxy-row"><strong>${escapeHtml(p.label)}</strong> ${badge}${err}</div>`;
+          return `<div class="admin-proxy-row${p.dead ? ' is-dead' : ''}"><strong>${escapeHtml(p.label)}</strong> ${badge}${err}</div>`;
         })
         .join('');
       return `<div class="admin-proxy-block">${head}${rows}</div>`;
@@ -2256,10 +2345,144 @@ function activityMatchesGroup(kind, group) {
 }
 
 function activityKindLabel(kind) {
-  if (kind === 'media_miss' || kind === 'media_sent') return 'Фото / кружок';
-  if (kind === 'nft_voice') return 'NFT / ГС';
+  if (kind === 'media_miss' || kind === 'media_sent') return 'Фото';
+  if (kind === 'nft_voice') return 'NFT';
   if (kind === 'lead_ready' || kind === 'help_agreed') return 'Лид';
   return kind || 'событие';
+}
+
+function activityKindClass(kind) {
+  const k = String(kind || '');
+  if (k.includes('media')) return 'is-media';
+  if (k.includes('nft')) return 'is-nft';
+  if (k.includes('lead') || k.includes('help')) return 'is-lead';
+  return 'is-other';
+}
+
+function isSmokeActivityItem(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (item.meta && item.meta.smoke === true) return true;
+  const title = String(item.title || '').trim().toLowerCase();
+  if (/^smoke(\s|-|_)/.test(title) || title === 'smoke') return true;
+  const label = String(item.accountLabel || '').trim().toLowerCase();
+  if (/^smoke([-_]|$)/.test(label)) return true;
+  const aid = Number(item.accountId);
+  return Number.isFinite(aid) && aid >= 900000 && aid < 1000000;
+}
+
+function activityDisplayTitle(item) {
+  const raw = String(item?.title || '').trim();
+  if (!raw || isSmokeActivityItem(item)) {
+    return activityKindLabel(item?.kind) === 'событие'
+      ? 'Событие'
+      : activityKindLabel(item?.kind);
+  }
+  return raw;
+}
+
+function formatActivityTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function parseActivityBody(body) {
+  const lines = String(body || '')
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const meta = [];
+  const rest = [];
+  for (const line of lines) {
+    const m = line.match(
+      /^(Аккаунт|Собеседник|Файл|Тип|Голосовое|Ответ(?:\s+собеседника)?)\s*:\s*(.+)$/i,
+    );
+    if (m) meta.push({ k: m[1], v: m[2] });
+    else rest.push(line);
+  }
+  return { meta, rest };
+}
+
+function buildActivityMeta(item) {
+  const parsed = parseActivityBody(item.body);
+  if (parsed.meta.length) return parsed;
+  const meta = [];
+  if (item.accountLabel) meta.push({ k: 'Аккаунт', v: String(item.accountLabel) });
+  if (item.peerLabel || item.peerId) {
+    meta.push({
+      k: 'Собеседник',
+      v: String(item.peerLabel || item.peerId),
+    });
+  }
+  return { meta, rest: parsed.rest };
+}
+
+function isWideActivityMetaKey(key) {
+  const k = String(key || '').toLowerCase();
+  return k.includes('ответ') || k.includes('файл') || k.includes('голос');
+}
+
+function renderActivityFeed(listEl, items, kind, filterAction) {
+  if (!listEl) return;
+  document.querySelectorAll(`[data-action="${filterAction}"]`).forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.akind === kind);
+  });
+  const rows = (items || []).filter(
+    (item) => !isSmokeActivityItem(item) && activityMatchesGroup(item.kind, kind),
+  );
+  if (!rows.length) {
+    listEl.innerHTML = '<p class="empty">Пока тихо</p>';
+    return;
+  }
+  listEl.innerHTML = rows
+    .map((item) => {
+      const kindClass = activityKindClass(item.kind);
+      const parsed = buildActivityMeta(item);
+      const metaHtml = parsed.meta.length
+        ? `<dl class="activity-meta">${parsed.meta
+            .map(
+              (row) =>
+                `<div class="activity-meta__row${
+                  isWideActivityMetaKey(row.k) ? ' is-wide' : ''
+                }"><dt>${escapeHtml(row.k)}</dt><dd>${escapeHtml(row.v)}</dd></div>`,
+            )
+            .join('')}</dl>`
+        : '';
+      const restHtml = parsed.rest.length
+        ? `<p class="activity-item__body">${escapeHtml(parsed.rest.join('\n'))}</p>`
+        : !parsed.meta.length && item.body
+          ? `<p class="activity-item__body">${escapeHtml(item.body)}</p>`
+          : '';
+      const time = formatActivityTime(item.createdAt);
+      const replyText =
+        parsed.meta.find((m) => /ответ/i.test(String(m.k || '')))?.v ||
+        (parsed.rest.length ? parsed.rest.join(' ') : '') ||
+        String(item.body || '').slice(0, 280);
+      const badBtn =
+        filterAction === 'admin-akind' && replyText
+          ? `<button class="btn btn-secondary small activity-item__bad" type="button" data-action="admin-bad-reply" data-reply="${escapeHtml(replyText.slice(0, 400))}">Плохой ответ</button>`
+          : '';
+      return `
+      <article class="activity-item ${kindClass}">
+        <header class="activity-item__head">
+          <div class="activity-item__topline">
+            <span class="activity-kind">${escapeHtml(activityKindLabel(item.kind))}</span>
+            ${time ? `<time class="activity-item__time">${escapeHtml(time)}</time>` : ''}
+          </div>
+          <strong class="activity-item__title">${escapeHtml(activityDisplayTitle(item))}</strong>
+        </header>
+        ${metaHtml}
+        ${restHtml}
+        ${badBtn}
+      </article>`;
+    })
+    .join('');
 }
 
 async function loadAdminActivity() {
@@ -2269,28 +2492,60 @@ async function loadAdminActivity() {
 }
 
 function renderAdminActivity() {
-  const act = document.getElementById('admin-activity-list');
-  if (!act) return;
-  document.querySelectorAll('[data-action="admin-akind"]').forEach((btn) => {
-    btn.classList.toggle('is-active', btn.dataset.akind === state.admin.activityKind);
-  });
-  const rows = (state.admin.activity || []).filter((item) =>
-    activityMatchesGroup(item.kind, state.admin.activityKind),
+  renderActivityFeed(
+    document.getElementById('admin-activity-list'),
+    state.admin.activity,
+    state.admin.activityKind,
+    'admin-akind',
   );
-  if (!rows.length) {
-    act.innerHTML = '<p class="empty">Пока тихо</p>';
-    return;
+}
+
+async function loadWorkerActivity() {
+  try {
+    const data = await api.getWorkerActivity({ limit: 60 });
+    state.workerActivity.items = data.events || data.items || [];
+  } catch (_) {
+    state.workerActivity.items = [];
   }
-  act.innerHTML = rows
-    .map(
-      (item) => `
-      <div class="admin-activity-item">
-        <span class="admin-activity-kind">${escapeHtml(activityKindLabel(item.kind))}</span>
-        <strong>${escapeHtml(item.title || item.kind || 'событие')}</strong>
-        <p>${escapeHtml(item.body || '')}</p>
-      </div>`,
-    )
-    .join('');
+  renderWorkerActivity();
+}
+
+function renderWorkerActivity() {
+  renderActivityFeed(
+    document.getElementById('worker-activity-list'),
+    state.workerActivity.items,
+    state.workerActivity.kind,
+    'worker-akind',
+  );
+}
+
+function stopWorkerActivityLive() {
+  if (state.workerActivity.timer) {
+    clearInterval(state.workerActivity.timer);
+    state.workerActivity.timer = null;
+  }
+}
+
+function syncWorkerActivityLive() {
+  stopWorkerActivityLive();
+  const live = document.getElementById('worker-activity-live');
+  if (!live?.checked) return;
+  state.workerActivity.timer = setInterval(() => {
+    loadWorkerActivity().catch(() => {});
+  }, 12000);
+}
+
+function adminAccInitials(name) {
+  const parts = String(name || '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase() || '??';
+  }
+  const one = parts[0] || '?';
+  return one.slice(0, 2).toUpperCase();
 }
 
 function findAdminAccount(accountId) {
@@ -2414,6 +2669,12 @@ function renderAdmin() {
   const summary = document.getElementById('admin-summary');
   if (summary) {
     const day = snap.messages?.day || {};
+    const radar = snap.radar || {};
+    const board = snap.funnelBoard || {};
+    const cost = snap.cost?.today || {};
+    const ph = snap.proxyHealth || {};
+    const costLabel =
+      cost.cost_usd != null ? `$${Number(cost.cost_usd).toFixed(2)}` : '—';
     summary.innerHTML = `
       <div class="stat-card"><strong>${Number(acc.total || 0)}</strong><span>Аккаунтов</span></div>
       <div class="stat-card"><strong>${Number(acc.online || 0)}</strong><span>Онлайн</span></div>
@@ -2421,6 +2682,19 @@ function renderAdmin() {
       <div class="stat-card"><strong>${Number(snap.hotLeads || 0)}</strong><span>Горячие</span></div>
       <div class="stat-card"><strong>${Number(day.sent || 0)}</strong><span>Ответов сегодня</span></div>
       <div class="stat-card"><strong>${Number(day.incoming || 0)}</strong><span>Входящих сегодня</span></div>
+      <div class="stat-card"><strong>${Number(radar.repliesPerHour || 0)}</strong><span>Ответов/час</span></div>
+      <div class="stat-card"><strong>${Number(radar.staleAi || 0)}</strong><span>AI замолчал</span></div>
+      <div class="stat-card"><strong>${Number(board.stuckWorkNoVoice || 0)}</strong><span>Stuck без ГС</span></div>
+      <div class="stat-card"><strong>${Number(board.staleDialog || 0)}</strong><span>NFT закрыто (тишина)</span></div>
+      <div class="stat-card"><strong>${Number(board.openWork || board.workPending || 0)}</strong><span>Ждут «по работе»</span></div>
+      <div class="stat-card"><strong>${Number(board.liveDialog90 || 0)}</strong><span>Живые под ГС</span></div>
+      <div class="stat-card"><strong>${Number(board.voice7d || 0)}</strong><span>ГС за 7д</span></div>
+      <div class="stat-card"><strong>${Number(ph.work_alive ?? ph.proxy_len ?? '—')}</strong><span>Прокси живые</span></div>
+      <div class="stat-card"><strong>${escapeHtml(costLabel)}</strong><span>Токены сегодня</span></div>
+      <div class="stat-card stat-card--accent nft-funnel-actions">
+        <button class="btn btn-secondary small" type="button" data-action="admin-nft-expire">Закрыть мёртвые NFT</button>
+        <span>Stuck → тишина</span>
+      </div>
     `;
   }
 
@@ -2432,39 +2706,53 @@ function renderAdmin() {
     } else {
       list.innerHTML = rows
         .map((a) => {
-          const title = escapeHtml(a.name || a.phone || `#${a.id}`);
+          const rawName = a.name || a.phone || `#${a.id}`;
+          const title = escapeHtml(rawName);
+          const initials = escapeHtml(adminAccInitials(rawName));
           const phone = a.phone ? escapeHtml(a.phone) : '';
           const owner = escapeHtml(a.owner || a.ownerTg || '—');
           const hasPrompt = Boolean(String(a.prompt || '').trim());
           const hasMedia = Boolean(String(a.mediaChatLink || a.media_chat_link || '').trim());
           return `
-            <article class="admin-acc" data-admin-acc="${escapeHtml(a.id)}">
+            <article class="admin-acc ${a.ai ? 'admin-acc--ai-on' : 'admin-acc--ai-off'}" data-admin-acc="${escapeHtml(a.id)}">
               <div class="admin-acc__top">
-                <div>
+                <div class="admin-acc__avatar ${a.online ? 'is-online' : 'is-offline'}" aria-hidden="true">${initials}</div>
+                <div class="admin-acc__identity">
                   <div class="admin-acc__title">
-                    <span class="online-dot ${a.online ? 'is-online' : 'is-offline'}"></span>
-                    ${title}
+                    <span class="admin-acc__name" title="${title}">${title}</span>
                   </div>
-                  <div class="admin-acc__sub">${phone ? `${phone} · ` : ''}владелец ${owner}</div>
+                  <div class="admin-acc__sub">${phone ? `<span class="admin-acc__phone">${phone}</span>` : ''}${
+                    phone ? ' · ' : ''
+                  }владелец ${owner}</div>
                 </div>
-                <span class="badge ${a.ai ? 'success' : 'warn'}">AI ${a.ai ? 'вкл' : 'выкл'}</span>
+                <span class="admin-acc__badge ${a.ai ? 'is-on' : 'is-off'}">${a.ai ? 'AI вкл' : 'AI выкл'}</span>
               </div>
-              <div class="admin-acc__meta">
-                <span>${a.online ? 'онлайн' : 'офлайн'}</span>
-                <span>сегодня · <strong>${Number(a.sentToday || 0)}</strong></span>
-                <span>неделя · ${Number(a.sentWeek || 0)}</span>
+              <div class="admin-acc__stats">
+                <div class="admin-acc__stat">
+                  <span class="admin-acc__stat-label">статус</span>
+                  <strong>${a.online ? 'онлайн' : 'офлайн'}</strong>
+                </div>
+                <div class="admin-acc__stat">
+                  <span class="admin-acc__stat-label">сегодня</span>
+                  <strong>${Number(a.sentToday || 0)}</strong>
+                </div>
+                <div class="admin-acc__stat">
+                  <span class="admin-acc__stat-label">неделя</span>
+                  <strong>${Number(a.sentWeek || 0)}</strong>
+                </div>
               </div>
               <div class="admin-acc__flags">
-                <span class="admin-flag ${hasPrompt ? 'is-ok' : 'is-bad'}">Промпт ${hasPrompt ? 'есть' : 'нет'}</span>
-                <span class="admin-flag ${hasMedia ? 'is-ok' : 'is-bad'}">Медиа ${hasMedia ? 'есть' : 'нет'}</span>
+                <span class="admin-flag ${hasPrompt ? 'is-ok' : 'is-bad'}">${hasPrompt ? 'промпт' : 'нет промпта'}</span>
+                <span class="admin-flag ${hasMedia ? 'is-ok' : 'is-bad'}">${hasMedia ? 'медиа' : 'нет медиа'}</span>
               </div>
-              <div class="admin-acc__actions admin-acc__actions--4">
+              <div class="admin-acc__actions">
                 ${
                   a.ai
                     ? `<button class="btn btn-secondary small" type="button" data-action="admin-ai-off" data-id="${escapeHtml(a.id)}">Стоп</button>`
                     : `<button class="btn btn-primary small" type="button" data-action="admin-ai-on" data-id="${escapeHtml(a.id)}">AI</button>`
                 }
                 <button class="btn btn-secondary small" type="button" data-action="admin-ping" data-id="${escapeHtml(a.id)}">Пинг</button>
+                <button class="btn btn-secondary small" type="button" data-action="admin-persona-preview" data-id="${escapeHtml(a.id)}">Превью</button>
                 <button class="btn btn-secondary small" type="button" data-action="admin-acc-info" data-id="${escapeHtml(a.id)}">Инфо</button>
                 <button class="btn btn-danger small" type="button" data-action="admin-del" data-id="${escapeHtml(a.id)}">Удал.</button>
               </div>
@@ -3918,6 +4206,19 @@ function bindEvents() {
       return;
     }
 
+    if (action === 'worker-activity-refresh') {
+      loadWorkerActivity()
+        .then(() => notify('События обновлены'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'worker-akind') {
+      state.workerActivity.kind = target.dataset.akind || 'all';
+      renderWorkerActivity();
+      return;
+    }
+
     if (action === 'admin-ai-on') {
       api
         .adminStartAi(id)
@@ -3940,6 +4241,44 @@ function bindEvents() {
       api
         .adminPing(id)
         .then((r) => notify(r.ok || r.online ? 'Связь ок' : r.error || 'Пинг без ответа'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-persona-preview') {
+      api
+        .getAdminPersonaPreview(id)
+        .then((r) => {
+          const p = r.preview || {};
+          const lines = (p.samples || []).join('\n· ');
+          notify(
+            `${p.name || 'Анкета'}${p.city ? ` · ${p.city}` : ''}\n· ${lines || 'нет образца'}`,
+          );
+        })
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-bad-reply') {
+      const reply = String(event.target?.dataset?.reply || '').trim();
+      if (!reply) return;
+      api
+        .adminFlagBadReply({ reply, trigger: 'admin:activity' })
+        .then(() => notify('Запомнили как плохой ответ'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-nft-expire') {
+      if (!confirm('Закрыть мёртвые слоты после «по работе» (тишина / просрок)?')) return;
+      api
+        .adminExpireNftStale()
+        .then((r) => {
+          notify(
+            `Закрыто ${Number(r.expired || 0)} · stuck ${Number(r.stuckWorkNoVoice || 0)} · ждут ${Number(r.openWork || 0)}`,
+          );
+          return loadAdminData({ force: true });
+        })
         .catch((err) => handleRequestError(err));
       return;
     }
@@ -4264,6 +4603,11 @@ function bindEvents() {
       return;
     }
 
+    if (event.target?.id === 'worker-activity-live') {
+      syncWorkerActivityLive();
+      return;
+    }
+
     const selectAll = event.target.closest('[data-action="select-all-accounts"]');
     if (selectAll) {
       const on = !!selectAll.checked;
@@ -4562,22 +4906,58 @@ function waitForTelegramInitData(maxMs = 3000) {
   });
 }
 
+let splashWatchdog = null;
+
+function clearSplashWatchdog() {
+  if (splashWatchdog) {
+    clearTimeout(splashWatchdog);
+    splashWatchdog = null;
+  }
+}
+
+function hideAppSplash() {
+  const splash = document.getElementById('app-splash');
+  if (!splash) return;
+  clearSplashWatchdog();
+  splash.classList.add('is-done');
+  splash.setAttribute('aria-busy', 'false');
+  const shell = document.querySelector('.app-shell');
+  if (shell) {
+    shell.classList.add('is-ready');
+  }
+  if (state.activeTab) {
+    setActiveTab(state.activeTab);
+  } else {
+    syncNavIndicator();
+  }
+  window.setTimeout(() => {
+    splash.hidden = true;
+    splash.classList.remove('is-done');
+  }, 480);
+}
+
 function setBootStatus(text) {
-  let el = document.getElementById('tg-boot-status');
+  const splash = document.getElementById('app-splash');
+  const legacy = document.getElementById('tg-boot-status');
+  if (legacy) legacy.remove();
+
+  if (!splash) return;
+
   if (!text) {
-    if (el) el.remove();
+    hideAppSplash();
     return;
   }
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'tg-boot-status';
-    el.setAttribute(
-      'style',
-      'position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;padding:24px;background:#0b0d10;color:#f2f0ea;font:500 14px/1.4 Figtree,system-ui,sans-serif;text-align:center',
-    );
-    document.body.appendChild(el);
-  }
-  el.textContent = text;
+
+  splash.hidden = false;
+  splash.classList.remove('is-done');
+  splash.setAttribute('aria-busy', 'true');
+  const status = document.getElementById('app-splash-status');
+  if (status) status.textContent = text;
+  clearSplashWatchdog();
+  // Анти-hang: splash не может висеть вечно даже если loadAllData завис.
+  splashWatchdog = window.setTimeout(() => {
+    hideAppSplash();
+  }, 12000);
 }
 
 async function initializeApp() {
@@ -4615,12 +4995,19 @@ async function initializeApp() {
     console.error('initializeApp failed:', err);
     setBootStatus('Не удалось загрузить кабинет. Закрой Mini App и открой снова из бота.');
   } finally {
-    // Убираем «Загрузка…» если startApp уже отрисовал UI.
-    if (document.querySelector('.app-shell')?.style.display !== 'none') {
-      const gate = document.getElementById('tg-gate');
-      if (!gate || gate.hidden) setBootStatus('');
-    }
+    const gate = document.getElementById('tg-gate');
+    const shell = document.querySelector('.app-shell');
+    const gateVisible = gate && !gate.hidden;
+    const shellHidden = shell && shell.style.display === 'none';
+    if (!gateVisible && !shellHidden) hideAppSplash();
   }
 }
+
+window.addEventListener('resize', () => {
+  window.requestAnimationFrame(syncNavIndicator);
+});
+window.addEventListener('orientationchange', () => {
+  window.setTimeout(syncNavIndicator, 120);
+});
 
 initializeApp();

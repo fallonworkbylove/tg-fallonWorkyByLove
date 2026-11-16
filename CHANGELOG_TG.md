@@ -1,8 +1,172 @@
-# Changelog для тгк — 24–26 октября 2026
+сможе Changelog для тгк — 24–26 октября 2026
 
 Готовые посты, можно копировать по одному. Нумерация подряд: … → 0df → 0dg → …
 
 ---
+
+## 0lm. 16 ноя — A2/? · empty quotes · vague filler · login rate · guard changelog · audit fast
+
+`softHumanGates`: thread-aware `?`, `fixEmptyQuotedTitles`, `fixVagueFillerReply`. `loginRate` + http connect 12/min. `_deploy_guard` dual changelog sync. Audit C `HARD_AUDIT_FAST` hard_0ht 120s. Smoke `_smoke_wave_0lm.js`. Лента: (updates.js?v=243).
+
+## 0lk. 16 ноя — радар из БД (ответов/час + AI замолчал)
+
+`opsLiveMetrics`: `repliesPerHour` = COUNT assistant за 1ч; `staleAiAccounts` = AI-on с входящим ≤2ч и без ответа ≥30м. Не обнуляется после pm2. Smoke `_smoke_metrics_db_0lk.js`. Лента: (updates.js?v=242).
+
+## 0lj. 16 ноя — A1 bot-accusation · NFT board · gates split · audit C harden
+
+`softHumanGates`: postfilter «бот поплыл / ты бот» без «не бот» и имени. NFT funnel board: stuck / staleDialog / openWork / liveDialog90 + `POST /admin/console/nft/expire-stale`. C1 `_check_getuserid_fallback.js`. Audit C: hard_0ht 300s, nightly 180s, cron `_cron_audit_c.sh`. Smoke `_smoke_wave_0lj.js`. Лента: (updates.js?v=241).
+
+## 0li. 16 ноя — привет с дефисом / /start / голое «?»
+
+`isBareGreeting`: нормализация дефисов+emoji («При-вет🖖🏻»). Postfilter: slash-команды и голое «?» не уходят в день/сборы. Smoke `_smoke_greet_hyphen_0li.js`. Лента: (updates.js?v=240).
+
+## 0lh. 16 ноя — NFT live dialog 90м
+
+`NFT_LIVE_DIALOG_MIN` 30→90 (env override). «По работе» при входящем ≤90м. Smoke `_smoke_nft_live90_0lh.js`. Лента: (updates.js?v=239).
+
+## 0lg. 16 ноя — NFT stale after «по работе»
+
+Мёртвые stuck (idle>72ч / overdue≥48ч после work): `voice_skip_reason=stale_dialog` + снятие `nft_pending`. После work больше не режем ГС cold-tier. Heal one-shot + tick. Smoke `_smoke_nft_stale_0lg.js`. Лента: (updates.js?v=238).
+
+## 0lf. 16 ноя — proxy health + админ-радар + волные пуши + W3/W4 lite
+
+Админ: strip живых/мёртвых SOCKS (TG vs OpenAI), радар (ответы/час, silence, stuck ГС), funnel board, cost сегодня. Тихие пуши OpenAI/офлайн. A/B хвосты «слышал», память sport/show/car, жёстче RU/EN без vision, busy-волны по часу МСК, persona-preview + «плохой ответ»→learn. Лента: (updates.js?v=237).
+
+## 0le. 16 ноя — deploy guard после выката
+
+Общий `_deploy_guard.sh`: PROXY≥5, scrub AUDIT_SMOKE, health с `openai_ready` / `proxy_len` / `audit_smoke`. Skill loverussian-deploy зовёт guard после pm2. Лента: (updates.js?v=236).
+
+## 0ld. 16 ноя — OpenAI null.chat (AUDIT_SMOKE в pm2)
+
+После deploy-smoke в pm2 dump залипал `AUDIT_SMOKE=1` → `openai=null` → TypeError reading `chat` на каждом ответе/фото. Фикс: scrub флага под PM2 в `server.js` + ignore в `aiResponder`, unset перед restart, optional `checked?.chat`. Лента: (updates.js?v=235).
+
+## 0lc. 16 ноя — плановые анимации miniapp
+
+Не только splash: вход кабинета после загрузки, слайдер нижней навигации, stagger списков/карточек при смене вкладки, title swap, админ-подразделы, press/hover, pulse online. `styles.css?v=105`, `app.js?v=184`. Лента: (updates.js?v=234).
+
+## 0lb. 16 ноя — «слышал о таком?» после разговора про работу
+
+Если сама пишет про флип/работу (не day1, не «убегу по работе») — ~85% хвост «слышал о таком?)» / «слышал что-нибудь о таком?)». Явный вопрос про работу — как раньше, всегда. Лента: (updates.js?v=233).
+
+## 0la. 16 ноя — плавные анимации miniapp
+
+Тихие micro-motion: вкладки с stagger, hover lift карточек, мягче модалки/тосты/splash, reduced-motion. `styles.css?v=104`, `app.js?v=183`. Лента: (updates.js?v=232).
+
+## 0kz. 16 ноя — аудит P0–P2: аватарка, howlong, voice forbid
+
+Своя аватарка + «это ты?» после флипа больше не уходит в NFT-отказ. Howlong: «хз» не сжигает гейт, отсев и в reengage. VOICE_MESSAGES_FORBIDDEN — soft-skip + voice_skip_reason (stuck funnel). Голое «это?» не форсит flip. Лента: (updates.js?v=231).
+
+## 0ky. 16 ноя — узнаёт свою аватарку
+
+Если кидают фото с аватарки аккаунта («вот твоя фотка») — подтверждает «это я», а не «это не я». Сверка id/hash + vision. Лента: (updates.js?v=230).
+
+## 0kx. 16 ноя — Syne на весь miniapp
+
+Прежний display-шрифт Syne теперь и в тексте, и в заголовках (без Manrope/Outfit). `styles.css?v=103`. Лента: (updates.js?v=229).
+
+## 0kw. 16 ноя — один шрифт Outfit во всём miniapp
+
+Везде один geometric: Outfit 400–800 вместо пары Syne/Manrope. `styles.css?v=102`. Лента: (updates.js?v=228).
+
+## 0kv. 16 ноя — табличка статуса без обреза справа
+
+Блок «статус / сегодня / неделя» больше не обрезается справа: скругление одинаковое с обеих сторон. `styles.css?v=101`. Лента: (updates.js?v=227).
+
+## 0ku. 16 ноя — LoveRussian как на загрузке
+
+В шапке название снова как на экране загрузки: светлый Love и кислотный градиент Russian. `styles.css?v=100`. Лента: (updates.js?v=226).
+
+## 0kt. 16 ноя — ровный блок статус/сегодня/неделя
+
+В карточке аккаунта три колонки статуса выровняли по центру, с нормальными отступами. `styles.css?v=99`. Лента: (updates.js?v=225).
+
+## 0ks. 16 ноя — отступы у вкладок админки
+
+Кнопки «AI / аккаунты», «ЧС», «Прокси» и соседние раздвинули — между ними снова есть воздух. `styles.css?v=98`. Лента: (updates.js?v=224).
+
+## 0kr. 16 ноя — кислотные полоски ленты по оттенкам
+
+Боковые полоски в ленте: только кислотный зелёный, разные оттенки для лида / фото / NFT. Голубого нет. `styles.css?v=97`. Лента: (updates.js?v=223).
+
+## 0kq. 16 ноя — точки и цифры кислотные, не голубые
+
+Telegram больше не красит акценты в свой голубой: точки онлайн и цифры «сегодня» — кислотный зелёный. `styles.css?v=96`, `app.js?v=182`. Лента: (updates.js?v=222).
+
+## 0kp. 16 ноя — убрали smoke из ленты + отступы
+
+Из ленты убрали тестовые «smoke lead / smoke media». У карточек больше внутренние отступы. `styles.css?v=95`, `app.js?v=181`. Лента: (updates.js?v=221).
+
+## 0ko. 16 ноя — зелёные акценты в ленте
+
+В ленте убрали голубые полоски и бейджи — везде кислотный зелёный, как у NFT. `styles.css?v=94`. Лента: (updates.js?v=220).
+
+## 0kn. 16 ноя — больше воздуха между плашками
+
+Плашки в ленте и по кабинету больше не вплотную: увеличены отступы между карточками и внутри. `styles.css?v=93`. Лента: (updates.js?v=219).
+
+## 0km. 16 ноя — ровная лента событий
+
+Карточки ленты: бейдж и время в одну линию, блоки аккаунт/собеседник одной высоты, без кривого свечения. `styles.css?v=92`, `app.js?v=180`. Лента: (updates.js?v=218).
+
+## 0kl. 16 ноя — ровная карточка аккаунта в админке
+
+Карточка аккаунта: шапка, статус/сегодня/неделя и кнопки выровнены по сетке, без кривых колонок. `styles.css?v=91`, `app.js?v=179`. Лента: (updates.js?v=217).
+
+## 0kk. 16 ноя — ровная плашка Онлайн/AI
+
+Цифры «онлайн / AI» снова в одну строку `0/0`, не столбиком. `styles.css?v=90`, `app.js?v=178`. Лента: (updates.js?v=216).
+
+## 0kj. 16 ноя — кнопки Автоответ + графит LoveRussian
+
+Кнопки «Включить/Выключить все» больше не обрезаются. Название LoveRussian в шапке графитное, без синего/кислотного. `styles.css?v=89`. Лента: (updates.js?v=215).
+
+## 0ki. 16 ноя — логотип у «Панель» + ровный UI
+
+В шапке справа от заголовка логотип-сердце. Карточки стат/аккаунтов ровнее, без обрезания цифр и розовых хвостов. `styles.css?v=88`, `app.js?v=177`. Лента: (updates.js?v=214).
+
+## 0kh. 16 ноя — шрифт Syne/Manrope везде
+
+В миниаппе снова Syne + Manrope на всём интерфейсе (не Space Grotesk / DM Sans). `styles.css?v=87`. Лента: (updates.js?v=213).
+
+## 0kg. 16 ноя — чёрный+кислотный UI, анти-hang
+
+Миниапп: чёрный фон и кислотно-зелёный акцент, шрифты Space Grotesk + DM Sans, ровные плашки без выступов. Splash не зависает (таймаут 12с). Smoke/audit без вечного hang от SOCKS OpenAI. `styles.css?v=86`, `app.js?v=175`. Лента: (updates.js?v=212).
+
+## 0kf. 16 ноя — загрузочный экран LoveRussian
+
+Splash при старте миниаппа: графит, логотип-сердце, LoveRussian и три точки снизу. Старый «Загрузка…» убран. `styles.css?v=85`, `app.js?v=174`. Лента: (updates.js?v=211).
+
+## 0ke. 16 ноя — события ровнее + лента для воркеров
+
+Админские события: ровная сетка полей, фильтры в один ряд, время на карточке. На панели у воркера — своя лента событий только по его аккаунтам (фото / NFT / лиды), live-обновление. API `GET /accounts/activity`. `styles.css?v=84`, `app.js?v=173`. Лента: (updates.js?v=210).
+
+## 0kd. 16 ноя — промпт не вылезает за края
+
+Промпт в форме подключения и в карточке аккаунта переносится внутри блока, textarea и pre больше не уезжают вправо. `styles.css?v=83`. Лента: (updates.js?v=209).
+
+## 0kc. 16 ноя — экран «Подключить аккаунт» по-новому
+
+Форма входа: сегмент QR/код, тёплый акцент вместо розового, блок промпта с бейджем «обязательно». Убраны розово-фиолетовые бордеры по миниаппу. `styles.css?v=82`. Лента: (updates.js?v=208).
+
+## 0kb. 16 ноя — админ: аватарки и таймлайн событий
+
+Аккаунты — инициалы, сетка статусов, нижняя панель кнопок. События — таймлайн с цветной точкой и полями аккаунт/собеседник отдельно. `styles.css?v=81`, `app.js?v=171`. Лента: (updates.js?v=207).
+
+## 0ka. 16 ноя — админ: карточки аккаунтов и событий
+
+В админке аккаунты AI и лента событий — отдельные карточки: бейдж AI, статусы, цветной тип события. `styles.css?v=80`, `app.js?v=170`. Лента: (updates.js?v=206).
+
+## 0jz. 16 ноя — скрин-баги + новый визуал миниаппа
+
+Постфильтры: чужое «твоя фотка» / flip «не я» без NFT, слив «обычный бот», outdoor-кружок→диван, рост≠день, робот-однословия. Миниапп: графит + тёплый акцент, Syne/Manrope, без розово-фиолетового. Smoke `_smoke_screen_bugs_0jz.js`. Лента: (updates.js?v=205).
+
+## 0jy. 16 ноя — ack перед фото + тишина после спокойной
+
+При уходе фото больше не пишет «не сегодня» рядом с файлом — короткий «окей, щас найду)» / «держи)». После «спокойной ночи» вечером/ночью молчит до утра (кроме явной просьбы медиа); idle-poke и afterthought тоже. Smoke `_smoke_media_ack_refuse_0jy.js`, `_smoke_goodnight_silence_0jy.js`. Лента: (updates.js?v=204).
+
+## 0jx. 15 ноя — ложный бейдж «нужна сессия»
+
+Список аккаунтов не отдаёт `session_string`, чеклист думал что сессии нет. Теперь `has_session` / `session_len` в SQL + checklist. Smoke `_smoke_session_badge_0jx.js`. Лента: (updates.js?v=203).
 
 ## 0jw. 15 ноя — догон застрявших NFT вне 16–21
 

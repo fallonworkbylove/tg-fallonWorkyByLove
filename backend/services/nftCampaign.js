@@ -82,6 +82,74 @@ async function shouldSkipNftForLeadTier(accountId, peerId) {
   }
 }
 
+/**
+ * «По работе» ушло, а диалог уже мёртвый / слот просрочен сутками —
+ * не крутим stuckWorkNoVoice и не держим nft_pending вечно.
+ */
+const NFT_STALE_VOICE_HOURS = Math.max(
+  24,
+  Number(process.env.NFT_STALE_VOICE_HOURS) || 48,
+);
+
+async function expireStaleNftAfterWork(accountId) {
+  try {
+    await ensureNftScheduleTable();
+    const idleH = Math.max(24, Number(ACTIVE_DIALOGUE_IDLE_HOURS) || 72);
+    const [rows] = await db.execute(
+      `SELECT nvs.peer_id
+       FROM nft_voice_schedule nvs
+       WHERE nvs.account_id = ?
+         AND nvs.work_mention_sent = 1
+         AND (nvs.voice_skip_reason IS NULL OR nvs.voice_skip_reason = '')
+         AND NOT EXISTS (
+           SELECT 1 FROM conversation_messages cm
+           WHERE cm.account_id = nvs.account_id AND cm.peer_id = nvs.peer_id
+             AND cm.role = 'assistant'
+             AND (cm.content LIKE '%[голосовое: nft.ogg]%' OR cm.content LIKE '%nft.ogg%')
+             AND cm.created_at >= COALESCE(nvs.work_mention_at, nvs.scheduled_at)
+         )
+         AND (
+           nvs.scheduled_at < (NOW() - INTERVAL ${Number(NFT_STALE_VOICE_HOURS)} HOUR)
+           OR NOT EXISTS (
+             SELECT 1 FROM conversation_messages u
+             WHERE u.account_id = nvs.account_id AND u.peer_id = nvs.peer_id
+               AND u.role = 'user'
+               AND u.created_at >= (NOW() - INTERVAL ${idleH} HOUR)
+           )
+         )
+       ORDER BY nvs.scheduled_at ASC
+       LIMIT 40`,
+      [accountId],
+    );
+    let n = 0;
+    for (const row of rows || []) {
+      const peerId = String(row.peer_id);
+      await markNftVoiceSkipped(accountId, peerId, 'stale_dialog');
+      try {
+        await helpRequestNotifier.enableAutoreplyForPeer(accountId, peerId, {
+          force: true,
+          onlyReasons: ['nft_pending'],
+        });
+      } catch (_) {
+        /* optional */
+      }
+      n += 1;
+    }
+    if (n) {
+      console.log(
+        `[${accountLabel(accountId)}] NFT expire stale after work: ${n}`,
+      );
+    }
+    return n;
+  } catch (err) {
+    console.error(
+      `[${accountLabel(accountId)}] NFT expire stale:`,
+      err.message,
+    );
+    return 0;
+  }
+}
+
 /** Просроченный scheduled_at без живого диалога — сдвигаем на +45–90м (не копим вечную очередь). */
 async function rescheduleStaleNftSlots(accountId) {
   try {
@@ -322,7 +390,19 @@ async function ensureNftScheduleTable() {
   `);
   await addNftScheduleColumn('work_mention_at', 'DATETIME NULL');
   await addNftScheduleColumn('work_mention_sent', 'TINYINT NOT NULL DEFAULT 0');
+  await addNftScheduleColumn('voice_skip_reason', 'VARCHAR(64) NULL');
   nftScheduleReady = true;
+}
+
+/** VOICE_MESSAGES_FORBIDDEN / unreachable — не крутить stuckWorkNoVoice вечно. */
+async function markNftVoiceSkipped(accountId, peerId, reason = 'voice_forbidden') {
+  await ensureNftScheduleTable();
+  await db.execute(
+    `UPDATE nft_voice_schedule
+     SET voice_skip_reason = ?
+     WHERE account_id = ? AND peer_id = ?`,
+    [String(reason || 'voice_forbidden').slice(0, 64), accountId, String(peerId)],
+  );
 }
 
 async function claimWorkMention(accountId, peerId) {
@@ -402,7 +482,11 @@ async function getOrCreateNftVoiceAt(accountId, peerId) {
 }
 
 // NFT-шаги сами по себе шлём только в живой диалог: он писал совсем недавно.
-const NFT_LIVE_DIALOG_MIN = 30;
+/** Окно «живой диалог» для фразы «по работе» — писал за последние N мин. */
+const NFT_LIVE_DIALOG_MIN = Math.max(
+  30,
+  Number(process.env.NFT_LIVE_DIALOG_MIN) || 90,
+);
 /** Приоритет очереди ГС: свежие входящие выше; после «по работе» ГС уходит и без нового сообщения. */
 const NFT_VOICE_LIVE_DIALOG_MIN = 120;
 /** Не чаще раза в N мс на аккаунт (boundary 60с, тик тяжёлый). */
@@ -444,7 +528,7 @@ function warmupDay1Hint() {
     'ПЛАН ДНЯ 1 (не говори про «день/план»). Знакомство: лёгкий флирт, общие темы, понравиться — не продавать. ' +
     'Если уместно — коротко про переезд к маме из легенды промпта (доверие). ' +
     'На вопрос про работу: «занимаюсь флипингом цифровых токенов» ИЛИ «подрабатываю в интернете» — коротко. ' +
-    'Без NFT/заработка/платформы/ссылок/скринов без повода. Сначала ответь на его слова.'
+    'Без «слышал о таком», NFT/заработка/платформы/ссылок/скринов без повода. Сначала ответь на его слова.'
   );
 }
 
@@ -457,8 +541,10 @@ function warmupDay2Hint({ softOnly = false } = {}) {
   }
   return (
     'ПЛАН ДНЯ 2 (не говори про дни). Теплее, можно шутить. ' +
-    'Если он САМ спросил про работу — можно: «флипинг цифровых токенов, покупаю дешевле и перепродаю дороже, норм подработка». ' +
-    'Если не спросил — не лезь. Заинтересовался — коротко без напора. ' +
+    'Если он САМ спросил про работу — можно: «флипинг цифровых токенов, покупаю дешевле и перепродаю дороже, норм подработка» ' +
+    'и в конце часто «слышал о таком?)» / «слышал что-нибудь о таком?)». ' +
+    'Если сама коротко про работу/флип — тоже часто спроси, слышал ли. ' +
+    'Если не спросил — не лезь с питчем. Заинтересовался — коротко без напора. ' +
     'ЗАПРЕЩЕНО: ссылки, «могу показать», уговоры, скрины от себя (их шлёт система вечером).'
   );
 }
@@ -697,6 +783,7 @@ async function tickNftDueVoices(accountId, archiveFlagsShared = null) {
        FROM nft_voice_schedule nvs
        WHERE nvs.account_id = ?
          AND nvs.work_mention_sent = 1
+         AND (nvs.voice_skip_reason IS NULL OR nvs.voice_skip_reason = '')
          AND ${dueGate}
          AND (
            SELECT c.id FROM conversation_messages c
@@ -740,9 +827,11 @@ async function tickNftDueVoices(accountId, archiveFlagsShared = null) {
         continue;
       }
 
-      // Возраст только текущей сессии; без активного диалога getDialogAgeHours = null
+      // Возраст сессии. После «по работе» не рвём из‑за null (idle>72ч) —
+      // такие слоты закрывает expireStaleNftAfterWork; здесь шлём, пока диалог жив.
       const ageHours = await getDialogAgeHours(accountId, peerId);
-      if (ageHours == null || ageHours < NFT_VOICE_AFTER_HOURS) continue;
+      if (ageHours == null) continue;
+      if (ageHours < NFT_VOICE_AFTER_HOURS) continue;
 
       const plan = await getOrCreateNftVoiceAt(accountId, peerId);
       if (Date.now() < plan.scheduledAt.getTime()) continue;
@@ -760,7 +849,8 @@ async function tickNftDueVoices(accountId, archiveFlagsShared = null) {
       }
       if (!entity || entity.bot || entity.self) continue;
       if (await shouldSkipProactivePeer(client, entity)) continue;
-      if (await shouldSkipNftForLeadTier(accountId, peerId)) continue;
+      // «По работе» уже ушло — cold/interest больше не режем ГС.
+      // (shouldSkipNftForLeadTier только до claim work)
 
       voiceSendInFlight.add(sendKey);
       const senderName = entity.username || entity.firstName || row.peer_username || peerId;
@@ -804,7 +894,12 @@ async function tickNftDueVoices(accountId, archiveFlagsShared = null) {
           /* optional */
         }
       } catch (err) {
-        if (isVoiceForbiddenError(err)) voiceForbiddenPeers.add(dialogKey);
+        if (isVoiceForbiddenError(err)) {
+          voiceForbiddenPeers.add(dialogKey);
+          try {
+            await markNftVoiceSkipped(accountId, peerId, 'voice_forbidden');
+          } catch (_) {}
+        }
         console.error(
           `[${accountLabel(accountId)}] Не удалось отправить NFT-голосовое ${senderName}:`,
           err.errorMessage || err.message,
@@ -843,6 +938,7 @@ async function tickNftCampaign(accountId) {
 
   await rearchiveOurOnlyWorkChats(accountId);
   await rescheduleStaleNftSlots(accountId);
+  await expireStaleNftAfterWork(accountId);
   const client = getActiveClient(accountId);
   const archiveFlags = client
     ? await loadArchiveFlagsSafe(client, accountId)
@@ -864,6 +960,8 @@ module.exports = {
   NFT_ACTIVE_DIALOGUE_IDLE_HOURS,
   NFT_LIVE_DIALOG_MIN,
   NFT_VOICE_LIVE_DIALOG_MIN,
+  NFT_STALE_VOICE_HOURS,
+  expireStaleNftAfterWork,
   noteNftVoiceMissing,
   pickWorkProblemPhrase,
   withWorkProblemLine,
@@ -878,6 +976,7 @@ module.exports = {
   claimWorkMention,
   postponeNftVoice,
   releaseWorkMention,
+  markNftVoiceSkipped,
   getOrCreateNftVoiceAt,
   nftMentionedRecently,
   getNftCampaignState,

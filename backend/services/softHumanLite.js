@@ -4,7 +4,24 @@
  * 2) вырезание коуч-клауз (старое)
  * 3) дожим обрубков
  * 4) если нужна взаимность и модель молчит — один мягкий вопрос в хвост
+ *
+ * Узкие гейты (привет/slash/?/бот) — softHumanGates.js
  */
+const gates = require('./softHumanGates');
+const {
+  normalizeBareUserText,
+  isBareGreeting,
+  pickGreetingAck,
+  GREETING_ACK_ALTS,
+  fixSlashCommandReply,
+  fixDayTalkOnBareQuestion,
+  fixAckOnBareGreeting,
+  fixBareGreetingOnSubstance,
+  fixBotAccusationReply,
+  isBotAccusation,
+  fixEmptyQuotedTitles,
+  fixVagueFillerReply,
+} = gates;
 
 function recentDialogBlob(history, userMessage) {
   const hist = Array.isArray(history) ? history : [];
@@ -940,70 +957,6 @@ function pickSafeAck() {
   return SAFE_ACK_VARIANTS[Math.floor(Math.random() * SAFE_ACK_VARIANTS.length)];
 }
 
-const BARE_GREETING_RE =
-  /^(?:привет|приветик|прив|хай|хей|здарова|здаров|здравствуй|доброе\s+утро|добрый\s+день|добрый\s+вечер|hi|hello|hey)\s*[).!]{0,3}$/i;
-const GREETING_ACK_ALTS = ['хай)', 'привет)', 'хех привет)', 'ну привет)', 'хай, привет)'];
-
-function isBareGreeting(userMessage) {
-  const u = String(userMessage || '')
-    .replace(/\[[^\]]*\]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return BARE_GREETING_RE.test(u);
-}
-
-/** На голое «привет» нельзя «мм, поняла)» — нечего понимать. */
-function fixAckOnBareGreeting(reply, userMessage) {
-  if (!reply || !isBareGreeting(userMessage)) return reply;
-  const tag = (String(reply).match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
-  const body = String(reply).slice(tag.length).trim();
-  if (!body) return reply;
-  if (/привет|приветик|хай|хей|здаров|добр/i.test(body)) return reply;
-  if (
-    BARE_ACK_RE.test(body) ||
-    /^(?:мм|эм|хм)[,.]?\s*(?:понял[аи]?|ясно|ага|ок)\s*\)?$/i.test(body) ||
-    /понял[аи]?\s*\)?$/i.test(body)
-  ) {
-    return tag + GREETING_ACK_ALTS[Math.floor(Math.random() * GREETING_ACK_ALTS.length)];
-  }
-  return reply;
-}
-
-/** Голый ответ «привет)» — без хвоста. */
-const BARE_GREETING_REPLY_RE =
-  /^(?:(?:ну|хех|хм|ой|о)\s+)?(?:привет(?:ик)?|хай|хей|здаров[а]?|здравствуй(?:те)?)\s*[).!]{0,3}$/i;
-
-/**
- * Баг bardak: на «Что делаешь? Как выходные?» ушло голое «привет)»
- * (пустая история / после сна). На не-привет от него — не здороваться одним словом.
- */
-function fixBareGreetingOnSubstance(reply, userMessage) {
-  if (!reply) return reply;
-  if (isBareGreeting(userMessage)) return reply;
-  const tag = (String(reply).match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
-  const body = String(reply).slice(tag.length).trim();
-  if (!body || !BARE_GREETING_REPLY_RE.test(body)) return reply;
-
-  const msg = String(userMessage || '')
-    .replace(/\[[^\]]*\]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!msg) return reply;
-
-  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-  if (/выходн/i.test(msg)) {
-    return tag + pick(['дома сижу)', 'пока дома, а ты?', 'выходной, дома)', 'норм, дома вожусь)']);
-  }
-  if (/(?:что|чё|че)\s+делаешь|чем\s+(?:ты\s+)?занят|чем\s+ты\b/i.test(msg)) {
-    return tag + pick(['дома сижу)', 'ничего особого)', 'просто дома)', 'вожусь по мелочи)']);
-  }
-  if (/как\s+(?:дела|день|настроен|ты)\b/i.test(msg)) {
-    return tag + pick(['норм)', 'нормально)', 'всё ок)', 'ровно пока)']);
-  }
-  // Любой другой не-привет: короткий ответ по делу, не «хай)»
-  return tag + pick(['хм, а подробнее?)', 'ну рассказывай)', 'о как, и?', 'слушаю)']);
-}
-
 /** Финальный гейт: голые короткие ack / audit-stubs не уходят в чат. */
 function ensureAckNotBare(reply, userMessage) {
   if (!reply) return reply;
@@ -1019,7 +972,7 @@ function ensureAckNotBare(reply, userMessage) {
     !/[❤😁☺️😊🥰🔥👍]/.test(body);
   if (!exactStub && !BARE_ACK_RE.test(body) && !ultraShort) return reply;
   if (isBareGreeting(userMessage)) {
-    return tag + GREETING_ACK_ALTS[Math.floor(Math.random() * GREETING_ACK_ALTS.length)];
+    return tag + pickGreetingAck();
   }
   return tag + pickSafeAck();
 }
@@ -1154,6 +1107,11 @@ function applySoftLite(reply, history, userMessage) {
   out = stripRoboticGirl(out);
   out = softCompleteCut(out);
   out = fixAckOnBareGreeting(out, userMessage);
+  out = fixSlashCommandReply(out, userMessage);
+  out = fixDayTalkOnBareQuestion(out, userMessage, history);
+  out = fixBotAccusationReply(out, userMessage, history);
+  out = fixEmptyQuotedTitles(out);
+  out = fixVagueFillerReply(out, userMessage);
   out = mergeTwoQuestionBubbles(out, userMessage);
   out = fixCirclePlaceMismatch(out, history, userMessage);
   // voprosy-strip + ensureAck — финал в aiResponderPostprocess / replySendPrep.
@@ -1201,7 +1159,12 @@ function applySoftLite(reply, history, userMessage) {
   }
   // ensureAckNotBare — один раз в finalizeOutgoingReply (не дублируем здесь).
   out = fixAckOnBareGreeting(out, userMessage);
+  out = fixSlashCommandReply(out, userMessage);
+  out = fixDayTalkOnBareQuestion(out, userMessage, history);
   out = fixBareGreetingOnSubstance(out, userMessage);
+  out = fixBotAccusationReply(out, userMessage, history);
+  out = fixEmptyQuotedTitles(out);
+  out = fixVagueFillerReply(out, userMessage);
   return out;
 }
 
@@ -1211,8 +1174,17 @@ module.exports = {
   softenCoachy,
   softCompleteCut,
   fixAckOnBareGreeting,
+  fixSlashCommandReply,
+  fixDayTalkOnBareQuestion,
   fixBareGreetingOnSubstance,
+  fixBotAccusationReply,
+  isBotAccusation,
+  fixEmptyQuotedTitles,
+  fixVagueFillerReply,
   isBareGreeting,
+  normalizeBareUserText,
+  pickGreetingAck,
+  GREETING_ACK_ALTS,
   mergeTwoQuestionBubbles,
   enrichBareAckOnSubstance,
   ensureAckNotBare,
