@@ -557,13 +557,50 @@ function ensureDailyLife(accountId) {
         : null;
     const lastMin = life ? life.lastMin : null;
     life = rollDailyLife(now.dateKey);
+    // #34: сдвиг сон/утро по TZ города из промпта аккаунта.
+    try {
+      const settings = hooks.getAccountSettings
+        ? hooks.getAccountSettings(accountId)
+        : null;
+      const prompt =
+        settings && typeof settings.then === 'function'
+          ? null
+          : settings?.prompt;
+      if (prompt) {
+        life = require('./scaleIdeasPack').shiftLifeByCityTz(life, prompt);
+      } else if (hooks.getAccountSettings) {
+        // sync path only above; async resolve best-effort without blocking map
+      }
+    } catch (_) {
+      /* optional */
+    }
     life.carryNight = carryNight;
     life.lastMin = lastMin;
     life.booted = !lastMin && lastMin !== 0;
     dailyLifeByAccount.set(key, life);
     console.log(
-      `[${accountLabel(accountId)}] Режим дня: подъём ${formatClock(life.wakeMin)} (${life.wakeKind}), сон ${formatClock(life.sleepMin)} (${life.sleepKind}).`,
+      `[${accountLabel(accountId)}] Режим дня: подъём ${formatClock(life.wakeMin)} (${life.wakeKind}), сон ${formatClock(life.sleepMin)} (${life.sleepKind})${
+        life.city ? ` · ${life.city}` : ''
+      }.`,
     );
+  }
+  return life;
+}
+
+/** Async-обёртка: подтянуть промпт и сдвинуть TZ, если ещё не ставили city. */
+async function ensureDailyLifeWithCity(accountId) {
+  const life = ensureDailyLife(accountId);
+  if (life.city != null || life.tzOffsetMin) return life;
+  try {
+    if (!hooks.getAccountSettings) return life;
+    const settings = await hooks.getAccountSettings(accountId);
+    const shifted = require('./scaleIdeasPack').shiftLifeByCityTz(
+      life,
+      settings?.prompt || '',
+    );
+    Object.assign(life, shifted);
+  } catch (_) {
+    /* optional */
   }
   return life;
 }
@@ -920,6 +957,7 @@ function clearDailyLifeAccount(accountId) {
 module.exports = {
   configureDailyLife,
   ensureDailyLife,
+  ensureDailyLifeWithCity,
   tickDailyLife,
   moscowClock,
   formatClock,

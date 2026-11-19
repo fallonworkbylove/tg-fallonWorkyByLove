@@ -22,6 +22,7 @@ const {
   fixEmptyQuotedTitles,
   fixVagueFillerReply,
   applyWave0loGates,
+  applyWave0m1Gates,
 } = gates;
 
 function recentDialogBlob(history, userMessage) {
@@ -63,6 +64,15 @@ function softHint(history, userMessage) {
       '«ну ок)» — только короткое согласие. ЗАПРЕЩЕНО оценка: «это ну ок», «звучит ну ок», «просто ну ок», «день ну ок». ' +
       'Для оценки: «норм», «прикольно», «о как» — не одно и то же слово подряд.',
   ];
+
+  try {
+    const scale = require('./scaleIdeasPack').buildScaleHints(history, userMessage);
+    for (const h of scale.hints || []) {
+      if (h) parts.push(h);
+    }
+  } catch (_) {
+    /* optional */
+  }
 
   try {
     const jobFlip = require('./jobFlipAsk');
@@ -1114,6 +1124,7 @@ function applySoftLite(reply, history, userMessage) {
   out = fixEmptyQuotedTitles(out);
   out = fixVagueFillerReply(out, userMessage);
   out = applyWave0loGates(out, history, userMessage);
+  out = applyWave0m1Gates(out, history, userMessage);
   out = mergeTwoQuestionBubbles(out, userMessage);
   out = fixCirclePlaceMismatch(out, history, userMessage);
   // voprosy-strip + ensureAck — финал в aiResponderPostprocess / replySendPrep.
@@ -1168,6 +1179,7 @@ function applySoftLite(reply, history, userMessage) {
   out = fixEmptyQuotedTitles(out);
   out = fixVagueFillerReply(out, userMessage);
   out = applyWave0loGates(out, history, userMessage);
+  out = applyWave0m1Gates(out, history, userMessage);
   return out;
 }
 
@@ -1185,6 +1197,7 @@ module.exports = {
   fixEmptyQuotedTitles,
   fixVagueFillerReply,
   applyWave0loGates,
+  applyWave0m1Gates,
   isBareGreeting,
   normalizeBareUserText,
   pickGreetingAck,

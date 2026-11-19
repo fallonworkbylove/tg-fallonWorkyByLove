@@ -4,6 +4,10 @@
 
 ---
 
+## 0m1. 20 ноя — scale pack: reply gates · admin radar · single NFT voice
+
+Анти-цикл тем, mood echo, soft-meet, toxic soft, bot-score. Админ: day-N, error feed, health/compare/CSV, proxy-low push. Создатель `fallonsociapat`: идея дня. NFT-кампания: только одно голосовое `nft.ogg` (без A/B). Smoke `_smoke_wave_0m1` + hard `_hard_audit_0m1`. Лента: (updates.js?v=258).
+
 ## 0m0. 19 ноя — audit C: exit hang fix · childOk marker-first
 
 Hard `_hard_audit_0ht/0gc` теперь `process.exit(0)` (иначе open handles → ETIMEDOUT и ложный P0). Full audit: OK-marker важнее timeout. Busy smoke/gates учитывают ночной ×1.45 (≤9/26/29м). Proxy burst dead TTL = DEFAULT 12м. Ultra читает `backend/.env`. Лента: (updates.js?v=257).

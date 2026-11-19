@@ -302,6 +302,15 @@ const api = {
     request('/admin/console/learn/bad-reply', { method: 'POST', body }),
   adminExpireNftStale: () =>
     request('/admin/console/nft/expire-stale', { method: 'POST' }),
+  getAdminScaleDayN: () => request('/admin/console/scale/day-n'),
+  getAdminScaleErrors: (limit = 40) =>
+    request(`/admin/console/scale/errors?limit=${encodeURIComponent(limit)}`),
+  getAdminScaleCompare: (a, b) =>
+    request(
+      `/admin/console/scale/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
+    ),
+  getAdminScaleIdeaDay: () => request('/admin/console/scale/idea-day'),
+  getAdminScaleMetricsCsvUrl: () => '/api/admin/console/scale/metrics.csv',
   checkAdminProxies: (pool = 'all') =>
     request('/admin/console/proxies/check', {
       method: 'POST',
@@ -1061,6 +1070,10 @@ async function loadDashboard() {
       dashboard.isBetaTester ?? dashboard.is_beta_tester,
     ),
     isAdmin: Boolean(dashboard.isAdmin ?? dashboard.is_admin),
+    username: dashboard.username
+      ? String(dashboard.username).replace(/^@+/, '')
+      : null,
+    isCreator: Boolean(dashboard.isCreator ?? dashboard.is_creator),
   };
   syncAdminVisibility();
 }
@@ -2155,6 +2168,10 @@ function syncAdminVisibility() {
   document.querySelectorAll('.admin-only').forEach((el) => {
     el.hidden = !on;
   });
+  const creator = Boolean(state.dashboard?.isCreator);
+  document.querySelectorAll('.creator-only').forEach((el) => {
+    el.hidden = !(on && creator);
+  });
   if (!on && state.activeTab === 'admin') {
     state.activeTab = 'panel';
     localStorage.setItem('currentTab', 'panel');
@@ -2162,7 +2179,16 @@ function syncAdminVisibility() {
   window.requestAnimationFrame(syncNavIndicator);
 }
 
-const ADMIN_SUBS = new Set(['accounts', 'blacklist', 'add', 'proxies', 'logs', 'activity']);
+const ADMIN_SUBS = new Set([
+  'accounts',
+  'blacklist',
+  'add',
+  'proxies',
+  'logs',
+  'activity',
+  'radar',
+  'ideas',
+]);
 
 function stopAdminLiveTimers() {
   if (state.admin.logsTimer) {
@@ -2224,6 +2250,102 @@ function setAdminSub(sub) {
       }
     }, 5000);
   }
+  if (next === 'radar') {
+    loadAdminRadar().catch((err) => handleRequestError(err));
+  }
+  if (next === 'ideas') {
+    loadAdminIdeaDay().catch((err) => handleRequestError(err));
+  }
+}
+
+async function loadAdminRadar() {
+  const dayEl = document.getElementById('admin-dayn');
+  const voiceEl = document.getElementById('admin-voice-ab');
+  const errEl = document.getElementById('admin-error-feed');
+  if (dayEl) dayEl.innerHTML = '<p class="options-hint">Загрузка…</p>';
+  const [dayRes, errRes] = await Promise.all([
+    api.getAdminScaleDayN(),
+    api.getAdminScaleErrors(40),
+  ]);
+  const dayN = dayRes.dayN || {};
+  if (dayEl) {
+    dayEl.innerHTML = `
+      <div class="stat-card"><strong>${Number(dayN.day1 || 0)}</strong><span>Day 1</span></div>
+      <div class="stat-card"><strong>${Number(dayN.day2 || 0)}</strong><span>Day 2</span></div>
+      <div class="stat-card"><strong>${Number(dayN.day3 || 0)}</strong><span>Day 3 · NFT</span></div>
+      <div class="stat-card"><strong>${Number(dayN.day4 || 0)}</strong><span>Day 4</span></div>
+      <div class="stat-card"><strong>${Number(dayN.filtered || 0)}</strong><span>Отсев</span></div>
+    `;
+  }
+  const nftVoice = dayRes.nftVoice || {};
+  if (voiceEl) {
+    const file = escapeHtml(nftVoice.file || 'nft.ogg');
+    const ok = nftVoice.exists ? 'на месте' : 'файла нет на диске';
+    voiceEl.innerHTML = `<p class="options-hint">Голосовое NFT одно: <strong>${file}</strong> · ${ok}. Других вариантов нет.</p>`;
+  }
+  const errors = Array.isArray(errRes.errors) ? errRes.errors : [];
+  if (errEl) {
+    if (!errors.length) {
+      errEl.innerHTML = '<p class="empty">Свежих ошибок нет</p>';
+    } else {
+      errEl.innerHTML = errors
+        .map((e) => {
+          const t = escapeHtml(String(e.ts || '').slice(11, 19));
+          const lvl = escapeHtml(e.level || 'info');
+          return `<div class="admin-log-line admin-log-line--${lvl}"><span class="admin-log-ts">${t}</span> ${escapeHtml(
+            e.text || '',
+          )}</div>`;
+        })
+        .join('');
+    }
+  }
+}
+
+async function loadAdminIdeaDay() {
+  const box = document.getElementById('admin-idea-day');
+  if (!box) return;
+  box.innerHTML = '<p class="options-hint">Загрузка…</p>';
+  const res = await api.getAdminScaleIdeaDay();
+  const idea = res.idea || {};
+  const list = Array.isArray(idea.ideas) ? idea.ideas : [];
+  if (!list.length) {
+    box.innerHTML = '<p class="empty">Идей пока нет</p>';
+    return;
+  }
+  box.innerHTML = `
+    <p class="options-hint">${escapeHtml(idea.date || '')} · @${escapeHtml(
+      idea.for || 'fallonsociapat',
+    )}</p>
+    ${list
+      .map(
+        (it, i) =>
+          `<article class="admin-idea-card"><strong>${i + 1}.</strong> ${escapeHtml(
+            it.text || '',
+          )} <span class="admin-flag is-ok">${escapeHtml(it.source || '')}</span></article>`,
+      )
+      .join('')}
+  `;
+}
+
+async function downloadAdminMetricsCsv() {
+  const initData = resolveTelegramInitData() || '';
+  const headers = {};
+  if (initData) headers['X-Telegram-Init-Data'] = initData;
+  const token = localStorage.getItem('adminConsoleToken') || '';
+  if (token) headers['X-Admin-Console-Token'] = token;
+  const res = await fetch('/api/admin/console/scale/metrics.csv', {
+    headers,
+    credentials: 'same-origin',
+  });
+  if (!res.ok) throw new Error('Не удалось скачать CSV');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'loverussian-metrics-day.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+  notify('CSV скачан');
 }
 
 async function loadAdminData({ force = false } = {}) {
@@ -2783,10 +2905,23 @@ function renderAdmin() {
                   <span class="admin-acc__stat-label">неделя</span>
                   <strong>${Number(a.sentWeek || 0)}</strong>
                 </div>
+                <div class="admin-acc__stat">
+                  <span class="admin-acc__stat-label">health</span>
+                  <strong>${Number(a.health != null ? a.health : '—')}</strong>
+                </div>
+                <div class="admin-acc__stat">
+                  <span class="admin-acc__stat-label">ответ</span>
+                  <strong>${
+                    a.lastReplyAgeMin == null
+                      ? '—'
+                      : `${Number(a.lastReplyAgeMin)}м`
+                  }</strong>
+                </div>
               </div>
               <div class="admin-acc__flags">
                 <span class="admin-flag ${hasPrompt ? 'is-ok' : 'is-bad'}">${hasPrompt ? 'промпт' : 'нет промпта'}</span>
                 <span class="admin-flag ${hasMedia ? 'is-ok' : 'is-bad'}">${hasMedia ? 'медиа' : 'нет медиа'}</span>
+                <span class="admin-flag is-ok">пул ${escapeHtml(a.pool || owner || '—')}</span>
               </div>
               <div class="admin-acc__actions">
                 ${
@@ -4340,6 +4475,45 @@ function bindEvents() {
           return loadAdminData({ force: true });
         })
         .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-radar-refresh') {
+      loadAdminRadar()
+        .then(() => notify('Радар обновлён'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-ideas-refresh') {
+      loadAdminIdeaDay()
+        .then(() => notify('Идеи обновлены'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-compare') {
+      const a = String(document.getElementById('admin-cmp-a')?.value || '').trim();
+      const b = String(document.getElementById('admin-cmp-b')?.value || '').trim();
+      if (!a || !b) {
+        notify('Укажи два id аккаунтов');
+        return;
+      }
+      api
+        .getAdminScaleCompare(a, b)
+        .then((r) => {
+          const out = document.getElementById('admin-compare-out');
+          if (out) {
+            out.hidden = false;
+            out.textContent = JSON.stringify(r.compare || r, null, 2);
+          }
+        })
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-metrics-csv') {
+      downloadAdminMetricsCsv().catch((err) => handleRequestError(err));
       return;
     }
 
