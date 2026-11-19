@@ -15,10 +15,13 @@ cp -f "$SRC/index_frontend.html" frontend/index.html
 cp -f "$SRC/updates_fe.js" frontend/updates.js
 cp -f "$SRC/updates_ops.js" ops-console/app/updates.js
 cp -f "$SRC/CHANGELOG_TG.md" CHANGELOG_TG.md
-# mac-ship stays on Mac; optional copy for docs parity
+# mac-ship / gitignore — optional on VPS (Mac-side tooling)
+mkdir -p scripts
 if [[ -f "$SRC/mac-ship.sh" ]]; then
-  mkdir -p scripts
   cp -f "$SRC/mac-ship.sh" scripts/mac-ship.sh
+fi
+if [[ -f "$SRC/.gitignore" ]]; then
+  cp -f "$SRC/.gitignore" .gitignore
 fi
 
 if grep -q 'операторская, вне Telegram' frontend/index.html; then

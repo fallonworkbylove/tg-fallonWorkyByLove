@@ -91,6 +91,15 @@ if [[ "${MAC_SHIP_NO_AUTO:-}" != "1" ]]; then
       _smoke_*|_hard_audit_*|_ultra_*|_deploy_*)
         ship_one "backend/scripts/${rel}"
         ;;
+      mac-ship.sh|install-ssh-mac.sh|.gitignore)
+        if [[ -f "scripts/${rel}" ]]; then
+          ship_one "scripts/${rel}"
+        elif [[ -f "${rel}" ]]; then
+          ship_one "${rel}"
+        else
+          echo "Skip unresolved: $rel"
+        fi
+        ;;
       *.js)
         if [[ -f "backend/services/${rel}" ]]; then
           ship_one "backend/services/${rel}"
@@ -100,8 +109,10 @@ if [[ "${MAC_SHIP_NO_AUTO:-}" != "1" ]]; then
           ship_one "frontend/${rel}"
         elif [[ -f "backend/scripts/${rel}" ]]; then
           ship_one "backend/scripts/${rel}"
+        elif [[ -f "scripts/${rel}" ]]; then
+          ship_one "scripts/${rel}"
         else
-          found=$(find backend frontend ops-console -name "$rel" -type f 2>/dev/null | head -1 || true)
+          found=$(find backend frontend ops-console scripts -name "$rel" -type f 2>/dev/null | head -1 || true)
           if [[ -n "$found" ]]; then
             ship_one "$found"
           else
@@ -118,7 +129,7 @@ if [[ "${MAC_SHIP_NO_AUTO:-}" != "1" ]]; then
         fi
         ;;
       *)
-        found=$(find backend frontend ops-console -name "$rel" -type f 2>/dev/null | head -1 || true)
+        found=$(find backend frontend ops-console scripts . -maxdepth 3 -name "$rel" -type f 2>/dev/null | head -1 || true)
         [[ -n "$found" ]] && ship_one "$found" || echo "Skip unresolved: $rel"
         ;;
     esac

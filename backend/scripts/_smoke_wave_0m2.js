@@ -83,10 +83,13 @@ function assert(cond, msg) {
   assert(/\$SRC\/\(\[A-Za-z0-9_/.test(ship) || /finditer.*\$SRC/.test(ship), 'mac-ship parse SRC');
 }
 
-// private key gitignored
+// private key gitignored (skip if .gitignore not on VPS app tree)
 {
-  const gi = fs.readFileSync(path.join(__dirname, '../../.gitignore'), 'utf8');
-  assert(/secrets\/ssh\/id_ed25519/.test(gi), 'gitignore private key');
+  const giPath = path.join(__dirname, '../../.gitignore');
+  if (fs.existsSync(giPath)) {
+    const gi = fs.readFileSync(giPath, 'utf8');
+    assert(/secrets\/ssh\/id_ed25519/.test(gi), 'gitignore private key');
+  }
 }
 
 console.log('SMOKE_WAVE_0M2_OK');
