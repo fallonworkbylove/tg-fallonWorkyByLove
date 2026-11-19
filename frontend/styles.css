@@ -3611,6 +3611,38 @@ canvas {
   max-width: 100%;
 }
 
+.admin-radar-title {
+  margin: 18px 0 8px;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+.admin-dayn {
+  margin: 0 0 12px;
+}
+.admin-error-feed {
+  max-height: 280px;
+  overflow: auto;
+  margin: 0 0 14px;
+}
+.admin-compare-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+.admin-compare-out {
+  margin-top: 10px;
+  max-height: 220px;
+}
+.admin-idea-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--line, #d8d2c8) 80%, transparent);
+  background: color-mix(in srgb, var(--surface, #fff) 90%, #f3eee6);
+}
+.admin-idea-day {
+  gap: 10px;
+}
 .admin-proxy-health {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

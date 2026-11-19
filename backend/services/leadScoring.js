@@ -746,6 +746,18 @@ async function maybeNotifyLeadReady(accountId, peerId, reason = 'ready') {
   } catch (_) {
     /* optional */
   }
+  // #17: явный акцент «ручное касание» для оператора.
+  let hotTouchExtra = null;
+  try {
+    hotTouchExtra = require('./scaleIdeasPack').formatHotLeadAlert({
+      accountName,
+      phone: acc?.phone || null,
+      peerName: peerRow?.peer_username || peer,
+      reason,
+    });
+  } catch (_) {
+    /* optional */
+  }
   const notified = await notifier.notifyLeadReady({
     accountId,
     accountPhone: acc?.phone || null,
@@ -754,6 +766,7 @@ async function maybeNotifyLeadReady(accountId, peerId, reason = 'ready') {
     peerUsername: peerRow?.peer_username || null,
     reason,
     digest,
+    manualTouchHint: hotTouchExtra,
   });
 
   // digest_sent_at только после успешной доставки — иначе ИИ на паузе, а оператор без карточки.
