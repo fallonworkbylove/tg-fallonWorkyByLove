@@ -501,6 +501,8 @@
             <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="proxies">Прокси</button>
             <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="logs">Логи</button>
             <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="activity">События</button>
+            <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="radar">Радар</button>
+            <button class="btn btn-secondary small chip-btn creator-only" type="button" data-action="admin-sub" data-sub="ideas" hidden>Идеи</button>
           </div>
 
           <div id="admin-panel-accounts" class="section-card card admin-block" data-admin-panel="accounts">
@@ -624,6 +626,42 @@
             </div>
             <div id="admin-activity-list" class="stack activity-list"></div>
           </div>
+
+          <div id="admin-panel-radar" class="section-card card admin-block" data-admin-panel="radar" hidden>
+            <div class="section-card__header">
+              <h3>Радар админа</h3>
+              <div class="admin-bulk">
+                <button class="btn btn-secondary small" type="button" data-action="admin-radar-refresh">Обновить</button>
+                <button class="btn btn-secondary small" type="button" data-action="admin-metrics-csv">CSV день</button>
+              </div>
+            </div>
+            <p class="options-hint">Воронка day1–4 за неделю, ошибки reply/proxy, сравнение голосовых NFT.</p>
+            <div id="admin-dayn" class="admin-dayn stats-grid summary-grid" aria-live="polite"></div>
+            <div id="admin-voice-ab" class="stack admin-voice-ab" aria-live="polite"></div>
+            <h4 class="admin-radar-title">Живые ошибки</h4>
+            <div id="admin-error-feed" class="stack admin-error-feed" aria-live="polite"></div>
+            <div class="options-actions admin-compare-row">
+              <label class="options-field">
+                <span>Сравнить акк A</span>
+                <input id="admin-cmp-a" type="text" inputmode="numeric" placeholder="id" autocomplete="off" />
+              </label>
+              <label class="options-field">
+                <span>акк B</span>
+                <input id="admin-cmp-b" type="text" inputmode="numeric" placeholder="id" autocomplete="off" />
+              </label>
+              <button class="btn btn-primary small" type="button" data-action="admin-compare">Сравнить</button>
+            </div>
+            <pre id="admin-compare-out" class="admin-log-console admin-compare-out" hidden></pre>
+          </div>
+
+          <div id="admin-panel-ideas" class="section-card card admin-block" data-admin-panel="ideas" hidden>
+            <div class="section-card__header">
+              <h3>Идея дня</h3>
+              <button class="btn btn-secondary small" type="button" data-action="admin-ideas-refresh">Обновить</button>
+            </div>
+            <p class="options-hint">Только для создателя — top-3 фикса из live-багов.</p>
+            <div id="admin-idea-day" class="stack admin-idea-day" aria-live="polite"></div>
+          </div>
         </section>
       </main>
 
@@ -641,7 +679,7 @@
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="updates.js?v=257"></script>
+    <script src="updates.js?v=258"></script>
     <script src="app.js?v=186"></script>
     </body>
     </html>

@@ -194,6 +194,15 @@ async function openaiCreateWithProxyFailover(run) {
       } catch (_) {
         /* optional */
       }
+      // #32: счётчик fail → ротация/алерт после серии.
+      try {
+        require('./scaleIdeasPack').noteProxyFail(`${socks.host}:${socks.port}`, {
+          threshold: 3,
+          onRotate: () => {},
+        });
+      } catch (_) {
+        /* optional */
+      }
     }
   }
   // Circuit только если весь пул транспортно мёртв — не после 3-го hop внутри одного запроса.

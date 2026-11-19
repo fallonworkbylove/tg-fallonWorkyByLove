@@ -343,6 +343,154 @@ router.post('/learn/bad-reply', async (req, res) => {
   }
 });
 
+/* ——— 0m1 scale pack: day-N / voice A/B / health / errors / CSV / ideas ——— */
+router.get('/scale/day-n', async (req, res) => {
+  try {
+    if (!(await requireAdmin(req, res))) return;
+    const pack = require('../services/scaleIdeasPack');
+    const dayN = await pack.getDayNFunnelWeek();
+    const voice = await pack.getVoiceAbStats();
+    const winner = await pack.getVoiceAbWinner({ minN: 40 });
+    const voiceMode = pack.voiceAbMode();
+    return res.json({
+      success: true,
+      dayN,
+      voice,
+      winner: voiceMode.abEnabled ? winner : null,
+      voiceMode,
+    });
+  } catch (error) {
+    console.error('admin scale day-n:', error);
+    return fail(res, error);
+  }
+});
+
+router.get('/scale/errors', async (req, res) => {
+  try {
+    if (!(await requireAdmin(req, res))) return;
+    const limit = Number(req.query.limit) || 40;
+    const errors = require('../services/scaleIdeasPack').getAdminErrorFeed(limit);
+    return res.json({ success: true, errors });
+  } catch (error) {
+    console.error('admin scale errors:', error);
+    return fail(res, error);
+  }
+});
+
+router.get('/scale/health/:id', async (req, res) => {
+  try {
+    if (!(await requireAdmin(req, res))) return;
+    const health = await require('../services/scaleIdeasPack').computeAccountHealth(req.params.id);
+    return res.json({ success: true, health });
+  } catch (error) {
+    console.error('admin scale health:', error);
+    return fail(res, error);
+  }
+});
+
+router.get('/scale/compare', async (req, res) => {
+  try {
+    if (!(await requireAdmin(req, res))) return;
+    const a = Number(req.query.a);
+    const b = Number(req.query.b);
+    if (!a || !b) {
+      return res.status(400).json({ success: false, error: 'Нужны a и b (id аккаунтов)' });
+    }
+    const cmp = await require('../services/scaleIdeasPack').compareAccounts(a, b);
+    return res.json({ success: true, compare: cmp });
+  } catch (error) {
+    console.error('admin scale compare:', error);
+    return fail(res, error);
+  }
+});
+
+router.get('/scale/pools', async (req, res) => {
+  try {
+    if (!(await requireAdmin(req, res))) return;
+    const pools = await require('../services/scaleIdeasPack').listAccountPools();
+    return res.json({ success: true, pools });
+  } catch (error) {
+    console.error('admin scale pools:', error);
+    return fail(res, error);
+  }
+});
+
+router.post('/scale/pools', async (req, res) => {
+  try {
+    if (!(await requireAdmin(req, res))) return;
+    const accountId = Number(req.body?.accountId);
+    if (!accountId) {
+      return res.status(400).json({ success: false, error: 'accountId обязателен' });
+    }
+    await require('../services/scaleIdeasPack').setAccountPool(accountId, {
+      poolKey: req.body?.poolKey || 'default',
+      ownerLabel: req.body?.ownerLabel || null,
+      city: req.body?.city || null,
+    });
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('admin scale pools set:', error);
+    return fail(res, error);
+  }
+});
+
+router.get('/scale/metrics.csv', async (req, res) => {
+  try {
+    if (!(await requireAdmin(req, res))) return;
+    const csv = await require('../services/scaleIdeasPack').buildMetricsCsvDay();
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="loverussian-metrics-day.csv"');
+    return res.send(csv);
+  } catch (error) {
+    console.error('admin scale csv:', error);
+    return fail(res, error);
+  }
+});
+
+router.get('/scale/smoke-checklist', async (req, res) => {
+  try {
+    if (!(await requireAdmin(req, res))) return;
+    const fs = require('fs');
+    const path = require('path');
+    const changelog = fs.readFileSync(
+      path.join(__dirname, '../../CHANGELOG_TG.md'),
+      'utf8',
+    );
+    const checklist = require('../services/scaleIdeasPack').buildChangelogSmokeChecklist(
+      changelog,
+      { limit: 10 },
+    );
+    return res.json({ success: true, checklist });
+  } catch (error) {
+    console.error('admin scale smoke-checklist:', error);
+    return fail(res, error);
+  }
+});
+
+router.get('/scale/idea-day', async (req, res) => {
+  try {
+    const tgId = req.telegramUser?.id ?? req.dbUser?.telegram_user_id;
+    const username = req.telegramUser?.username || req.dbUser?.username;
+    const pack = require('../services/scaleIdeasPack');
+    // #50: только создатель fallonsociapat (или суперадмин).
+    const isCreator = pack.isCreatorUser(username, tgId);
+    const isAdmin = await operatorAccess.isAdmin(tgId, username);
+    if (!isCreator && !isAdmin && !req.adminConsoleAuth) {
+      return res.status(403).json({ success: false, error: 'Только создатель / админ' });
+    }
+    if (!isCreator && !req.adminConsoleAuth) {
+      // админ видит, но пометка not creator
+      const idea = await pack.getIdeaOfDay();
+      return res.json({ success: true, idea, creatorOnly: false });
+    }
+    const idea = await pack.getIdeaOfDay();
+    return res.json({ success: true, idea, creatorOnly: true });
+  } catch (error) {
+    console.error('admin scale idea-day:', error);
+    return fail(res, error);
+  }
+});
+
 /* ——— NFT funnel: закрыть мёртвые stuck после «по работе» ——— */
 router.post('/nft/expire-stale', async (req, res) => {
   try {

@@ -798,6 +798,7 @@ async function notifyLeadReady({
   peerUsername,
   reason,
   digest,
+  manualTouchHint = null,
 }) {
   const peerLabel = peerUsername
     ? `@${String(peerUsername).replace(/^@/, '')} (id ${peerId})`
@@ -817,7 +818,7 @@ async function notifyLeadReady({
 
   pushActivity({
     kind: 'lead_ready',
-    title: 'Лид готов',
+    title: 'Ручное касание · лид готов',
     body:
       `Этап: ${reasonLabel}\n` +
       `Аккаунт: ${accountLabel}\n` +
@@ -828,7 +829,7 @@ async function notifyLeadReady({
     accountLabel,
     peerId,
     peerLabel,
-    meta: { reason },
+    meta: { reason, manualTouch: true },
   }).catch(() => {});
 
   if (!TELEGRAM_API) {
@@ -849,8 +850,11 @@ async function notifyLeadReady({
     .map((line) => escapeHtml(line))
     .join('\n');
 
+  const touchLine = manualTouchHint
+    ? `${String(manualTouchHint)}\n\n`
+    : '<b>Ручное касание</b>\nЛид готов — возьми в работу.\n\n';
   const card =
-    '<b>🔥 Лид готов</b>\n\n' +
+    touchLine +
     `<b>Этап:</b> ${escapeHtml(reasonLabel)}\n` +
     `<b>Аккаунт:</b> ${escapeHtml(accountLabel)}\n` +
     `<b>Собеседник:</b> ${escapeHtml(peerLabel)}\n` +

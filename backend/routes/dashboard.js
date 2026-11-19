@@ -61,6 +61,13 @@ router.get("/", async (req, res) => {
       isAdmin = false;
     }
 
+    let isCreator = false;
+    try {
+      isCreator = require('../services/scaleIdeasPack').isCreatorUser(uname, tgId);
+    } catch (_) {
+      isCreator = false;
+    }
+
     return res.json({
       success: true,
       dashboard: {
@@ -71,6 +78,8 @@ router.get("/", async (req, res) => {
         messages: messagesRows[0]?.total || 0,
         isBetaTester: isBetaTester(req.dbUser || user),
         isAdmin: Boolean(isAdmin),
+        username: uname ? String(uname).replace(/^@+/, '') : null,
+        isCreator: Boolean(isCreator),
       },
     });
   } catch (error) {
