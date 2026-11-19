@@ -9,10 +9,16 @@ description: >-
 # LoveRussian deploy
 
 ## Host
-- SSH: `root@loverussian.duckdns.org`
+- SSH: `root@loverussian.duckdns.org` (Mac alias after setup: `loverussian`)
 - App: `/root/opt/tgbot/tg-miniapp-loverussian`
 - PM2: `tgbot`
 - Never empty PROXY_LIST — keep ≥5 alive socks5 DC proxies
+
+## Mac (same GitHub account / same VPS key)
+1. One-time: `bash scripts/install-ssh-mac.sh` (key from `secrets/ssh/`, must keep repo **private**).
+2. Ship: `bash scripts/mac-ship.sh <tag> [extra files…]` — scp to `/tmp/<tag>` + remote `_deploy_<tag>.sh`.
+3. Or Cursor on Mac: same fix-loop / this skill; use `ssh loverussian` / `scp … loverussian:`.
+4. Docs: `docs/MAC_DEPLOY.md`.
 
 ## Steps
 1. Pick next tag (`0gc`, `0gd`…) from latest `CHANGELOG_TG.md`.
