@@ -465,6 +465,11 @@ const api = {
       method: 'DELETE',
     }),
 
+  flagBadReply: (accountId, peerId, body = {}) =>
+    request(`/accounts/conversations/${accountId}/${peerId}/bad-reply`, {
+      method: 'POST',
+      body,
+    }),
   getConversations: (opts = {}) => {
     const params = new URLSearchParams();
     if (opts.sort) params.set('sort', opts.sort);
@@ -596,13 +601,13 @@ const state = {
   conversationsStage: '',
   funnelCounts: {},
   funnelLabels: {
-    hello: 'Знакомство',
-    chat: 'Общение',
-    interest: 'Интерес',
-    pitch: 'Предложка',
-    operator: 'Оператор',
+    day1: '1 день',
+    day2: '2 день',
+    day3: '3 день · NFT',
+    day4: '4 день · NFT',
     filtered: 'Отсев',
   },
+  funnelStages: ['day1', 'day2', 'day3', 'day4'],
 
   options: {
     delay: 15,
@@ -1128,6 +1133,9 @@ async function loadConversations() {
   });
   state.conversations = getResponseArray(response, 'conversations');
   state.funnelCounts = response.funnel || {};
+  if (Array.isArray(response.stages) && response.stages.length) {
+    state.funnelStages = response.stages;
+  }
   if (response.labels && typeof response.labels === 'object') {
     state.funnelLabels = { ...state.funnelLabels, ...response.labels };
   }
@@ -1249,9 +1257,8 @@ function renderPanel() {
 
   const online = state.accounts.filter((a) => a.is_online).length;
   const aiOn = state.accounts.filter((a) => isAiEnabled(a)).length;
-  const hotLeads = Number(state.funnelCounts?.pitch || 0) +
-    Number(state.funnelCounts?.operator || 0) +
-    Number(state.funnelCounts?.interest || 0);
+  const hotLeads = Number(state.funnelCounts?.day3 || 0) +
+    Number(state.funnelCounts?.day4 || 0);
 
   const liveEl = document.getElementById('panel-live');
   if (liveEl) {
@@ -1607,9 +1614,27 @@ function renderConversations() {
   const stageFilter = state.conversationsStage || '';
   const counts = state.funnelCounts || {};
   const labels = state.funnelLabels || {};
-  const stages = ['hello', 'chat', 'interest', 'pitch', 'operator', 'filtered'];
+  const stages =
+    Array.isArray(state.funnelStages) && state.funnelStages.length
+      ? state.funnelStages
+      : ['day1', 'day2', 'day3', 'day4'];
+
+  const onboardKey = 'lr-funnel-onboard-v1';
+  let showOnboard = false;
+  try {
+    showOnboard = localStorage.getItem(onboardKey) !== '1';
+  } catch (_) {
+    showOnboard = true;
+  }
+  const onboardBanner = showOnboard
+    ? `<div class="funnel-onboard" data-action="dismiss-onboard">
+        <strong>Воронка по дням</strong>
+        <p>1 день — знакомство · 2 день — общение · 3–4 день — NFT-кампания (голос и хендофф). Нажми, чтобы скрыть.</p>
+      </div>`
+    : '';
 
   const funnelBar = `
+    ${onboardBanner}
     <div class="funnel-bar">
       <button class="btn btn-secondary small chip-btn ${!stageFilter ? 'is-active' : ''}" type="button" data-action="funnel-filter" data-stage="">Все</button>
       ${stages
@@ -1689,7 +1714,7 @@ function renderConversations() {
         const tier = item.leadTier ?? item.lead_tier ?? 'cold';
         const paused = Boolean(item.autoreplyDisabled ?? item.autoreply_disabled);
         const focused = Boolean(item.operatorFocus ?? item.operator_focus);
-        const funnelStage = item.funnelStage ?? item.funnel_stage ?? 'chat';
+        const funnelStage = item.funnelStage ?? item.funnel_stage ?? 'day1';
         const funnelLabel =
           item.funnelLabel ?? item.funnel_label ?? labels[funnelStage] ?? funnelStage;
         const funnelAuto = item.funnelAuto ?? item.funnel_auto ?? true;
@@ -1791,6 +1816,21 @@ function renderConversations() {
             >
               В примеры
             </button>
+            <div class="bad-reply-wrap">
+              <button
+                class="btn btn-secondary small"
+                data-action="bad-reply-toggle"
+                type="button"
+              >
+                Плохой ответ
+              </button>
+              <div class="bad-reply-reasons" hidden>
+                <button class="chip-btn" type="button" data-action="bad-reply" data-reason="echo" data-account="${escapeHtml(String(accountId))}" data-peer="${escapeHtml(String(peerId))}">Эхо</button>
+                <button class="chip-btn" type="button" data-action="bad-reply" data-reason="offtopic" data-account="${escapeHtml(String(accountId))}" data-peer="${escapeHtml(String(peerId))}">Мимо</button>
+                <button class="chip-btn" type="button" data-action="bad-reply" data-reason="robot" data-account="${escapeHtml(String(accountId))}" data-peer="${escapeHtml(String(peerId))}">Робот</button>
+                <button class="chip-btn" type="button" data-action="bad-reply" data-reason="other" data-account="${escapeHtml(String(accountId))}" data-peer="${escapeHtml(String(peerId))}">Другое</button>
+              </div>
+            </div>
             <button
               class="btn btn-danger small"
               data-action="clear-history"
@@ -2688,7 +2728,10 @@ function renderAdmin() {
       <div class="stat-card"><strong>${Number(board.staleDialog || 0)}</strong><span>NFT закрыто (тишина)</span></div>
       <div class="stat-card"><strong>${Number(board.openWork || board.workPending || 0)}</strong><span>Ждут «по работе»</span></div>
       <div class="stat-card"><strong>${Number(board.liveDialog90 || 0)}</strong><span>Живые под ГС</span></div>
-      <div class="stat-card"><strong>${Number(board.voice7d || 0)}</strong><span>ГС за 7д</span></div>
+      <div class="stat-card"><strong>${Number(board.voice7d || board.campaignArchive?.voice7d || 0)}</strong><span>ГС за 7д</span></div>
+      <div class="stat-card"><strong>${Number(board.campaignArchive?.workSent || board.workSent || 0)}</strong><span>Кампания: work ушло</span></div>
+      <div class="stat-card"><strong>${Number(board.campaignArchive?.stuck || board.stuckWorkNoVoice || 0)}</strong><span>Архив: stuck</span></div>
+      <div class="stat-card"><strong>${Number(board.campaignArchive?.stale || board.staleDialog || 0)}</strong><span>Архив: тишина</span></div>
       <div class="stat-card"><strong>${Number(ph.work_alive ?? ph.proxy_len ?? '—')}</strong><span>Прокси живые</span></div>
       <div class="stat-card"><strong>${escapeHtml(costLabel)}</strong><span>Токены сегодня</span></div>
       <div class="stat-card stat-card--accent nft-funnel-actions">
@@ -3249,8 +3292,25 @@ async function handleDelete(accountId) {
 /**
  * Включение AI.
  */
+function startAiChecklist(account) {
+  const gaps = [];
+  if (!account) return ['аккаунт'];
+  const prompt = String(account.prompt || account.persona || '').trim();
+  if (prompt.length < 40) gaps.push('анкета (мало текста)');
+  if (!account.is_online && account.online !== true) gaps.push('не в сети');
+  return gaps;
+}
+
 async function handleAiToggle(accountId) {
   try {
+    const account = (state.accounts || []).find((a) => String(a.id) === String(accountId));
+    const gaps = startAiChecklist(account);
+    if (gaps.length) {
+      const ok = window.confirm(
+        `Перед стартом AI проверь:\n• ${gaps.join('\n• ')}\n\nВсё равно включить?`,
+      );
+      if (!ok) return;
+    }
     await api.startAi(accountId);
 
     await Promise.all([
@@ -4260,7 +4320,7 @@ function bindEvents() {
     }
 
     if (action === 'admin-bad-reply') {
-      const reply = String(event.target?.dataset?.reply || '').trim();
+      const reply = String(target.dataset.reply || '').trim();
       if (!reply) return;
       api
         .adminFlagBadReply({ reply, trigger: 'admin:activity' })
@@ -4543,6 +4603,36 @@ function bindEvents() {
       return;
     }
 
+    if (action === 'bad-reply-toggle') {
+      const wrap = target.closest('.bad-reply-wrap');
+      const panel = wrap?.querySelector('.bad-reply-reasons');
+      if (panel) panel.hidden = !panel.hidden;
+      return;
+    }
+    if (action === 'bad-reply') {
+      const accountId = target.dataset.account;
+      const peerId = target.dataset.peer;
+      const reason = target.dataset.reason || 'other';
+      const stage = state.conversationsStage || 'general';
+      api
+        .flagBadReply(accountId, peerId, { reason, stage })
+        .then(() => {
+          notify(
+            reason === 'echo'
+              ? 'Пометили: эхо'
+              : reason === 'offtopic'
+                ? 'Пометили: мимо темы'
+                : reason === 'robot'
+                  ? 'Пометили: робот'
+                  : 'Пометили как плохой ответ',
+          );
+          const wrap = target.closest('.bad-reply-wrap');
+          const panel = wrap?.querySelector('.bad-reply-reasons');
+          if (panel) panel.hidden = true;
+        })
+        .catch((err) => handleRequestError(err));
+      return;
+    }
     if (action === 'to-examples') {
       handleToExamples(target.dataset.account, target.dataset.peer);
       return;
@@ -4590,6 +4680,13 @@ function bindEvents() {
       return;
     }
 
+    if (action === 'dismiss-onboard') {
+      try {
+        localStorage.setItem('lr-funnel-onboard-v1', '1');
+      } catch (_) {}
+      renderConversations();
+      return;
+    }
     if (action === 'funnel-filter') {
       state.conversationsStage = target.dataset.stage || '';
       reloadConversationsView();

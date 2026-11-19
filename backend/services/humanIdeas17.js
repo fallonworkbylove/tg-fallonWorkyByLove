@@ -147,9 +147,11 @@ function homeAskHint(userMessage) {
 
 /* ——— робот / скрипт — не соглашаться ——— */
 const BOT_ACCUSE_RE =
-  /(?:ты\s+(?:робот|бот)|это\s+(?:робот|бот)|с\s+роботом|как\s+робот|нейросет|chatgpt|скрипт)/i;
+  /(?:ты\s+(?:робот|бот)|это\s+(?:робот|бот)|с\s+роботом|как\s+робот|нейросет|chatgpt|скрипт|точно\s+реальн)/i;
 const BOT_ADMIT_RE =
   /(?:^|[^а-яё])(?:ну\s+да|да|ага|угу|бывает|как-то\s+так|автоматизированн|скрипт\s*[-—:]\s*это)/i;
+const BOT_LEAK_RE =
+  /обычн\w*\s+бот|бот\s+в\s+телег|я\s+(?:же\s+)?(?:бот|робот|нейросет)|да[,]?\s*я\s+бот|просто\s+бот/i;
 
 const BOT_DENY_ALTS = [
   'хах ну ты чего)',
@@ -160,27 +162,87 @@ const BOT_DENY_ALTS = [
 
 function denyBotOrScriptAdmit(reply, userMessage) {
   const u = bare(userMessage);
-  if (!BOT_ACCUSE_RE.test(u)) return reply;
   const { tag, body } = stripTags(reply);
+  // Прямой слив «обычный бот в телеге» — режем всегда.
+  if (BOT_LEAK_RE.test(body)) {
+    return tag + pick(BOT_DENY_ALTS);
+  }
+  if (!BOT_ACCUSE_RE.test(u)) return reply;
   if (/я\s+не\s+(?:бот|робот)|живая|просто\s+коротко|смешно\)/i.test(body)) {
     return reply;
   }
   if (
     BOT_ADMIT_RE.test(body) ||
     /автоматизированн|скрипт\s*[-—:]|ничего\s+особенного/i.test(body) ||
-    /ну\s+да\)\s*как-то\s+так/i.test(body)
+    /ну\s+да\)\s*как-то\s+так/i.test(body) ||
+    /хм\s+ну\s+хз,\s*мне\s+наоборот/i.test(body)
   ) {
     return tag + pick(BOT_DENY_ALTS);
   }
   return reply;
 }
 
+/** После outdoor-кружка нельзя «дома на диване» без признания, что кадр старый. */
+function fixOutdoorIndoorLie(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTags(reply);
+  const indoorNow =
+    /дома\s*,?\s*сижу|на\s+диване|сижу\s+дома|дома\s+на\s+диван|в\s+пижаме\s+дома/i.test(body);
+  if (!indoorNow) return reply;
+  const recent = (Array.isArray(history) ? history : []).slice(-8);
+  const sentOutdoorCircle = recent.some((m) => {
+    if (!m || m.role !== 'assistant') return false;
+    const c = String(m.content || '');
+    return (
+      /\[медиа:.*круж|\[медиа:#\d+\].*круж|video\s*note|<<CIRCLE>>/i.test(c) ||
+      (/\[медиа:#\d+\]/.test(c) && /улиц|снег|outdoor|на\s+улиц/i.test(c))
+    );
+  });
+  if (!sentOutdoorCircle) return reply;
+  if (/старый|раньше|вспомнил|гулял/i.test(body)) return reply;
+  return tag + 'ахах это старый кружок был, щас дома на диване)';
+}
+
+/** Однословные робот-пузыри: «Нечего» / «Лежу» / «А ты». */
+const ROBOT_ONEWORD_RE =
+  /^(?:нечего|ничего|лежу|сижу|что|бывает|ок|а\s+ты|и\s+ты)\s*\)?$/i;
+
+function fixRobotOneWordBurst(reply, userMessage) {
+  if (!reply) return reply;
+  const lines = String(reply)
+    .split(/\n+/)
+    .map((l) => l.replace(/<<[^>]+>>/g, '').trim())
+    .filter(Boolean);
+  const shortOnes = lines.filter((l) => ROBOT_ONEWORD_RE.test(l) || l.split(/\s+/).length <= 2);
+  if (lines.length >= 2 && shortOnes.length >= 2) {
+    const msg = bare(userMessage);
+    if (/что\s+делаешь|чем\s+занят|как\s+ты|а\s+ты\s*\??/i.test(msg)) {
+      return 'лежу, ничего особо) а ты?';
+    }
+    return lines.slice(0, 1).join(' ') + (/\)$/.test(lines[0]) ? '' : ')');
+  }
+  const { tag, body } = stripTags(reply);
+  if (ROBOT_ONEWORD_RE.test(body) && /что\s+делаешь|чем\s+занят|как\s+ты/i.test(bare(userMessage))) {
+    return tag + 'лежу пока, ничего) а ты?';
+  }
+  return reply;
+}
+
 /* ——— отказ текстом + токен медиа ——— */
 const MEDIA_REFUSE_BODY_RE =
-  /(?:не\s+(?:кину|кидаю|буду|могу|хочу)|без\s+фот|давай\s+без\s+фото|сейчас\s+не\s+кину|стыдно\s+(?:такое\s+)?кидать|расскажу\s+текстом)/i;
+  /(?:не\s+(?:кину|кидаю|буду|могу|хочу)|без\s+фот|давай\s+без\s+фото|сейчас\s+не\s+кину|не\s+сегодня|не\s+сейчас|извин\w*|стыдно\s+(?:такое\s+)?кидать|расскажу\s+текстом)/i;
 const MEDIA_TOKEN_RE = /<<(PHOTO|VIDEO|CIRCLE)>>/i;
 
-const MEDIA_SEND_ACK = ['ща)', 'держи)', 'лови)', 'ну лови)', 'ок)'];
+const MEDIA_SEND_ACK = [
+  'окей, щас найду)',
+  'ща найду)',
+  'ок, секунду)',
+  'ща)',
+  'держи)',
+  'лови)',
+  'ну лови)',
+  'ок)',
+];
 
 function stripRefuseWhenMediaToken(reply) {
   const raw = String(reply || '');
@@ -351,6 +413,8 @@ function applyIdeas17Postfilters(reply, history, userMessage, systemPrompt) {
   out = stripRainbowCityConfusion(out, userMessage, systemPrompt);
   out = fixHomeAsk(out, userMessage);
   out = denyBotOrScriptAdmit(out, userMessage);
+  out = fixOutdoorIndoorLie(out, history);
+  out = fixRobotOneWordBurst(out, userMessage);
   out = softMeetAgree(out, userMessage);
   out = softenAdultMoral(out, userMessage);
   out = diversifyPackedExcuse(out, history);
@@ -365,6 +429,8 @@ module.exports = {
   stripRainbowCityConfusion,
   fixHomeAsk,
   denyBotOrScriptAdmit,
+  fixOutdoorIndoorLie,
+  fixRobotOneWordBurst,
   softMeetAgree,
   stripRefuseWhenMediaToken,
   diversifyPackedExcuse,

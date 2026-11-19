@@ -3,7 +3,7 @@
  * Smoke: пачка после аудита — цитаты, typos, thanks, vision mime, coach stub.
  */
 require('dotenv').config();
-if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = 'sk-test-smoke';
+if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = 'local-smoke-only';
 
 const ar = require('../services/aiResponder');
 const thin = require('../services/humanThinLayer');

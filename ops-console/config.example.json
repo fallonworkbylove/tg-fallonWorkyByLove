@@ -1,0 +1,5 @@
+{
+  "baseUrl": "https://loverussian.duckdns.org",
+  "token": "PASTE_ADMIN_CONSOLE_TOKEN_HERE",
+  "refreshSec": 20
+}

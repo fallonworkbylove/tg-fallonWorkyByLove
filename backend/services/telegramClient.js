@@ -20,7 +20,9 @@ const {
   accountDisplayName,
   findActiveAccountIdByUsername,
   getAccountUsername,
+  getAccountUsernameSync,
   isRevokedSessionError,
+  markFreshSession,
 } = require('./clientPool');
 const {
   conversationIsRussian,
@@ -74,12 +76,16 @@ const {
   messageBuffers,
   processingInFlight,
   deferredDialogs,
+  lastAnsweredMsgId,
   voiceSendInFlight,
   bufferKey,
   voiceSendKey,
   extractIncomingText,
   handleIncomingMessage,
 } = require('./inbound');
+const {
+  configureSilenceCatchup,
+} = require('./silenceCatchup');
 
 const {
   configureReplyPipeline,
@@ -124,8 +130,8 @@ const apiHash = process.env.TELEGRAM_API_HASH;
 const loginAuth = require('./loginAuth');
 
 loginAuth.configureLoginAuth({
-  apiId,
-  apiHash,
+    apiId,
+    apiHash,
   loginConnectionCandidates,
   workConnectionCandidates: connectionCandidates,
   loginPool: LOGIN_PROXY_POOL.length ? LOGIN_PROXY_POOL : PROXY_POOL,
@@ -144,10 +150,13 @@ const {
   resendLoginCode,
   confirmCode,
   confirmPassword,
+  releaseLoginHandoff,
   cancelPendingLogin,
   cancelAllPendingLoginsForUser,
   peekPendingLogin,
   qrImageUrl,
+  qrImageDataUrl,
+  qrImagePngBuffer,
   QR_MARKER,
 } = loginAuth;
 
@@ -157,29 +166,29 @@ const {
 // ---------------------------------------------------------------------------
 
 function onClientActivated(accountId, client) {
-  client.addEventHandler(
-    (event) => handleIncomingMessage(accountId, event),
-    new NewMessage({ incoming: true }),
-  );
+      client.addEventHandler(
+        (event) => handleIncomingMessage(accountId, event),
+        new NewMessage({ incoming: true }),
+      );
 
-  // Фоном дочитываем чаты, где собеседник писал до/пока мы были offline.
-  scanUnansweredDialogs(accountId, 0, { catchUp: true }).catch((e) =>
-    console.error(
-      `[${accountLabel(accountId)}] Скан при активации не удался:`,
-      e.message,
-    ),
-  );
+      // Фоном дочитываем чаты, где собеседник писал до/пока мы были offline.
+      scanUnansweredDialogs(accountId, 0, { catchUp: true }).catch((e) =>
+        console.error(
+          `[${accountLabel(accountId)}] Скан при активации не удался:`,
+          e.message,
+        ),
+      );
 
   startPeriodicScan(accountId);
 
-  if (!boundaryTimers.has(accountId)) {
-    workStateByAccount.set(accountId, timeStyle.getTimeStyle(getWorkZoneHour()).id);
-    const bTimer = setInterval(
-      () => checkWorkBoundary(accountId),
-      BOUNDARY_CHECK_MS,
-    );
-    if (typeof bTimer.unref === 'function') bTimer.unref();
-    boundaryTimers.set(accountId, bTimer);
+      if (!boundaryTimers.has(accountId)) {
+        workStateByAccount.set(accountId, timeStyle.getTimeStyle(getWorkZoneHour()).id);
+        const bTimer = setInterval(
+          () => checkWorkBoundary(accountId),
+          BOUNDARY_CHECK_MS,
+        );
+        if (typeof bTimer.unref === 'function') bTimer.unref();
+        boundaryTimers.set(accountId, bTimer);
   }
 }
 
@@ -212,16 +221,16 @@ configureTiming({
 configurePeers({
   onPeerRetired: async (accountId, peerId) => {
     try { await claimWorkMention(accountId, peerId); } catch (_) {}
-    try {
-      await ensureNftScheduleTable();
-      await db.execute(
-        `INSERT INTO nft_voice_schedule
-           (account_id, peer_id, scheduled_at, work_mention_at, work_mention_sent)
-         VALUES (?, ?, NOW(), NOW(), 1)
-         ON DUPLICATE KEY UPDATE work_mention_sent = 1`,
-        [accountId, String(peerId)],
-      );
-    } catch (_) {}
+  try {
+    await ensureNftScheduleTable();
+    await db.execute(
+      `INSERT INTO nft_voice_schedule
+         (account_id, peer_id, scheduled_at, work_mention_at, work_mention_sent)
+       VALUES (?, ?, NOW(), NOW(), 1)
+       ON DUPLICATE KEY UPDATE work_mention_sent = 1`,
+      [accountId, String(peerId)],
+    );
+  } catch (_) {}
   },
 });
 
@@ -233,6 +242,18 @@ configureScanCatchup({
   getProcessingInFlight: () => processingInFlight,
   extractIncomingText: (...args) => extractIncomingText(...args),
   processBufferedMessages: (...args) => processBufferedMessages(...args),
+});
+
+configureSilenceCatchup({
+  getAccountSettings: (id) => getAccountSettings(id),
+  bufferKey: (a, p) => bufferKey(a, p),
+  getMessageBuffers: () => messageBuffers,
+  getDeferredDialogs: () => deferredDialogs,
+  getProcessingInFlight: () => processingInFlight,
+  getLastAnsweredMsgId: () => lastAnsweredMsgId,
+  extractIncomingText: (...args) => extractIncomingText(...args),
+  processBufferedMessages: (...args) => processBufferedMessages(...args),
+  saveMessage: (...args) => saveMessage(...args),
 });
 
 configureNftCampaign({
@@ -304,7 +325,7 @@ const BOUNDARY_CHECK_MS = 60 * 1000;
  * Проверяет переход через границу рабочих часов и шлёт приветствие.
  * Вызывается по таймеру раз в минуту.
  */
-function checkWorkBoundary(accountId) {
+  function checkWorkBoundary(accountId) {
     tickNftCampaign(accountId).catch((err) => {
       console.error(
         `[${accountLabel(accountId)}] Фраза про работу перед голосовым:`,
@@ -320,7 +341,7 @@ function checkWorkBoundary(accountId) {
     }
     workStateByAccount.set(accountId, currentPeriodId);
     tickDailyLife(accountId);
-}
+  }
 
 module.exports = {
   extractMediaRequest,
@@ -333,15 +354,19 @@ module.exports = {
   resendLoginCode,
   confirmCode,
   confirmPassword,
+  releaseLoginHandoff,
   cancelPendingLogin,
   cancelAllPendingLoginsForUser,
   peekPendingLogin,
   extractLoginCode,
   normalizeLoginPhone,
   qrImageUrl,
+  qrImageDataUrl,
+  qrImagePngBuffer,
   QR_MARKER,
   activateAccount,
   deactivateAccount,
+  markFreshSession,
   forgetRevokedAccount,
   pingActiveSession,
   getActiveClient,
@@ -349,6 +374,7 @@ module.exports = {
   accountLabel,
   accountDisplayName,
   getAccountUsername,
+  getAccountUsernameSync,
   findActiveAccountIdByUsername,
   scanUnansweredDialogs,
   flushAllDeferredNow,

@@ -1,0 +1,17 @@
+---
+description: UI polish миниаппа — всегда через Tasty (design-taste-frontend)
+globs: frontend/**/*.{css,html,js}
+alwaysApply: false
+---
+
+# Tasty для UI LoveRussian
+
+См. также alwaysApply: `always-use-skills-plugins.mdc`.
+
+Перед любым redesign / restyle / «криво» / «отступы» / polish миниаппа:
+
+1. Прочитай `.agents/skills/design-taste-frontend/SKILL.md` (и при споре по краям — `references/layout-v4.md`).
+2. Жёсткие правила для кабинета: **equal left/right edges**, одна система отступов, симметричные radius, без обрезки `width:100%` + margin, без голубого от Telegram `button_color`.
+3. Выкат всё равно через **loverussian-fix-loop** (changelog miniapp+ops, deploy, PROXY≥5, post-add audit).
+
+Не закрывай UI-задачу без проверки равных краёв и живого `styles.css?v=` на VPS.

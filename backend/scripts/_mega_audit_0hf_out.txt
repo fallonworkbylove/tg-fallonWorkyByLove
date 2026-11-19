@@ -1,0 +1,115 @@
+﻿======== HARD AUDIT 0hf 2026-11-01T19:02Z ========
+--- PM2 ---
+{'status': 'online', 'restarts': 360, 'node': '20.20.2', 'pm2_PROXY_LEN': 9, 'pm2_OPENAI_LEN': 22}
+--- ENV lens ---
+env_PROXY_LEN 9
+env_OPENAI_PROXY_LEN 22
+--- HTTP surface ---
+401 http://127.0.0.1:3000/health
+401 http://127.0.0.1:3000/
+401 http://127.0.0.1:3000/ops/
+401 http://127.0.0.1:3000/api/console
+401 http://127.0.0.1:3000/api/admin/accounts
+--- frontend/ops markers ---
+526:    <script src="updates.js?v=136"></script>
+1
+1
+60251 /root/opt/tgbot/tg-miniapp-loverussian/ops-console/app/styles.css
+1108:.activity-top {
+1117:.activity-top__row {
+1124:.activity-top__row h2 {
+1892:    max-width: 100%;
+1918:    max-width: 100%;
+--- wiring smoke ---
+OK stub lipetsk not bare ok
+OK stub lipetsk has substance: ╨░╨│╨░, ╤ü ╨┤╨╡╤é╤ü╤é╨▓╨░ ╨┐╨╛╤ç╤é╨╕)
+OK stub lipetsk not just ok
+OK stub media ΓåÆ defer text: ╨░╤à╨░╤à ╨┤╨░╨▓╨░╨╣ ╤ç╤â╤é╤î ╨┐╨╛╨╖╨╢╨╡, ╤ü╨╡╨╣╤ç╨░╤ü ╨╖╨░╨╜╤Å╤é╨░)
+OK bare ok stays on bare ack user
+OK hardening expands stub on Q: ╨┤╨░ ╤é╤â╤é ╨▓╤ï╤Ç╨╛╤ü╨╗╨░ ╨┐╨╛╤ç╤é╨╕)
+OK ╨║╨░╨║ ╨╕ ╨▓╤ç╨╡╤Ç╨░ never silent-react (hit=0)
+OK forceBareOk still works on ╨╛╨║)
+OK no life-lag on video life
+OK no life-lag on circle ask
+OK no life-lag on ?
+OK no life-lag on ╨║╨░╨║ ╨╕ ╨▓╤ç╨╡╤Ç╨░
+OK life-lag capped 25ΓÇô55s: 25000
+SMOKE_OK
+OK  aiResponder wires hardening
+OK  pipeline requires hardening
+OK  pipeline skipClone hints
+
+ALL PASS
+[proxy] ╨ñ╨░╨╣╨╗ /root/opt/tgbot/tg-miniapp-loverussian/backend/config/proxies-login.txt: ╨╜╨░╨╣╨┤╨╡╨╜╨╛ 140 ╨╖╨░╨┐╨╕╤ü╨╡╨╣.
+[proxy] Work-╨┐╤Ç╨╛╨║╤ü╨╕ ╨╜╨╡ ╨╖╨░╨┤╨░╨╜╤ï ΓÇö ╨┐╤Ç╤Å╨╝╨╛╨╡ ╨┐╨╛╨┤╨║╨╗╤Ä╤ç╨╡╨╜╨╕╨╡ ╨║ Telegram.
+[proxy] Login (residential) ╨┐╤â╨╗: 140 ΓÇö socks5 74.81.81.81:10000, socks5 74.81.81.81:10001, socks5 74.81.81.81:10002, socks5 74.81.81.81:10003, socks5 74.81.81.81:10004, socks5 74.81.81.81:10005, socks5 74.81.81.81:10006, socks5 74.81.81.81:10007, socks5 74.81.81.81:10008, socks5 74.81.81.81:10009, socks5 74.81.81.81:10010, socks5 74.81.81.81:10011, socks5 74.81.81.81:10012, socks5 74.81.81.81:10013, socks5 74.81.81.81:10014, socks5 74.81.81.81:10015, socks5 74.81.81.81:10016, socks5 74.81.81.81:10017, socks5 74.81.81.81:10018, socks5 74.81.81.81:10019, socks5 74.81.81.81:10020, socks5 74.81.81.81:10021, socks5 74.81.81.81:10022, socks5 74.81.81.81:10023, socks5 74.81.81.81:10024, socks5 74.81.81.81:10025, socks5 74.81.81.81:10026, socks5 74.81.81.81:10027, socks5 74.81.81.81:10028, socks5 74.81.81.81:10029, socks5 74.81.81.81:10030, socks5 74.81.81.81:10031, socks5 74.81.81.81:10032, socks5 74.81.81.81:10033, socks5 74.81.81.81:10034, socks5 74.81.81.81:10035, socks5 74.81.81.81:10036, socks5 74.81.81.81:10037, socks5 74.81.81.81:10038, socks5 74.81.81.81:10039, socks5 206.223.224.181:10000, socks5 206.223.224.181:10001, socks5 206.223.224.181:10002, socks5 206.223.224.181:10003, socks5 206.223.224.181:10004, socks5 206.223.224.181:10005, socks5 206.223.224.181:10006, socks5 206.223.224.181:10007, socks5 206.223.224.181:10008, socks5 206.223.224.181:10009, socks5 206.223.224.181:10010, socks5 206.223.224.181:10011, socks5 206.223.224.181:10012, socks5 206.223.224.181:10013, socks5 206.223.224.181:10014, socks5 206.223.224.181:10015, socks5 206.223.224.181:10016, socks5 206.223.224.181:10017, socks5 206.223.224.181:10018, socks5 206.223.224.181:10019, socks5 206.223.224.181:10020, socks5 206.223.224.181:10021, socks5 206.223.224.181:10022, socks5 206.223.224.181:10023, socks5 206.223.224.181:10024, socks5 206.223.224.181:10025, socks5 206.223.224.181:10026, socks5 206.223.224.181:10027, socks5 206.223.224.181:10028, socks5 206.223.224.181:10029, socks5 206.223.224.181:10030, socks5 206.223.224.181:10031, socks5 206.223.224.181:10032, socks5 206.223.224.181:10033, socks5 206.223.224.181:10034, socks5 206.223.224.181:10035, socks5 206.223.224.181:10036, socks5 206.223.224.181:10037, socks5 206.223.224.181:10038, socks5 206.223.224.181:10039, socks5 206.223.224.181:10040, socks5 206.223.224.181:10041, socks5 206.223.224.181:10042, socks5 206.223.224.181:10043, socks5 206.223.224.181:10044, socks5 206.223.224.181:10045, socks5 206.223.224.181:10046, socks5 206.223.224.181:10047, socks5 206.223.224.181:10048, socks5 206.223.224.181:10049, socks5 206.223.224.181:10050, socks5 206.223.224.181:10051, socks5 206.223.224.181:10052, socks5 206.223.224.181:10053, socks5 206.223.224.181:10054, socks5 206.223.224.181:10055, socks5 206.223.224.181:10056, socks5 206.223.224.181:10057, socks5 206.223.224.181:10058, socks5 206.223.224.181:10059, socks5 206.223.224.181:10060, socks5 206.223.224.181:10061, socks5 206.223.224.181:10062, socks5 206.223.224.181:10063, socks5 206.223.224.181:10064, socks5 206.223.224.181:10065, socks5 206.223.224.181:10066, socks5 206.223.224.181:10067, socks5 206.223.224.181:10068, socks5 206.223.224.181:10069, socks5 206.223.224.181:10070, socks5 206.223.224.181:10071, socks5 206.223.224.181:10072, socks5 206.223.224.181:10073, socks5 206.223.224.181:10074, socks5 206.223.224.181:10075, socks5 206.223.224.181:10076, socks5 206.223.224.181:10077, socks5 206.223.224.181:10078, socks5 206.223.224.181:10079, socks5 206.223.224.181:10080, socks5 206.223.224.181:10081, socks5 206.223.224.181:10082, socks5 206.223.224.181:10083, socks5 206.223.224.181:10084, socks5 206.223.224.181:10085, socks5 206.223.224.181:10086, socks5 206.223.224.181:10087, socks5 206.223.224.181:10088, socks5 206.223.224.181:10089, socks5 206.223.224.181:10090, socks5 206.223.224.181:10091, socks5 206.223.224.181:10092, socks5 206.223.224.181:10093, socks5 206.223.224.181:10094, socks5 206.223.224.181:10095, socks5 206.223.224.181:10096, socks5 206.223.224.181:10097, socks5 206.223.224.181:10098, socks5 206.223.224.181:10099
+--- stubs/gaps live ---
+Γùç injected env (31) from .env // tip: Γùê secrets for agents [www.dotenvx.com]
+STUBS24h 10
+Sun Nov 01 2026 18:58:29 GMT+0000 (Coordinated Universal Time) acc8 "╨┐╨╛╨╜╤Å╨╗╨░)"
+Sun Nov 01 2026 18:02:54 GMT+0000 (Coordinated Universal Time) acc36 "╨╛╨║)"
+Sun Nov 01 2026 17:36:41 GMT+0000 (Coordinated Universal Time) acc36 "╨┐╨╛╨╜╤Å╨╗╨░)"
+Sun Nov 01 2026 17:28:26 GMT+0000 (Coordinated Universal Time) acc27 "╨╜╤â ╨┤╨░)"
+Sun Nov 01 2026 16:24:48 GMT+0000 (Coordinated Universal Time) acc27 "╨┐╨╛╨╜╤Å╨╗╨░)"
+Sun Nov 01 2026 16:13:42 GMT+0000 (Coordinated Universal Time) acc27 "╨┐╨╛╨╜╤Å╨╗╨░)"
+Sun Nov 01 2026 16:07:52 GMT+0000 (Coordinated Universal Time) acc27 "╨╜╤â ╨┤╨░)"
+Sun Nov 01 2026 15:52:36 GMT+0000 (Coordinated Universal Time) acc36 "╨╜╤â ╨┤╨░)"
+Sun Nov 01 2026 15:40:07 GMT+0000 (Coordinated Universal Time) acc36 "╨╜╤â ╨┤╨░)"
+Sun Nov 01 2026 13:22:38 GMT+0000 (Coordinated Universal Time) acc29 "╨┐╨╛╨╜╤Å╨╗╨░)"
+GAPS12h 5
+Sun Nov 01 2026 19:01:47 GMT+0000 (Coordinated Universal Time) acc8 +79046592069 825977620 "╨ú╨▓╨╗╨╡╤ç╨╡╨╜╨╕╨╡:\n╨á╨░╨▒╨╛╤é╨░╤é╤î ╨Ñ╨╛╨▒╨▒╨╕: ╨┤╨╡╨╜╤î╨│╨╕."
+Sun Nov 01 2026 18:59:51 GMT+0000 (Coordinated Universal Time) acc23 +79170163452 7774245433 "╨¡╤é╨╛ ╨┐╤Ç╨░╨▓╨╕╨╗╤î╨╜╨╛"
+Sun Nov 01 2026 18:57:09 GMT+0000 (Coordinated Universal Time) acc23 +79170163452 795047625 "╨¥╨╡ ╨┤╨░╨╗╨╡╨║╨╛ ╨╛╤é ╨æ╨╡╨╗╨│╨╛╤Ç╨╛╨┤╨░"
+Sun Nov 01 2026 18:53:47 GMT+0000 (Coordinated Universal Time) acc36 +79322199488 1464653518 "╨ñ╨╡╨╝╨╕╨╜╨╕╤ü╤é╨║╨░)"
+Sun Nov 01 2026 17:03:31 GMT+0000 (Coordinated Universal Time) acc27 +79959307173 6868829215 "╨£╨╛╨╢╨╡╤ê╤î ╨▓╨╕╨┤╨╡╨╛ ╨╖╨░╨┐╨╕╤ü╨░╤é╤î ╨╗╨░╨╣╤ä"
+open_unanswered_2h_pairs 5
+--- socks errors last 200 ---
+SocksClientError: Received invalid Socks5 initial handshake (invalid socks version)
+SocksClientError: Proxy connection timed out
+SocksClientError: Received invalid Socks5 initial handshake (invalid socks version)
+SocksClientError: Received invalid Socks5 initial handshake (invalid socks version)
+SocksClientError: Proxy connection timed out
+SocksClientError: Received invalid Socks5 initial handshake (invalid socks version)
+SocksClientError: Received invalid Socks5 initial handshake (invalid socks version)
+SocksClientError: Received invalid Socks5 initial handshake (invalid socks version)
+SocksClientError: Received invalid Socks5 initial handshake (invalid socks version)
+SocksClientError: Proxy connection timed out
+SocksClientError: Proxy connection timed out
+SocksClientError: Proxy connection timed out
+SocksClientError: Proxy connection timed out
+SocksClientError: Proxy connection timed out
+SocksClientError: Proxy connection timed out
+socks_error_lines_totalΓëê488
+--- outbound sample ---
+[79322184746 ΓÇö ╨ò╨║╨░╤é╨╡╤Ç╨╕╨╜╨░ ╨á╤Å╨▒╨╛╨▓╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å Mrassers: "╤à╨╝ ╨░ ╨┐╨╛╨┤╤Ç╨╛╨▒╨╜╨╡╨╡?"
+[79959307173 ΓÇö ╨Æ╨╕╨║╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å DeGur96: "╤ç╤é╨╛-╤é╨╛ ╨╕╨╜╤é╨╡╤Ç╨╡╤ü╨╜╨╛╨╡)
+[79322088586 ΓÇö ╨É╨╜╨░╤ü╤é╨░╤ü╨╕╤Å ╨í╤â╨▓╨╛╤Ç╨╛╨▓╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å ╨É╨╗╨╕╨╝: "╨┤╨░, ╨┐╨╛╨┤ ╨║╨╗╤â╨▒╨╜╤Å╨║ ╨╛╤ü╨╛╨▒╨╡╨╜╨╜╨╛ ╨╖╨░╨╢╨╕╨│╨░╤Ä"
+[79959307173 ΓÇö ╨Æ╨╕╨║╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å Original_Aleksandr: "╨╜╤â, ╨╕╨╜╨╛╨│╨┤╨░ ╨▓╤ï╤à╨╛╨┤╨╕╤é ╨╜╨╡╨┐╨╗╨╛╤à╨╛"
+[79170163452 ΓÇö Yulia] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å MART6296: "╨┤╨░, ╤ü╤é╨░╤Ç╨░╤Ä╤ü╤î ╨┐╨╛╨╝╨╛╤ç╤î"
+[79322088586 ΓÇö ╨É╨╜╨░╤ü╤é╨░╤ü╨╕╤Å ╨í╤â╨▓╨╛╤Ç╨╛╨▓╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å .: "╨┐╨╛╨║╨░"
+[79959307173 ΓÇö ╨Æ╨╕╨║╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å DeGur96: "╤Å ╨╕╨╖ ╨¢╨╕╨┐╨╡╤å╨║╨░, ╨╜╨╛ ╤Ç╨╛╨┤╨╛╨╝ ╨╕╨╖ ╨ó╨╕╨╝╨╛╤ê╨╡╨▓╤ü╨║╨░.
+[79046592069 ΓÇö ╨ò╨║╨░╤é╨╡╤Ç╨╕╨╜╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å kolyaa_52: "╨┤╨░, ╤â ╨▓╤ü╨╡╤à ╨▒╤ï╨▓╨░╤Ä╤é ╤é╨░╨║╨╕╨╡ ╨┤╨╜╨╕)"
+[79959307173 ΓÇö ╨Æ╨╕╨║╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å DeGur96: "╨╛╨▒╤ë╨╡╨╜╨╕╨╡, ╨▓ ╨╛╤ü╨╜╨╛╨▓╨╜╨╛╨╝)"
+[79322199488 ΓÇö ╨¢╨╕╨╖╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å vhnnnnnnnnnn: "╨╛╨╣ ╤â╨╢╨╡ ╤â╤é╤Ç╨╛) ╨┐╤Ç╨╕╨▓╨╡╤é"
+[79322088586 ΓÇö ╨É╨╜╨░╤ü╤é╨░╤ü╨╕╤Å ╨í╤â╨▓╨╛╤Ç╨╛╨▓╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å ╨É╨╗╨╕╨╝: "╤à╨╝, ╨┐╨╛╨╜╤Å╨╗╨░"
+[79322184746 ΓÇö ╨ò╨║╨░╤é╨╡╤Ç╨╕╨╜╨░ ╨á╤Å╨▒╨╛╨▓╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å Mrassers: "╤ü╨╛╨▒╨╕╤Ç╨░╨╗╨░ ╨▓╨╡╤ë╨╕, ╨┐╨╡╤Ç╨╡╨╡╨╖╨┤ ╨╜╨░ ╨┐╨╛╨┤╤à╨╛╨┤╨╡"
+[79959307173 ΓÇö ╨Æ╨╕╨║╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å DeGur96: "╨┐╨╛╨║╨░ ╨╜╨╡╨╝╨╜╨╛╨│╨╛, ╨╜╨╛ ╨┐╨╛╤ü╤é╨╡╨┐╨╡╨╜╨╜╨╛ ╨╜╨░╨║╨░╨┐╨╗╨╕╨▓╨░╨╡╤é╤ü╤Å)"
+[79959307173 ΓÇö ╨Æ╨╕╨║╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å DeGur96: "╨▓╤ü╤æ ╨╜╨╛╤Ç╨╝╨░╨╗╤î╨╜╨╛, ╨╛╨▒╤ë╨╡╨╜╨╕╨╡ ╨╕╨╜╤é╨╡╤Ç╨╡╤ü╨╜╨╛╨╡"
+[79959307173 ΓÇö ╨Æ╨╕╨║╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å DeGur96: "╨┤╨░, ╨┐╤Ç╨╕╤Å╤é╨╜╨╛"
+[79046592069 ΓÇö ╨ò╨║╨░╤é╨╡╤Ç╨╕╨╜╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å ska3kaska3ka: "╨┐╨╛╨╜╤Å╨╗╨░)"
+[79322088586 ΓÇö ╨É╨╜╨░╤ü╤é╨░╤ü╨╕╤Å ╨í╤â╨▓╨╛╤Ç╨╛╨▓╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å ╨É╨╗╨╕╨╝: "╨┐╨╛╨║╨░ ╨╜╨╡ ╤à╨╛╤ç╤â, ╨╛╨▒╤ë╨╡╨╜╨╕╨╡ ╨╕╨╜╤é╨╡╤Ç╨╡╤ü╨╜╨╜╨╡"
+[79046592069 ΓÇö ╨ò╨║╨░╤é╨╡╤Ç╨╕╨╜╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å ska3kaska3ka: "╨╜╤â ╨┤╨░, ╤ü╤Ç╨░╨╖╤â"
+[79322199488 ΓÇö ╨¢╨╕╨╖╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å Makr_718: "╨┐╤Ç╨╕╨▓╨╡╤é╨╕╨║, ╤ü ╨ö╨░╨╣╨▓╨╕╨╜╤ç╨╕╨║╨░ - ╨╜╨╛╤Ç╨╝)"
+[79322088586 ΓÇö ╨É╨╜╨░╤ü╤é╨░╤ü╨╕╤Å ╨í╤â╨▓╨╛╤Ç╨╛╨▓╨░] ╨₧╤é╨▓╨╡╤é ╨┤╨╗╤Å ╨É╨╗╨╕╨╝: "╤ì╤é╨╛ ╨╜╤â ╨┤╨░)
+--- AI silence / accounts ---
+Γùç injected env (31) from .env // tip: Γîÿ multiple files { path: ['.env.local', '.env'] }
+--- code gates ---
+675:function expandBareStubOnQuestion(reply, userMessage) {
+789:  out = expandBareStubOnQuestion(out, userMessage);
+67:  // ╨ó╨╛╨╗╤î╨║╨╛ ╤Å╨▓╨╜╤ï╨╡ ╨║╨╕╨▓╨║╨╕ (╨╛╨║/╨░╨│╨░/ΓÇª). ┬½╨Ü╨░╨║ ╨╕ ╨▓╤ç╨╡╤Ç╨░┬╗ / ╨║╨╛╤Ç╨╛╤é╨║╨╕╨╡ ╤ä╨░╨║╤é╤ï ΓÇö ╨¥╨ò ╨╝╨╛╨╗╤ç╨░╨╗╨╕╨▓╨░╤Å ╤Ç╨╡╨░╨║╤å╨╕╤Å.
+44:  // ╨╝╨╡╨┤╨╕╨░ / ┬½╨╝╨╛╨╢╨╡╤ê╤î ╨╖╨░╨┐╨╕╤ü╨░╤é╤î┬╗ / ╨╗╨░╨╣╤ä ΓÇö ╨▒╨╡╨╖ ╨╗╨░╨│╨░ (\b ╨╗╨╛╨╝╨░╨╡╤é╤ü╤Å ╨╜╨░ ╨║╨╕╤Ç╨╕╨╗╨╗╨╕╤å╨╡)
+52:      `(?:╤ä╨╛╤é╨╛|╤ä╨╛╤é╨║|╤ü╨╡╨╗╤ä╨╕|╨▓╨╕╨┤╨╡╨╛|╨▓╨╕╨┤╨╛╤ü|╨║╤Ç╤â╨╢╨╛╨║|╨║╤Ç╤â╨╢╨╛╤ç|╨╗╨░╨╣╤ä|live|╤ü╨╡╨▒╤Å)${cy}`,
+822:    if (!explicitMediaRequest && !mediaType) {
+2188:      if (!explicitMediaRequest && !mediaType) {
+2
+======== AUDIT_0HF_DONE ========

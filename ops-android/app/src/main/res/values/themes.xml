@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.LoveRussianOPS" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:statusBarColor">#120a14</item>
+        <item name="android:navigationBarColor">#120a14</item>
+        <item name="android:windowBackground">#120a14</item>
+        <item name="colorPrimary">#F0A3D4</item>
+        <item name="colorPrimaryVariant">#B48CFF</item>
+    </style>
+</resources>

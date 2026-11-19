@@ -1,0 +1,37 @@
+---
+description: Быстрый цикл фикса LoveRussian без напоминаний про changelog/прокси
+alwaysApply: true
+---
+
+# LoveRussian — быстрый цикл
+
+Не жди напоминаний. На любой фикс / выкат сам закрывай чеклист ниже.
+
+## Changelog — всегда сам
+Перед словами «готово» / «задеплоено» / «на проде»:
+1. `frontend/updates.js` — запись сверху (язык воркера, без жаргона/emoji)
+2. `ops-console/app/updates.js` — тот же текст
+3. `frontend/index.html` — бамп `updates.js?v=`
+4. `CHANGELOG_TG.md` — тег `0gX` сверху
+5. Эти файлы уезжают на VPS вместе с бэкендом
+
+Не спрашивай «добавить в ленту?». Не отмечай релиз без пунктов 1–4.
+
+## Фикс-петля (по умолчанию)
+1. Узкий фикс (postfilter/hint/gate), не эссе в промпт
+2. `_smoke_*.js` на затронутое
+3. Тег из `CHANGELOG_TG.md` → `_deploy_0gX.sh`
+4. PROXY_LEN ≥ 5 после `pm2 restart` (skill **loverussian-proxy-alive**)
+5. Post-add audit A/B/C (**loverussian-post-add-audit**) — без этого не «готово»
+6. Короткий отчёт оператору: что / где / tag / уровень аудита
+
+## Skills
+- выкат → **loverussian-deploy**
+- тупой ответ / скрин → **loverussian-reply-triage**
+- 10/10 / дыры → **loverussian-human-audit**
+- после любого добавления → **loverussian-post-add-audit** (A / хард / хард жёсткий)
+- прокси → **loverussian-proxy-alive**
+- шаблон шагов → **loverussian-fix-loop**
+
+## Стиль ответа пользователю
+Коротко. Без «не забудь changelog». Без пересказа правил.

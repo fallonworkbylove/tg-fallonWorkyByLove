@@ -110,12 +110,12 @@ function getHumanizeProfile(accountId) {
   const profile = {
     accountId: key,
     typoStyle: style,
-    // Редко и мягко: человек всё ещё читает с одного взгляда
-    typoRate: 0.07 + rand() * 0.09,
+    // 0iz: ещё реже — опечатки/обрубки палили бота на скринах
+    typoRate: 0.03 + rand() * 0.05,
     // Реакция на «ок/ага/спасибо» — реже (раньше 75–93% глушило живой текст).
     restraintChance: 0.4 + rand() * 0.22,
-    // Короткие вспышки мягче — иначе режет «неа, спасибо) пока только…».
-    shortBurstChance: 0.08 + rand() * 0.14,
+    // Короткие вспышки реже — иначе режет нормальные фразы mid-word.
+    shortBurstChance: 0.04 + rand() * 0.06,
     waitBeatChance: 0.04 + rand() * 0.08,
     // Два пузыря чуть чаще — живой чат, не эссе в одном сообщении.
     doubleBubbleChance: 0.18 + rand() * 0.14,
@@ -277,11 +277,13 @@ function maybeShortBurst(text, profile, lang = 'ru') {
   // Уже две законченные фразы — не режем.
   if (/(?:[).!?…])\s+\S/.test(line)) return text;
   const words = line.split(/\s+/);
-  // Короткие и средние фразы не трогаем (иначе «на отъебись»).
-  if (words.length <= 12) return text;
-  const cutAt = Math.min(words.length, 8 + Math.floor(Math.random() * 3));
+  // 0iz: режем только реально длинные (раньше ≤12 трогало живые ответы).
+  if (words.length <= 16) return text;
+  const cutAt = Math.min(words.length, 10 + Math.floor(Math.random() * 4));
   let short = words.slice(0, cutAt).join(' ').replace(/[,:;]\s*$/, '');
   if (looksIncompleteUtterance(short)) return text;
+  // Не оставлять обрубок-согласную на конце («вещ», «серьёз»)
+  if (/(?:^|[^а-яё])[а-яё]{3,12}[бвгджзклмнпрстфхцчшщ]\s*\)?$/i.test(short)) return text;
   if (/\)\s+\S/.test(short) && !/[)….!?]$/.test(short)) return text;
   if (
     lang !== 'en' &&
@@ -367,6 +369,9 @@ function looksIncompleteUtterance(text) {
   if (/\bbut I'?m\s*$/i.test(t)) return true;
   if (/\bgenuine,?\s*not\s*$/i.test(t)) return true;
   if (/\bI appreciate the thought,?\s*but I'?m\s*$/i.test(t)) return true;
+  // 0iy: «просто дел по» / одиночная буква в хвосте (\b не ловит кириллицу)
+  if (/(?:^|[^а-яё])дел\s+по\s*\)?$/i.test(t)) return true;
+  if (/[,:]\s*[А-ЯЁA-Za-zа-яё]\s*\)?$/.test(t) && t.length <= 40) return true;
   return false;
 }
 

@@ -445,59 +445,17 @@ function buildHardeningHints(
   if (distract && !cloneActive) parts.push(distract);
   const opinion = getMildOpinionHint();
   if (opinion && !cloneActive) parts.push(opinion);
-  try {
-    const ideas = require('./humanIdeas10');
-    const hobby = ideas.altHobbyHint(accountId);
-    if (hobby && !cloneActive) parts.push(hobby);
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    const i11 = require('./humanIdeas11').buildIdeas11Hints(history, text);
-    if (i11 && !cloneActive) parts.push(i11);
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    const i12 = require('./humanIdeas12').buildIdeas12Hints(history, text);
-    if (i12 && !cloneActive) parts.push(i12);
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    const i13 = require('./humanIdeas13').buildIdeas13Hints(history, text);
-    if (i13 && !cloneActive) parts.push(i13);
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    const i14 = require('./humanIdeas14').buildIdeas14Hints(history, text, {
-      systemPrompt,
-      memoryHint,
-    });
-    if (i14 && !cloneActive) parts.push(i14);
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    const i15 = require('./humanIdeas15').buildIdeas15Hints(text);
-    if (i15 && !cloneActive) parts.push(i15);
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    const i16 = require('./humanIdeas16').buildIdeas16Hints(text);
-    if (i16 && !cloneActive) parts.push(i16);
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    const i17 = require('./humanIdeas17').buildIdeas17Hints(history, text, {
-      systemPrompt,
-    });
-    if (i17 && !cloneActive) parts.push(i17);
-  } catch (_) {
-    /* optional */
+  if (!cloneActive) {
+    try {
+      const regHints = require('./humanIdeasRegistry').buildIdeasRegistryHints(
+        history,
+        text,
+        { accountId, systemPrompt, memoryHint },
+      );
+      if (regHints) parts.push(regHints);
+    } catch (_) {
+      /* optional */
+    }
   }
   try {
     const ms = require('./mediaSend');
@@ -834,62 +792,12 @@ function applyHardeningPostfilters(
   out = stripRepeatSelfIntro(out, history);
   out = stripRepeatFlipPitch(out, history, userMessage);
   try {
-    out = require('./humanIdeas10').stripCoffeeSeriesWalkCombo(out, history);
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    out = require('./humanIdeas11').applyIdeas11Postfilters(out, history, userMessage);
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    out = require('./humanIdeas12').applyIdeas12Postfilters(
+    out = require('./humanIdeasRegistry').applyIdeasRegistryPostfilters(
       out,
       history,
       userMessage,
       accountId,
       peerId,
-    );
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    out = require('./humanIdeas13').applyIdeas13Postfilters(out, history, userMessage);
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    out = require('./humanIdeas14').applyIdeas14Postfilters(
-      out,
-      history,
-      userMessage,
-      accountId,
-      peerId,
-    );
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    out = require('./humanIdeas15').applyIdeas15Postfilters(
-      out,
-      history,
-      userMessage,
-      systemPrompt,
-    );
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    out = require('./humanIdeas16').applyIdeas16Postfilters(out, history, userMessage);
-  } catch (_) {
-    /* optional */
-  }
-  try {
-    out = require('./humanIdeas17').applyIdeas17Postfilters(
-      out,
-      history,
-      userMessage,
       systemPrompt,
     );
   } catch (_) {
@@ -897,9 +805,8 @@ function applyHardeningPostfilters(
   }
   out = stripAppearanceOnForeign(out, userMessage);
   out = stripQuestionIfHeAsked(out, userMessage);
-  out = expandBareStubOnQuestion(out, userMessage);
   out = stripReaskEcho(out, history);
-  // stripReaskEcho мог вернуть короткий кивок — дожмём ещё раз.
+  // Один stub-pass в конце hardening (раньше было два — раздувало шум).
   out = expandBareStubOnQuestion(out, userMessage);
   out = stripChatLists(out);
   out = stripAnketaTone(out);
@@ -919,8 +826,15 @@ function applyHardeningPostfilters(
   if (looksTemplated(out, history) || (accountId != null && shouldTightenFilters(accountId) && looksTemplated(out, history))) {
     out = PHRASE_ALTS[Math.floor(Math.random() * PHRASE_ALTS.length)];
   }
+  // ensureAckNotBare — один раз в aiResponderPostprocess.finalizeOutgoingReply.
   if (accountId != null) registerOutgoing(accountId, out);
   return out;
+}
+
+/** Interest hits для NFT-тиков (cold + hits≥2 → всё же можно). */
+async function getPeerNftInterestHits(accountId, peerId) {
+  await hydratePeerGates(accountId, peerId);
+  return Number(getPeerState(accountId, peerId).interestHits || 0);
 }
 
 /** #55 block media soon after pitch/screenshot */
@@ -1165,6 +1079,7 @@ module.exports = {
   shouldBlockNftPitch,
   shouldBlockNftPitchAsync,
   hydratePeerGates,
+  getPeerNftInterestHits,
   noteExplicitInterest,
   noteFlipPhotoSent,
   notePitchSent,

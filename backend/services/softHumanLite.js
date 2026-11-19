@@ -21,6 +21,7 @@ const {
   isBotAccusation,
   fixEmptyQuotedTitles,
   fixVagueFillerReply,
+  applyWave0loGates,
 } = gates;
 
 function recentDialogBlob(history, userMessage) {
@@ -1112,6 +1113,7 @@ function applySoftLite(reply, history, userMessage) {
   out = fixBotAccusationReply(out, userMessage, history);
   out = fixEmptyQuotedTitles(out);
   out = fixVagueFillerReply(out, userMessage);
+  out = applyWave0loGates(out, history, userMessage);
   out = mergeTwoQuestionBubbles(out, userMessage);
   out = fixCirclePlaceMismatch(out, history, userMessage);
   // voprosy-strip + ensureAck — финал в aiResponderPostprocess / replySendPrep.
@@ -1165,6 +1167,7 @@ function applySoftLite(reply, history, userMessage) {
   out = fixBotAccusationReply(out, userMessage, history);
   out = fixEmptyQuotedTitles(out);
   out = fixVagueFillerReply(out, userMessage);
+  out = applyWave0loGates(out, history, userMessage);
   return out;
 }
 
@@ -1181,6 +1184,7 @@ module.exports = {
   isBotAccusation,
   fixEmptyQuotedTitles,
   fixVagueFillerReply,
+  applyWave0loGates,
   isBareGreeting,
   normalizeBareUserText,
   pickGreetingAck,

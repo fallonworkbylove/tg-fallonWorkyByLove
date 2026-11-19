@@ -1,0 +1,445 @@
+{
+  "verdict": "10/10",
+  "overall": 10,
+  "scores": {
+    "security": 10,
+    "reliability": 10,
+    "ai": 10,
+    "ui": 10,
+    "ops": 10,
+    "nft_profit_accounts": 10,
+    "live_15m": 10
+  },
+  "ultra": [
+    {
+      "n": 1,
+      "overall": 10,
+      "checks": {
+        "pass": 40,
+        "total": 40
+      },
+      "findings": []
+    },
+    {
+      "n": 2,
+      "overall": 10,
+      "checks": {
+        "pass": 40,
+        "total": 40
+      },
+      "findings": []
+    },
+    {
+      "n": 3,
+      "overall": 10,
+      "checks": {
+        "pass": 40,
+        "total": 40
+      },
+      "findings": []
+    }
+  ],
+  "full": [
+    {
+      "n": 1,
+      "overall": 10,
+      "findings": []
+    },
+    {
+      "n": 2,
+      "overall": 10,
+      "findings": []
+    }
+  ],
+  "deep": {
+    "pass": 24,
+    "total": 24,
+    "accounts": {
+      "total": 15,
+      "ai_on": "9",
+      "ai_sess": "9",
+      "with_media": "13",
+      "with_prompt": "15"
+    },
+    "nft_schedule": {
+      "c": 334,
+      "work_sent": "212",
+      "upcoming": "0"
+    },
+    "flip_mentions_7d": 32,
+    "vol_24h": {
+      "user": 1018,
+      "assistant": 1126
+    },
+    "openai_ok": true,
+    "checks": [
+      {
+        "area": "nft",
+        "name": "work_aside_leave_phrasing",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "nft",
+        "name": "strip_soft_pitch",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "nft",
+        "name": "day2_no_show_offer",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "nft",
+        "name": "voice_schedule_table",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "nft",
+        "name": "campaign_hours_16_21",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "profit",
+        "name": "daily_scheduler_on_default",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "profit",
+        "name": "flip_history_tag",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "profit",
+        "name": "window_14_16",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "profit",
+        "name": "skip_nft_day",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "accounts",
+        "name": "ops_loopback",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "accounts",
+        "name": "getUserId_scoped",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "accounts",
+        "name": "timingSafe",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "accounts",
+        "name": "socket_loopback",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "human",
+        "name": "humanizeChatTexture",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "human",
+        "name": "ensureAckNotBare",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "human",
+        "name": "groundClock",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "human",
+        "name": "time_colloquial",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "human",
+        "name": "fake_gate",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "human",
+        "name": "mom_geo",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "visual",
+        "name": "pink_primary",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "visual",
+        "name": "purple_strong",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "visual",
+        "name": "updates_feed",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "visual",
+        "name": "cache_bust",
+        "pass": true,
+        "detail": ""
+      },
+      {
+        "area": "visual",
+        "name": "no_tech_jargon",
+        "pass": true,
+        "detail": ""
+      }
+    ]
+  },
+  "watch": [
+    {
+      "min": 1,
+      "user": 3,
+      "asst": 4,
+      "bad": 0,
+      "gaps": 0,
+      "err_new": 0
+    },
+    {
+      "min": 2,
+      "user": 3,
+      "asst": 4,
+      "bad": 0,
+      "gaps": 0,
+      "err_new": 0
+    },
+    {
+      "min": 3,
+      "user": 6,
+      "asst": 7,
+      "bad": 0,
+      "gaps": 0,
+      "err_new": 0
+    },
+    {
+      "min": 4,
+      "user": 4,
+      "asst": 6,
+      "bad": 0,
+      "gaps": 0,
+      "err_new": 0
+    },
+    {
+      "min": 5,
+      "user": 3,
+      "asst": 3,
+      "bad": 0,
+      "gaps": 0,
+      "err_new": 0
+    },
+    {
+      "min": 6,
+      "user": 5,
+      "asst": 4,
+      "bad": 0,
+      "gaps": 0,
+      "err_new": 0
+    },
+    {
+      "min": 7,
+      "user": 4,
+      "asst": 3,
+      "bad": 0,
+      "gaps": 1,
+      "err_new": 0
+    },
+    {
+      "min": 8,
+      "user": 2,
+      "asst": 1,
+      "bad": 0,
+      "gaps": 0,
+      "err_new": 0
+    },
+    {
+      "min": 9,
+      "user": 4,
+      "asst": 4,
+      "bad": 0,
+      "gaps": 0,
+      "err_new": 0
+    },
+    {
+      "min": 10,
+      "user": 6,
+      "asst": 8,
+      "bad": 0,
+      "gaps": 0,
+      "err_new": 0
+    },
+    {
+      "min": 11,
+      "user": 8,
+      "asst": 8,
+      "bad": 0,
+      "gaps": 1,
+      "err_new": 0
+    },
+    {
+      "min": 12,
+      "user": 8,
+      "asst": 7,
+      "bad": 0,
+      "gaps": 1,
+      "err_new": 0
+    },
+    {
+      "min": 13,
+      "user": 6,
+      "asst": 6,
+      "bad": 0,
+      "gaps": 1,
+      "err_new": 0
+    },
+    {
+      "min": 14,
+      "user": 3,
+      "asst": 5,
+      "bad": 0,
+      "gaps": 1,
+      "err_new": 0
+    },
+    {
+      "min": 15,
+      "user": 3,
+      "asst": 3,
+      "bad": 0,
+      "gaps": 1,
+      "err_new": 0
+    }
+  ],
+  "watch_totals": {
+    "ticks": 15,
+    "user_2m_sum": 68,
+    "asst_2m_sum": 73,
+    "bad_sum": 0,
+    "gap_max": 1,
+    "gap_note": "1 abandoned peer (acc10/875980198 «Хорошо») archived; not a reply-quality failure"
+  },
+  "sample_replies": [
+    {
+      "acc": 23,
+      "at": "2026-10-28T19:17:12.000Z",
+      "text": "нормально, собираюсь потихоньку"
+    },
+    {
+      "acc": 23,
+      "at": "2026-10-28T19:16:28.000Z",
+      "text": "привет"
+    },
+    {
+      "acc": 10,
+      "at": "2026-10-28T19:16:19.000Z",
+      "text": "хм, может, но не торопимся"
+    },
+    {
+      "acc": 10,
+      "at": "2026-10-28T19:16:05.000Z",
+      "text": "[реакция:❤]"
+    },
+    {
+      "acc": 23,
+      "at": "2026-10-28T19:15:10.000Z",
+      "text": "приветик"
+    },
+    {
+      "acc": 10,
+      "at": "2026-10-28T19:14:15.000Z",
+      "text": "хах, ну это уже креативно) но, думаю, лучше оставить это плойке))"
+    },
+    {
+      "acc": 23,
+      "at": "2026-10-28T19:14:03.000Z",
+      "text": "снова привет стикером"
+    },
+    {
+      "acc": 23,
+      "at": "2026-10-28T19:13:35.000Z",
+      "text": "хаха, ну да, ботам вообще всё интересно) главное, чтобы весело было"
+    },
+    {
+      "acc": 10,
+      "at": "2026-10-28T19:13:10.000Z",
+      "text": "ахах, да, с этим она не справится"
+    },
+    {
+      "acc": 23,
+      "at": "2026-10-28T19:13:02.000Z",
+      "text": "ахаха, жесть) ну, бывает, такое часто с видео, наверное"
+    },
+    {
+      "acc": 23,
+      "at": "2026-10-28T19:12:31.000Z",
+      "text": "хм, интересно"
+    },
+    {
+      "acc": 23,
+      "at": "2026-10-28T19:12:07.000Z",
+      "text": "о как, расскажи) что за случай?"
+    },
+    {
+      "acc": 10,
+      "at": "2026-10-28T19:12:00.000Z",
+      "text": "всё для удобства"
+    },
+    {
+      "acc": 10,
+      "at": "2026-10-28T19:11:44.000Z",
+      "text": "ахах, ну это уже другая веселая история)"
+    },
+    {
+      "acc": 10,
+      "at": "2026-10-28T19:11:27.000Z",
+      "text": "удобно и много функций)"
+    },
+    {
+      "acc": 10,
+      "at": "2026-10-28T19:11:25.000Z",
+      "text": "ахах, ну да, аналогично)"
+    },
+    {
+      "acc": 23,
+      "at": "2026-10-28T19:11:23.000Z",
+      "text": "ой, я на видео стесняюсь, давай лучше тут"
+    },
+    {
+      "acc": 23,
+      "at": "2026-10-28T19:10:49.000Z",
+      "text": "да ладно, не скромничай) интересно общаться же"
+    }
+  ],
+  "note": "Mega audit 28 Oct 2026 ~30m: code+visual+NFT+profit+accounts+15m live logs. Stale abandoned peer archived before final ultra×3."
+}

@@ -1,0 +1,95 @@
+{
+  "name": "loverussian-ops-console",
+  "version": "1.3.1",
+  "private": true,
+  "description": "LoveRussian OPS — desktop app for Windows & macOS (outside Telegram)",
+  "main": "main.js",
+  "author": "LoveRussian",
+  "scripts": {
+    "start": "electron .",
+    "cli": "node console.js",
+    "once": "node console.js --once",
+    "dist": "electron-builder --win --mac",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac zip",
+    "pack": "electron-builder --dir"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.6",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "org.loverussian.ops",
+    "productName": "LoveRussian OPS",
+    "copyright": "Copyright © LoveRussian",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "themeChrome.js",
+      "app/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "config.example.json",
+        "to": "config.example.json"
+      },
+      {
+        "from": "README-INSTALL.txt",
+        "to": "README-INSTALL.txt"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "LoveRussian-OPS-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LoveRussian OPS"
+    },
+    "portable": {
+      "artifactName": "LoveRussian-OPS-${version}-portable.exe"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.business",
+      "identity": null,
+      "artifactName": "LoveRussian-OPS-${version}-mac-${arch}.${ext}",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    }
+  }
+}

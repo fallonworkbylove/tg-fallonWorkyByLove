@@ -1,0 +1,246 @@
+{
+  "fix_since": "2026-10-27 15:52:00",
+  "score": {
+    "security": 10,
+    "reliability": 10,
+    "ai": 10,
+    "ui": 10,
+    "ops": 10
+  },
+  "overall": 10,
+  "checks": {
+    "pass": 38,
+    "total": 38
+  },
+  "volume": {
+    "assistant_since_fix": 138,
+    "user_since_fix": 133,
+    "assistant_24h": 1210,
+    "user_24h": 1147
+  },
+  "reply_length_since_fix": {
+    "short_1_8": 4,
+    "mid_9_40": 103,
+    "long_40p": 25,
+    "n": 132
+  },
+  "accounts": {
+    "total": 15,
+    "ai_on": 12,
+    "ai_with_session": 12,
+    "with_session": 15
+  },
+  "findings": [],
+  "stale_gaps": [],
+  "stub_samples": [],
+  "leak_samples": [],
+  "checks_detail": {
+    "security": [
+      {
+        "name": "loopback_socket_only",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "bypass_force_key_loopback",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "initData_auth_date",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "initData_timingSafeEqual",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "cors_not_wildcard",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "x_powered_by_off",
+        "pass": true,
+        "sev": "P2"
+      },
+      {
+        "name": "getUserId_no_fallback_1",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "getUserId_401",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "ops_loopback_routes",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "accounts_scoped_userid",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "escapeHtml",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "safeTelegramHref",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "env_gitignored",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "media_link_server_validate",
+        "pass": true,
+        "sev": "P1"
+      }
+    ],
+    "reliability": [
+      {
+        "name": "contradictory_lazy_require",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "sessionForgetHint_scope",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "strip_media_leak",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "proxy_random_start",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "openai_skip_first_dead",
+        "pass": true,
+        "sev": "P1"
+      }
+    ],
+    "ai": [
+      {
+        "name": "afterthoughts_off",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "ensureAckNotBare",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "enrichBareAck",
+        "pass": true,
+        "sev": "P0"
+      },
+      {
+        "name": "softCompleteCut_aeshe",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "no_new_bare_stubs",
+        "pass": true,
+        "sev": "P1",
+        "detail": "n=0"
+      },
+      {
+        "name": "no_new_media_leaks",
+        "pass": true,
+        "sev": "P0",
+        "detail": "n=0"
+      },
+      {
+        "name": "no_robotic_phrases",
+        "pass": true,
+        "sev": "P1",
+        "detail": "n=0"
+      },
+      {
+        "name": "no_stale_unanswered_20m",
+        "pass": true,
+        "sev": "P1",
+        "detail": "n=0"
+      },
+      {
+        "name": "few_ultra_short_1_5",
+        "pass": true,
+        "sev": "P2",
+        "detail": "n=2"
+      }
+    ],
+    "ui": [
+      {
+        "name": "updates_feed_present",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "cache_bust_app",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "cache_bust_updates",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "confirms_danger",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "escape_updates_render",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "styles_present",
+        "pass": true,
+        "sev": "P2",
+        "detail": "styles_bytes=39639"
+      },
+      {
+        "name": "no_tech_jargon_feed",
+        "pass": true,
+        "sev": "P2"
+      }
+    ],
+    "ops": [
+      {
+        "name": "catchup_all_route",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "pool_status_route",
+        "pass": true,
+        "sev": "P1"
+      },
+      {
+        "name": "ai_on_has_session",
+        "pass": true,
+        "sev": "P1",
+        "detail": "ai_on=12 sess=12"
+      }
+    ]
+  }
+}

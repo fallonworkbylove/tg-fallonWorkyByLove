@@ -1,7 +1,6 @@
 const crypto = require('crypto');
 const db = require('../db');
-const OpenAI = require('openai');
-const { buildOpenAIOptions } = require('./aiResponder');
+const { openaiCreateWithProxyFailover } = require('./aiResponder');
 
 // ---------------------------------------------------------------------------
 // ОБУЧЕНИЕ БЕЗ FINE-TUNING.
@@ -34,11 +33,7 @@ const { buildOpenAIOptions } = require('./aiResponder');
 
 const LEARNING_ENABLED = process.env.LEARNING_ENABLED !== '0' && process.env.LEARNING_ENABLED !== 'false';
 
-// Отдельный лёгкий клиент для оценки реакции. Обязательно строим его через
-// buildOpenAIOptions() — так же, как основной клиент чата в aiResponder.js —
-// иначе запросы идут напрямую с сервера и получают 403 Country/region not
-// supported (api.openai.com блокирует российские IP).
-const scorerClient = new OpenAI(buildOpenAIOptions());
+// Оценка реакции идёт через openaiCreateWithProxyFailover (тот же SOCKS + ротация).
 
 // Сколько сообщений собеседника подряд после ответа бота учитывается как
 // "реакция", прежде чем она получает финальную оценку. 2 — по данным
@@ -249,28 +244,30 @@ async function recordBotReply(accountId, peerId, userMsg, botReply, stage = 'gen
 async function scoreReaction(botReply, reactionMsgs) {
   try {
     const reactionText = reactionMsgs.filter(Boolean).join('\n');
-    const completion = await scorerClient.chat.completions.create({
-      model: 'gpt-4o-mini',
-      max_tokens: 5,
-      temperature: 0,
-      messages: [
-        {
-          role: 'system',
-          content:
-            'Ты оцениваешь переписку в мессенджере. Тебе дана фраза бота и следующие ' +
-            'сообщения собеседника ПОСЛЕ неё (может быть 1-2 сообщения подряд). Оцени ' +
-            'итоговую реакцию собеседника, а не промежуточную: ' +
-            'GOOD — в итоге заинтересованно, тепло, продолжил разговор, согласился, задал вопрос в ответ; ' +
-            'NEUTRAL — нейтрально, коротко, без явного интереса или отказа; ' +
-            'BAD — холодно, раздражённо, разочарованно, проигнорировал суть, оборвал разговор. ' +
-            'Ответь строго одним словом: GOOD, NEUTRAL или BAD.',
-        },
-        {
-          role: 'user',
-          content: `Фраза бота: "${botReply}"\nСообщения собеседника после неё:\n${reactionText}`,
-        },
-      ],
-    });
+    const completion = await openaiCreateWithProxyFailover((client) =>
+      client.chat.completions.create({
+        model: 'gpt-4o-mini',
+        max_tokens: 5,
+        temperature: 0,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Ты оцениваешь переписку в мессенджере. Тебе дана фраза бота и следующие ' +
+              'сообщения собеседника ПОСЛЕ неё (может быть 1-2 сообщения подряд). Оцени ' +
+              'итоговую реакцию собеседника, а не промежуточную: ' +
+              'GOOD — в итоге заинтересованно, тепло, продолжил разговор, согласился, задал вопрос в ответ; ' +
+              'NEUTRAL — нейтрально, коротко, без явного интереса или отказа; ' +
+              'BAD — холодно, раздражённо, разочарованно, проигнорировал суть, оборвал разговор. ' +
+              'Ответь строго одним словом: GOOD, NEUTRAL или BAD.',
+          },
+          {
+            role: 'user',
+            content: `Фраза бота: "${botReply}"\nСообщения собеседника после неё:\n${reactionText}`,
+          },
+        ],
+      }),
+    );
     const verdict = (completion.choices[0]?.message?.content || '').trim().toUpperCase();
     if (verdict.includes('GOOD')) return 1;
     if (verdict.includes('BAD')) return 0;

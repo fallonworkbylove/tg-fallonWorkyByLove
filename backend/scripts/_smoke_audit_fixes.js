@@ -1,7 +1,7 @@
 /**
  * Smoke: топики медиа, sanitize исходящего, robotic strip, prompt wiring.
  */
-process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'sk-test';
+process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'local-smoke-only';
 
 const mr = require('../services/mediaReplies');
 const soft = require('../services/softHumanLite');

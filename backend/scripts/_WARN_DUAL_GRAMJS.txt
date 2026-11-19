@@ -1,0 +1,9 @@
+НЕ поднимай второй GramJS (new TelegramClient + StringSession) на session_string,
+который уже в пуле pm2 tgbot — Telegram отзовёт ключ (AUTH_KEY_UNREGISTERED).
+
+Проверка сессий только через живой процесс:
+  GET /api/accounts/:id/session-ping
+  GET /api/accounts/pool-status  (loopback + X-Auth-Bypass-Key)
+
+Скрипты _check_*_session.js / _probe_* с StringSession — только на
+offline/мёртвых аккаунтах или после deactivateAccount.

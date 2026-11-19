@@ -1,0 +1,242 @@
+[
+  {
+    "i": 0,
+    "verdict": "BAD",
+    "category": "dry-meet",
+    "heuristic": null,
+    "model": "BAD dry-meet",
+    "user": "...",
+    "bot": "ну просто не встретила того, с кем)",
+    "chat": ""
+  },
+  {
+    "i": 1,
+    "verdict": "BAD",
+    "category": "gibberish",
+    "heuristic": null,
+    "model": "BAD gibberish",
+    "user": "...",
+    "bot": "хах давай пока тут",
+    "chat": ""
+  },
+  {
+    "i": 2,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": "OK ok",
+    "user": "...",
+    "bot": "да, смотрела) жесть, очень сильный фильм",
+    "chat": ""
+  },
+  {
+    "i": 3,
+    "verdict": "BAD",
+    "category": "gibberish",
+    "heuristic": null,
+    "model": "BAD gibberish",
+    "user": "...",
+    "bot": "скорее всего? хах, как-то не уверенно)",
+    "chat": ""
+  },
+  {
+    "i": 4,
+    "verdict": "BAD",
+    "category": "gibberish",
+    "heuristic": null,
+    "model": "BAD gibberish",
+    "user": "...",
+    "bot": "Yeah, just keeping it chill",
+    "chat": ""
+  },
+  {
+    "i": 5,
+    "verdict": "BAD",
+    "category": "too-short",
+    "heuristic": "too-short",
+    "model": "BAD stiff-greeting",
+    "user": "...",
+    "bot": "понятно",
+    "chat": ""
+  },
+  {
+    "i": 6,
+    "verdict": "BAD",
+    "category": "too-short",
+    "heuristic": "too-short",
+    "model": "BAD stiff-greeting",
+    "user": "...",
+    "bot": "щас, )",
+    "chat": ""
+  },
+  {
+    "i": 7,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": "OK ok",
+    "user": "...",
+    "bot": "добрый вечер) как дела?",
+    "chat": ""
+  },
+  {
+    "i": 8,
+    "verdict": "BAD",
+    "category": "too-short",
+    "heuristic": "too-short",
+    "model": "BAD stiff-greeting",
+    "user": "...",
+    "bot": "ну да)",
+    "chat": ""
+  },
+  {
+    "i": 9,
+    "verdict": "BAD",
+    "category": "gibberish",
+    "heuristic": null,
+    "model": "BAD gibberish",
+    "user": "...",
+    "bot": "хах, ну да, обещала) но не знаю)",
+    "chat": ""
+  },
+  {
+    "i": 10,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": "OK ok",
+    "user": "...",
+    "bot": "ладно, растяжка полезная) в лесу будет ладно",
+    "chat": ""
+  },
+  {
+    "i": 11,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": "OK ok",
+    "user": "...",
+    "bot": "просто так, все ок)",
+    "chat": ""
+  },
+  {
+    "i": 12,
+    "verdict": "BAD",
+    "category": "gibberish",
+    "heuristic": null,
+    "model": "BAD gibberish",
+    "user": "...",
+    "bot": "ахах, ну ок) я просто Кира, не мошенник)",
+    "chat": ""
+  },
+  {
+    "i": 13,
+    "verdict": "BAD",
+    "category": "too-short",
+    "heuristic": "too-short",
+    "model": "BAD gibberish",
+    "user": "...",
+    "bot": "что-то не так",
+    "chat": ""
+  },
+  {
+    "i": 14,
+    "verdict": "BAD",
+    "category": "gibberish",
+    "heuristic": null,
+    "model": "BAD gibberish",
+    "user": "...",
+    "bot": "Yeah, actually, feeling pretty refreshed now",
+    "chat": ""
+  },
+  {
+    "i": 15,
+    "verdict": "BAD",
+    "category": "stiff-greeting",
+    "heuristic": null,
+    "model": "BAD stiff-greeting",
+    "user": "...",
+    "bot": "ок, ну ок послушать)",
+    "chat": ""
+  },
+  {
+    "i": 16,
+    "verdict": "BAD",
+    "category": "seeking-template",
+    "heuristic": null,
+    "model": "BAD seeking-template",
+    "user": "...",
+    "bot": "просто обычная девушка, которая переезжает в Донецк)",
+    "chat": ""
+  },
+  {
+    "i": 17,
+    "verdict": "BAD",
+    "category": "bare-ack",
+    "heuristic": "bare-ack",
+    "model": "BAD stiff-greeting",
+    "user": "...",
+    "bot": "поняла)",
+    "chat": ""
+  },
+  {
+    "i": 18,
+    "verdict": "BAD",
+    "category": "too-short",
+    "heuristic": "too-short",
+    "model": "BAD gibberish",
+    "user": "...",
+    "bot": "жесть, капец. надеюсь",
+    "chat": ""
+  },
+  {
+    "i": 19,
+    "verdict": "BAD",
+    "category": "gibberish",
+    "heuristic": null,
+    "model": "BAD gibberish",
+    "user": "...",
+    "bot": "сейчас смотрю «Очень странные дела",
+    "chat": ""
+  },
+  {
+    "i": 20,
+    "verdict": "BAD",
+    "category": "stiff-greeting",
+    "heuristic": null,
+    "model": "BAD stiff-greeting",
+    "user": "...",
+    "bot": "не успела ответить, тут дела немного.",
+    "chat": ""
+  },
+  {
+    "i": 21,
+    "verdict": "BAD",
+    "category": "too-short",
+    "heuristic": "too-short",
+    "model": "BAD gibberish",
+    "user": "...",
+    "bot": "хах, постараюсь))",
+    "chat": ""
+  },
+  {
+    "i": 22,
+    "verdict": "BAD",
+    "category": "too-short",
+    "heuristic": "too-short",
+    "model": "BAD stiff-greeting",
+    "user": "...",
+    "bot": "да, ок",
+    "chat": ""
+  },
+  {
+    "i": 23,
+    "verdict": "BAD",
+    "category": "too-short",
+    "heuristic": "too-short",
+    "model": "OK ok",
+    "user": "...",
+    "bot": "норм",
+    "chat": ""
+  }
+]

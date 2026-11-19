@@ -1,0 +1,21 @@
+file /root/opt/tgbot/tg-miniapp-loverussian/backend/services/aiResponder.js
+
+=== FINDINGS ===
+[high] literal «фигня какая» x3 still in source
+[warn] literal «ага, потом» x2 still in source
+[warn] literal «мм не знаю сходу» x1 still in source
+[warn] literal «сложно так сразу» x1 still in source
+[warn] literal «нуждается в поддержке» x2 still in source
+[warn] literal «хороший подход» x2 still in source
+[warn] literal «зависит от восприятия» x1 still in source
+[high] ASK_DODGE_ALTS still has потом/сходу/сложно
+[ok] sessionForgetHint fix comment present
+[ok] no const sessionForgetHint inside compact try
+[warn] possible age→duration nearby
+
+=== LIVE last100 reply hits ===
+{'фигня': 1, 'сходу': 1, 'сложно так сразу': 0, 'нуждается': 0, 'хороший подход': 0, 'не теряй надежд': 0, 'всегда есть шанс': 0, 'рада видеть': 1, 'жесть, прикольно': 1}
+  хм, хорошо, рада видеть
+  мм не знаю сходу)
+  фигня какая
+  жесть, прикольно

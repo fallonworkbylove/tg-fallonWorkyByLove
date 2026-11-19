@@ -24,6 +24,7 @@
 const db = require('../db');
 const { buildOpenAIOptions } = require('./aiResponder');
 const OpenAI = require('openai');
+const { pushActivity } = require('./opsActivityLog');
 
 const NOTIFY_BOT_TOKEN = process.env.BOT_TOKEN;
 const MINIAPP_URL = process.env.MINIAPP_URL || null;
@@ -31,21 +32,85 @@ const TELEGRAM_API = NOTIFY_BOT_TOKEN
   ? `https://api.telegram.org/bot${NOTIFY_BOT_TOKEN}`
   : null;
 
+/**
+ * SOCKS для Bot API — только явный BOT_API_PROXY / TELEGRAM_BOT_PROXY.
+ * Work/OpenAI PROXY_LIST сюда не тащим: на NL direct к api.telegram.org ок,
+ * а часть DC-прокси даёт «fetch failed» на getUpdates (notifier ×10/640с).
+ */
+function botApiDispatcher() {
+  try {
+    let socks = null;
+    const raw = String(process.env.BOT_API_PROXY || process.env.TELEGRAM_BOT_PROXY || '').trim();
+    if (!raw) return null;
+    // socks5://user:pass@host:port или host:port:user:pass или socks5:host:port:user:pass
+    const m = raw.match(/^socks5:\/\/(?:([^:@]+):([^@]+)@)?([^:]+):(\d+)/i);
+    if (m) {
+      socks = { type: 'socks5', host: m[3], port: Number(m[4]), userId: m[1], password: m[2] };
+    } else {
+      const p = raw.split(':').map((x) => x.trim());
+      if ((p[0] || '').toLowerCase() === 'socks5' || (p[0] || '').toLowerCase() === 'socks') {
+        socks = {
+          type: 'socks5',
+          host: p[1],
+          port: Number(p[2]),
+          userId: p[3],
+          password: p[4],
+        };
+      } else if (p.length >= 2) {
+        socks = {
+          type: 'socks5',
+          host: p[0],
+          port: Number(p[1]),
+          userId: p[2],
+          password: p[3],
+        };
+      }
+    }
+    if (!socks || !socks.host || !socks.port) return null;
+    const { socksDispatcher } = require('fetch-socks');
+    return socksDispatcher(socks);
+  } catch (e) {
+    console.warn('[helpRequestNotifier] bot proxy setup:', e.message);
+    return null;
+  }
+}
+
+let _botDispatcher = undefined;
+function getBotDispatcher() {
+  if (_botDispatcher === undefined) {
+    _botDispatcher = botApiDispatcher();
+    if (_botDispatcher) console.log('[helpRequestNotifier] Bot API через SOCKS5');
+  }
+  return _botDispatcher;
+}
+
 /** fetch к api.telegram.org с ретраями — на VPS часто мигает «fetch failed». */
 async function botFetch(url, options = {}, { retries = 3, timeoutMs = 35000 } = {}) {
   let lastErr;
+  let dispatcher = getBotDispatcher();
   for (let attempt = 1; attempt <= retries; attempt += 1) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const res = await fetch(url, { ...options, signal: ctrl.signal });
+      const opts = { ...options, signal: ctrl.signal };
+      if (dispatcher) opts.dispatcher = dispatcher;
+      const res = await fetch(url, opts);
       clearTimeout(timer);
       return res;
     } catch (err) {
       clearTimeout(timer);
       lastErr = err;
+      // SOCKS сдох — дальше только direct (api.telegram.org с NL обычно ок).
+      if (dispatcher) {
+        console.warn(
+          '[helpRequestNotifier] Bot API SOCKS fail → direct:',
+          String(err.message || err).slice(0, 80),
+        );
+        dispatcher = null;
+        _botDispatcher = null;
+      }
       if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, 500 * attempt * attempt));
+        await new Promise((r) => setTimeout(r, 400 * attempt * attempt));
       }
     }
   }
@@ -159,21 +224,58 @@ async function isAutoreplyDisabledForPeer(accountId, peerId) {
     return rows.length > 0;
   } catch (err) {
     console.error('[helpRequestNotifier] Ошибка проверки отключения автоответа:', err.message);
-    return false;
+    // Fail-closed: при ошибке БД считаем паузу активной — не топчем оператора.
+    return true;
   }
 }
 
+async function getAutoreplyDisableReason(accountId, peerId) {
+  try {
+    await ensureSchema();
+    const [[row]] = await db.execute(
+      `SELECT reason FROM autoreply_disabled_peers WHERE account_id = ? AND peer_id = ? LIMIT 1`,
+      [accountId, peerId],
+    );
+    return row?.reason || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Причины, которые нельзя снять обычным «вернуть ИИ». */
+const PROTECTED_DISABLE_REASONS = new Set(['nft_voice_sent', 'nft_pending']);
+
 /**
  * Включает автоответ обратно (например, если оператор решил вернуть чат ИИ).
+ * @param {{ force?: boolean, onlyReasons?: string[] }} [opts]
+ * @returns {Promise<boolean>} true если строка снята / уже не было
  */
-async function enableAutoreplyForPeer(accountId, peerId) {
+async function enableAutoreplyForPeer(accountId, peerId, opts = {}) {
   try {
+    await ensureSchema();
+    const [[row]] = await db.execute(
+      `SELECT reason FROM autoreply_disabled_peers WHERE account_id = ? AND peer_id = ? LIMIT 1`,
+      [accountId, peerId],
+    );
+    if (!row) return true;
+    const reason = row.reason || null;
+    if (!opts.force && PROTECTED_DISABLE_REASONS.has(reason)) {
+      console.warn(
+        `[helpRequestNotifier] refuse unpause account=${accountId} peer=${peerId} reason=${reason}`,
+      );
+      return false;
+    }
+    if (Array.isArray(opts.onlyReasons) && opts.onlyReasons.length) {
+      if (!opts.onlyReasons.includes(reason)) return false;
+    }
     await db.execute(
       `DELETE FROM autoreply_disabled_peers WHERE account_id = ? AND peer_id = ?`,
       [accountId, peerId],
     );
+    return true;
   } catch (err) {
     console.error('[helpRequestNotifier] Не удалось включить автоответ обратно:', err.message);
+    return false;
   }
 }
 
@@ -206,8 +308,27 @@ async function recordVoiceSent(accountId, peerId, peerUsername, voiceFile, accou
       [accountId, peerId, peerUsername || null, voiceFile],
     );
 
-    // Уведомление «ИИ отправила NFT-голосовое» убрано — остаётся только «Лид готов»
-    // (leadScoring.onLeadBecameReady после паузы ИИ).
+    // Уведомление в Telegram «ИИ отправила NFT-голосовое» убрано — остаётся «Лид готов».
+    // В OPS (вкладка Логи) событие всё равно пишем.
+    const peerLabel = peerUsername
+      ? `@${String(peerUsername).replace(/^@/, '')} (id ${peerId})`
+      : `id ${peerId}`;
+    const accountLabel = formatAccountLabel(accountId, accountPhone, accountName);
+    const file = String(voiceFile || 'nft.ogg');
+    pushActivity({
+      kind: 'nft_voice',
+      title: 'ИИ отправила ГС NFT-кампании',
+      body:
+        `Аккаунт: ${accountLabel}\n` +
+        `Собеседник: ${peerLabel}\n` +
+        `Файл: ${file}\n` +
+        'ИИ на паузе в этом чате после предложки — дальше оператор.',
+      accountId,
+      accountLabel,
+      peerId,
+      peerLabel,
+      meta: { voiceFile: file },
+    }).catch(() => {});
   } catch (err) {
     console.error('[helpRequestNotifier] Не удалось зафиксировать отправку голосового:', err.message);
   }
@@ -238,18 +359,9 @@ async function notifyMediaMissed({
   reason,
   userText,
 }) {
-  if (!TELEGRAM_API) return false;
   const key = `${accountId}:${peerId}`;
   const prev = mediaMissNotifiedAt.get(key) || 0;
   if (Date.now() - prev < MEDIA_MISS_COOLDOWN_MS) return false;
-
-  const subscribers = await getLeadNotifyChatIds(accountId);
-  if (subscribers.length === 0) {
-    console.log(
-      `[helpRequestNotifier] Медиа не ушло (аккаунт №${accountId}), но нет подписчиков (владелец/делегаты).`,
-    );
-    return false;
-  }
 
   const peerLabel = peerUsername
     ? `@${String(peerUsername).replace(/^@/, '')} (id ${peerId})`
@@ -261,15 +373,54 @@ async function notifyMediaMissed({
       ? 'нет привязанного медиа-чата'
       : reason === 'suppressed'
         ? 'ИИ подавила отправку'
-        : reason === 'send_failed'
-          ? 'отправка не удалась'
-          : reason === 'deflect'
-            ? 'ИИ отнекивается текстом'
-            : 'файл не ушёл';
+        : reason === 'daylight'
+          ? 'нет кадра под время суток (все дневные/ночные)'
+          : reason === 'empty_pool'
+            ? 'в медиа-чате нет фото/кружков этого типа'
+            : reason === 'circle_exhausted' || reason === 'circle_rate'
+              ? 'кружки закончились или лимит'
+              : reason === 'invite_dead'
+                ? 'ссылка на медиа-чат протухла'
+                : reason === 'no_match'
+                  ? 'нет кадра под сцену (пижама/дом и т.п.)'
+                  : reason === 'send_error' || reason === 'send_failed'
+                    ? 'отправка не удалась'
+                    : reason === 'deflect'
+                      ? 'ИИ отнекивается текстом'
+                      : 'файл не ушёл';
   const snippet = String(userText || '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 180);
+
+  const plainBody =
+    `Аккаунт: ${accountLabel}\n` +
+    `Собеседник: ${peerLabel}\n` +
+    `Причина: ${why}` +
+    (snippet ? `\nОн написал: «${snippet}»` : '') +
+    '\nМожно кинуть вручную из чата.';
+
+  pushActivity({
+    kind: 'media_miss',
+    title: `Просит ${kindRu} — ИИ не отправила`,
+    body: plainBody,
+    accountId,
+    accountLabel,
+    peerId,
+    peerLabel,
+    meta: { mediaKind, reason },
+  }).catch(() => {});
+  mediaMissNotifiedAt.set(key, Date.now());
+
+  if (!TELEGRAM_API) return true;
+
+  const subscribers = await getLeadNotifyChatIds(accountId);
+  if (subscribers.length === 0) {
+    console.log(
+      `[helpRequestNotifier] Медиа не ушло (аккаунт №${accountId}), но нет подписчиков (владелец/делегаты).`,
+    );
+    return true;
+  }
 
   const card =
     `<b>📷 Просит ${escapeHtml(kindRu)} — ИИ не отправила</b>\n\n` +
@@ -299,8 +450,7 @@ async function notifyMediaMissed({
       console.error(`[helpRequestNotifier] mediaMiss error ${chat_id}:`, err.message);
     }
   }
-  if (ok) mediaMissNotifiedAt.set(key, Date.now());
-  return ok;
+  return ok || true;
 }
 
 // ---------------------------------------------------------------------------
@@ -581,6 +731,24 @@ function formatAccountLabel(accountId, accountPhone, accountName) {
 }
 
 async function notifyOperators({ accountId, accountPhone, accountName, peerId, peerUsername, voiceFile, consentMessage }) {
+  const peerLabel = peerUsername ? `@${peerUsername} (id ${peerId})` : `id ${peerId}`;
+  const accountLabel = formatAccountLabel(accountId, accountPhone, accountName);
+
+  pushActivity({
+    kind: 'help_agreed',
+    title: 'Собеседник согласился помочь',
+    body:
+      `Аккаунт: ${accountLabel}\n` +
+      `Собеседник: ${peerLabel}\n` +
+      `Голосовое: ${voiceFile}\n` +
+      `Ответ: «${String(consentMessage || '').slice(0, 500)}»`,
+    accountId,
+    accountLabel,
+    peerId,
+    peerLabel,
+    meta: { voiceFile },
+  }).catch(() => {});
+
   if (!TELEGRAM_API) {
     console.error('[helpRequestNotifier] BOT_TOKEN не задан — уведомление не отправлено.');
     return;
@@ -595,8 +763,6 @@ async function notifyOperators({ accountId, accountPhone, accountName, peerId, p
     return;
   }
 
-  const peerLabel = peerUsername ? `@${peerUsername} (id ${peerId})` : `id ${peerId}`;
-  const accountLabel = formatAccountLabel(accountId, accountPhone, accountName);
   const card =
     '<b>✅ Собеседник согласился помочь</b>\n\n' +
     `<b>Аккаунт:</b> ${escapeHtml(accountLabel)}\n` +
@@ -633,19 +799,6 @@ async function notifyLeadReady({
   reason,
   digest,
 }) {
-  if (!TELEGRAM_API) {
-    console.error('[helpRequestNotifier] BOT_TOKEN не задан — дайджест не отправлен.');
-    return false;
-  }
-
-  const subscribers = await getLeadNotifyChatIds(accountId);
-  if (subscribers.length === 0) {
-    console.log(
-      `[helpRequestNotifier] Лид готов (аккаунт №${accountId}), но нет подписчиков (владелец/делегаты).`,
-    );
-    return false;
-  }
-
   const peerLabel = peerUsername
     ? `@${String(peerUsername).replace(/^@/, '')} (id ${peerId})`
     : `id ${peerId}`;
@@ -656,10 +809,43 @@ async function notifyLeadReady({
       : reason === 'operator'
         ? 'оператор'
         : String(reason || 'готов');
-  const digestBlock = String(digest || '')
+  const digestPlain = String(digest || '')
     .split('\n')
     .filter(Boolean)
     .slice(-10)
+    .join('\n');
+
+  pushActivity({
+    kind: 'lead_ready',
+    title: 'Лид готов',
+    body:
+      `Этап: ${reasonLabel}\n` +
+      `Аккаунт: ${accountLabel}\n` +
+      `Собеседник: ${peerLabel}` +
+      (digestPlain ? `\nДиалог:\n${digestPlain}` : '') +
+      '\nИИ на паузе в этом чате — дальше оператор.',
+    accountId,
+    accountLabel,
+    peerId,
+    peerLabel,
+    meta: { reason },
+  }).catch(() => {});
+
+  if (!TELEGRAM_API) {
+    console.error('[helpRequestNotifier] BOT_TOKEN не задан — дайджест не отправлен.');
+    return true;
+  }
+
+  const subscribers = await getLeadNotifyChatIds(accountId);
+  if (subscribers.length === 0) {
+    console.log(
+      `[helpRequestNotifier] Лид готов (аккаунт №${accountId}), но нет подписчиков (владелец/делегаты).`,
+    );
+    return true;
+  }
+
+  const digestBlock = digestPlain
+    .split('\n')
     .map((line) => escapeHtml(line))
     .join('\n');
 
@@ -784,7 +970,8 @@ async function handleUpdate(update) {
     return;
   }
 
-  if (text === '/start' || text.startsWith('/start ')) {
+  const startCmd = (text.split(/\s+/)[0] || '').split('@')[0].toLowerCase();
+  if (startCmd === '/start' || startCmd === 'start') {
     const [[blocked]] = await db.execute(
       'SELECT id FROM users WHERE telegram_user_id = ? AND is_blocked = 1 LIMIT 1',
       [chatId],
@@ -865,48 +1052,83 @@ async function pollOnce() {
  * Безопасно вызывать один раз при старте сервера. Если BOT_TOKEN_2 не задан,
  * просто ничего не делает.
  */
+function stopNotificationBot() {
+  if (!pollingActive) return { ok: true, wasActive: false };
+  pollingActive = false;
+  console.log('[helpRequestNotifier] long polling stop requested');
+  return { ok: true, wasActive: true };
+}
+
+function restartNotificationBot() {
+  stopNotificationBot();
+  // дать циклу выйти из wait
+  setTimeout(() => {
+    try {
+      startNotificationBot();
+    } catch (e) {
+      console.error('[helpRequestNotifier] restart failed:', e.message);
+    }
+  }, 800);
+  return { ok: true };
+}
+
 function startNotificationBot() {
   if (!TELEGRAM_API) {
     console.log('[helpRequestNotifier] BOT_TOKEN не задан — бот-уведомитель не запущен.');
     return;
   }
   if (pollingActive) return;
-  pollingActive = true;
 
   ensureSchema().catch((err) =>
     console.error('[helpRequestNotifier] Не удалось создать таблицы:', err.message),
   );
 
+  // setMyCommands — один раз; при сетевом сбое не ретраим в цикле (шум в err).
   require('./adminMenu')
     .registerCommands(TELEGRAM_API)
-    .catch((err) => console.error('[helpRequestNotifier] setMyCommands:', err.message));
+    .catch((err) =>
+      console.error('[helpRequestNotifier] setMyCommands (разово):', String(err.message || err).slice(0, 120)),
+    );
 
   console.log('[helpRequestNotifier] Бот-уведомитель запущен (long polling).');
 
   let failStreak = 0;
   let lastLogAt = 0;
+  let lastErrMsg = '';
+  // Сброс webhook — иначе getUpdates молчит / копит pending.
+  botFetch(`${TELEGRAM_API}/deleteWebhook?drop_pending_updates=false`, {}, { retries: 2, timeoutMs: 12000 })
+    .then(async (r) => {
+      const t = await r.text().catch(() => '');
+      console.log('[helpRequestNotifier] deleteWebhook', r.status, String(t).slice(0, 80));
+    })
+    .catch((e) => console.warn('[helpRequestNotifier] deleteWebhook:', String(e.message || e).slice(0, 80)));
+
   const loop = async () => {
     while (pollingActive) {
       try {
         await pollOnce();
         failStreak = 0;
+        lastErrMsg = '';
       } catch (err) {
         failStreak += 1;
-        // Экспоненциальный backoff: 5с → 10с → … → 5мин (сеть/DNS часто мигает).
-        const waitMs = Math.min(5 * 60 * 1000, 5000 * 2 ** Math.min(failStreak - 1, 6));
+        // Было до 640с — /start «молчал» на 10+ мин. Потолок 45с.
+        const base = Math.min(45_000, 3000 * 2 ** Math.min(failStreak - 1, 4));
+        const waitMs = Math.round(base * (0.7 + Math.random() * 0.6));
         const now = Date.now();
-        // Не чаще раза в 5 минут — иначе fetch failed забивает err при мигающей сети.
-        if (now - lastLogAt > 300000) {
+        const msg = String(err.message || err).slice(0, 120);
+        if (msg !== lastErrMsg || now - lastLogAt > 5 * 60 * 1000) {
           console.error(
             `[helpRequestNotifier] Ошибка long polling (×${failStreak}, пауза ${Math.round(waitMs / 1000)}с):`,
-            err.message,
+            msg,
           );
           lastLogAt = now;
+          lastErrMsg = msg;
         }
         await new Promise((r) => setTimeout(r, waitMs));
       }
     }
   };
+  pollingActive = true;
   loop();
 }
 
@@ -1024,6 +1246,9 @@ module.exports = {
   recordVoiceSent,
   checkConsent,
   startNotificationBot,
+  stopNotificationBot,
+  restartNotificationBot,
+  sendAdminAlert,
   reportOpenAiFailure,
   reportOpenAiRecovered,
   classifyOpenAiError,
@@ -1031,6 +1256,7 @@ module.exports = {
   getOpenAiHealth,
   disableAutoreplyForPeer,
   isAutoreplyDisabledForPeer,
+  getAutoreplyDisableReason,
   enableAutoreplyForPeer,
   notifyLeadReady,
   notifyMediaMissed,

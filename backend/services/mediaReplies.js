@@ -41,11 +41,22 @@ const FALLBACK_CAPTIONS = {
   circle_en: [''],
 };
 
+/** Кеш captions.json по mtime — без read+JSON.parse на каждое медиа. */
+let captionsCache = { mtimeMs: 0, data: null };
+
 function loadCaptions() {
   try {
+    if (!fs.existsSync(CAPTIONS_PATH)) {
+      captionsCache = { mtimeMs: 0, data: FALLBACK_CAPTIONS };
+      return FALLBACK_CAPTIONS;
+    }
+    const st = fs.statSync(CAPTIONS_PATH);
+    if (captionsCache.data && st.mtimeMs === captionsCache.mtimeMs) {
+      return captionsCache.data;
+    }
     const raw = fs.readFileSync(CAPTIONS_PATH, 'utf8');
     const parsed = JSON.parse(raw);
-    return {
+    const data = {
       photo: Array.isArray(parsed.photo) ? parsed.photo : FALLBACK_CAPTIONS.photo,
       photo_en: Array.isArray(parsed.photo_en) ? parsed.photo_en : FALLBACK_CAPTIONS.photo_en,
       video: Array.isArray(parsed.video) ? parsed.video : FALLBACK_CAPTIONS.video,
@@ -53,21 +64,42 @@ function loadCaptions() {
       circle: Array.isArray(parsed.circle) ? parsed.circle : FALLBACK_CAPTIONS.circle,
       circle_en: Array.isArray(parsed.circle_en) ? parsed.circle_en : FALLBACK_CAPTIONS.circle_en,
     };
+    captionsCache = { mtimeMs: st.mtimeMs, data };
+    return data;
   } catch (_) {
-    return FALLBACK_CAPTIONS;
+    return captionsCache.data || FALLBACK_CAPTIONS;
   }
 }
 
+const SELF_REF_CAPTION_RE =
+  /(?:^|\s)(?:ну\s+вот\s+)?(?:это\s+)?я\s*\)?$|this\s+is\s+me|\bi\s+am\b/i;
+const NON_PERSON_SCENE_RE =
+  /еда|кофе|кафе|суши|рол[лы]|пицц|food|coffee|тарел|блюдо|завтрак|ужин|обед|десерт|сашими|лосос|стейк|бургер|напит|бокал|интерьер|комнат|улиц|город|парк|короб|сборы|вещи|зал\b|кресл/i;
+
 /**
  * Случайная подпись под медиа ('photo' | 'video' | 'circle').
- * lang: 'ru' | 'en' — в EN без русских фраз и без скобок-улыбок.
+ * lang: 'ru' | 'en'. description — чтобы не писать «это я)» на еду/интерьер.
  */
-function pickCaption(type, lang = 'ru') {
+function pickCaption(type, lang = 'ru', opts = {}) {
   const captions = loadCaptions();
   const key = lang === 'en' ? `${type}_en` : type;
-  const list = captions[key] || captions[type] || [];
-  if (list.length === 0) return '';
-  return list[Math.floor(Math.random() * list.length)];
+  let list = captions[key] || captions[type] || [];
+  if (!Array.isArray(list) || list.length === 0) return '';
+  const desc = String(opts.description || opts.desc || '');
+  const personOk = opts.forcePerson === true
+    ? true
+    : desc
+      ? looksLikePersonMedia(desc) && !NON_PERSON_SCENE_RE.test(desc)
+      : true;
+  if (!personOk) {
+    const filtered = list.filter((c) => {
+      const t = String(c || '').trim();
+      if (!t) return true;
+      return !SELF_REF_CAPTION_RE.test(t) && !/\bя\b/i.test(t) && !/\bme\b/i.test(t);
+    });
+    if (filtered.length) list = filtered;
+  }
+  return list[Math.floor(Math.random() * list.length)] || '';
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +236,7 @@ async function resolveMediaChat(client, link) {
       const checked = await client.invoke(
         new Api.messages.CheckChatInvite({ hash: inviteHash }),
       );
-      if (checked.chat) return checked.chat;
+      if (checked?.chat) return checked.chat;
     } catch (e) {
       const msg = `${e?.errorMessage || ''} ${e?.message || ''}`;
       if (/INVITE_HASH_EXPIRED|INVITE_HASH_INVALID|INVITE_REQUEST_SENT/i.test(msg)) {
@@ -238,7 +270,7 @@ async function resolveMediaChat(client, link) {
         const checked = await client.invoke(
           new Api.messages.CheckChatInvite({ hash: inviteHash }),
         );
-        if (checked.chat) return checked.chat;
+        if (checked?.chat) return checked.chat;
       } catch (_) {
         /* fall through */
       }
@@ -393,12 +425,24 @@ const MEDIA_TOPIC_BAGS = [
     expand: ['еда', 'кофе', 'кафе', 'кухн', 'завтрак', 'десерт'],
   },
   {
-    keys: ['дом', 'кроват', 'диван', 'комнат', 'home', 'bed', 'sofa'],
-    expand: ['дом', 'кроват', 'диван', 'комнат', 'уют'],
+    keys: [
+      'дом',
+      'кроват',
+      'диван',
+      'комнат',
+      'пижам',
+      'халат',
+      'валяюс',
+      'home',
+      'bed',
+      'sofa',
+      'pajama',
+    ],
+    expand: ['дом', 'кроват', 'диван', 'комнат', 'уют', 'пижам', 'валяюс', 'дома'],
   },
   {
-    keys: ['улиц', 'город', 'прогул', 'парк', 'street', 'city', 'walk', 'outdoor'],
-    expand: ['улиц', 'город', 'прогул', 'парк', 'на улице'],
+    keys: ['улиц', 'город', 'прогул', 'парк', 'street', 'city', 'walk', 'outdoor', 'снег', 'гор'],
+    expand: ['улиц', 'город', 'прогул', 'парк', 'на улице', 'снег', 'гора'],
   },
   {
     keys: ['вечер', 'ноч', 'клуб', 'тусов', 'night', 'club', 'party'],
@@ -408,7 +452,49 @@ const MEDIA_TOPIC_BAGS = [
     keys: ['работ', 'офис', 'ноут', 'work', 'office', 'laptop'],
     expand: ['работ', 'офис', 'ноут', 'стол', 'дела'],
   },
+  {
+    keys: ['короб', 'сборы', 'упаков', 'переезд', 'вещи', 'packing', 'boxes', 'moving'],
+    expand: ['короб', 'сборы', 'упаков', 'вещи', 'переезд', 'чемодан'],
+  },
+  {
+    keys: ['юбк', 'платье', 'плать', 'skirt', 'dress'],
+    expand: ['юбк', 'платье', 'плать', 'одежд'],
+  },
+  {
+    keys: ['билет', 'тикет', 'ticket', 'скрин', 'прибыл', 'профит', 'pass'],
+    expand: ['билет', 'скрин', 'прибыл', 'профит', 'тикет'],
+  },
 ];
+
+/** Просьба конкретного кадра/сцены — не шлём рандомное селфи мимо темы. */
+const SPECIFIC_MEDIA_SCENE_RE =
+  /короб|сбор(?:ы|ов)|упаков|вещ[иеяй]|сколько\s+вещ|собрал[аи]|юбк|в\s+юбк|платье|в\s+платье|в\s+машин|из\s+машин|в\s+зале|спортзал|у\s+зеркал|на\s+улиц|на\s+кроват|на\s+диван|в\s+купальн|на\s+пляж|на\s+тренир|билет|тикет|ticket|скрин\s*(?:прибыл|профит)?|boxes?|packing|skirt|dress|in\s+the\s+car|gym\s+photo/i;
+
+function isSpecificMediaSceneRequest(text) {
+  return SPECIFIC_MEDIA_SCENE_RE.test(String(text || ''));
+}
+
+/** Текст бота/диалога: «дома / в пижаме / валяюсь» — нельзя слать outdoor. */
+const INDOOR_SETTING_CLAIM_RE =
+  /пижам|халат|тапоч|валяюс|лежу\s+дома|сижу\s+дома|дома\s+просто|просто\s+дома|сейчас\s+дома|я\s+дома|у\s+себя\s+дома|на\s+диван|на\s+кроват|в\s+комнат|в\s+квартир|pajama|at\s+home|lounging|in\s+bed/i;
+
+/** Описание кадра: улица/снег/горы/машина снаружи. */
+const OUTDOOR_DESC_RE =
+  /улиц|снеж|снег|зимн|гор[аыеу]?|парк|проулк|на\s+улиц|outdoor|street|winter|mountain|лес[уа]|пляж|снегоход|atv|квадро|мехов|шуб|на\s+фоне\s+(?:гор|лес|снеж|снег|машин|улиц)/i;
+
+function claimsIndoorSetting(text) {
+  return INDOOR_SETTING_CLAIM_RE.test(String(text || ''));
+}
+
+function looksOutdoorDesc(desc) {
+  return OUTDOOR_DESC_RE.test(String(desc || ''));
+}
+
+/** Кадр ок при «дома/пижама»: не outdoor. Пустое описание — ок (ещё не разметили). */
+function isSafeForIndoorClaim(desc) {
+  if (!desc) return true;
+  return !looksOutdoorDesc(desc);
+}
 
 function tokenizeMediaContext(text) {
   return String(text || '')
@@ -509,7 +595,7 @@ function pickMediaByContext(
   sentIds,
   descriptions,
   contextText,
-  { allowRepeat = true } = {},
+  { allowRepeat = true, requireMatch = false } = {},
 ) {
   const ofType = filterPersonMediaItems(
     items.filter((i) => i.type === type),
@@ -522,8 +608,26 @@ function pickMediaByContext(
     pool = ofType;
   }
 
+  const descMap = descriptions || {};
+  const indoorClaim = claimsIndoorSetting(contextText);
+  if (indoorClaim) {
+    const indoorPool = pool.filter((i) => {
+      const desc = descMap[i.id] || descMap[String(i.id)] || '';
+      return isSafeForIndoorClaim(desc);
+    });
+    // Жёстко: «в пижаме / дома» → outdoor не шлём вообще.
+    if (!indoorPool.length) return null;
+    pool = indoorPool;
+  }
+
   const tokens = expandMediaContextTokens(tokenizeMediaContext(contextText));
+  const needMatch =
+    requireMatch || isSpecificMediaSceneRequest(contextText) || indoorClaim;
   if (!tokens.length || !descriptions) {
+    // Конкретная сцена без токенов/описаний — не угадываем рандомом.
+    // Indoor-claim уже отфильтровал outdoor — можно взять из пула.
+    if (needMatch && !indoorClaim) return null;
+    if (!pool.length) return null;
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
@@ -540,6 +644,10 @@ function pickMediaByContext(
     const chosen = top[Math.floor(Math.random() * top.length)];
     return chosen.item;
   }
+  // «фото коробок» / «в юбочке» без матча — deflect.
+  // Indoor-claim без токенов уже сузил пул — можно рандом из indoor.
+  if (needMatch && !indoorClaim) return null;
+  if (!pool.length) return null;
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -582,8 +690,12 @@ module.exports = {
   parseUsername,
   parseInviteHash,
   markInviteDead,
+  claimsIndoorSetting,
+  looksOutdoorDesc,
+  isSafeForIndoorClaim,
   tokenizeMediaContext,
   expandMediaContextTokens,
   looksLikePersonMedia,
   filterPersonMediaItems,
+  isSpecificMediaSceneRequest,
 };

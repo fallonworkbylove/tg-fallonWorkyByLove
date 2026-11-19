@@ -24,7 +24,7 @@ p.write_text(json.dumps(data))
 print('dump_scrub_AUDIT_SMOKE', n)
 PY
 
-# 2) pm2 online + PROXY from env
+# 2) pm2 online + PROXY + real OPENAI key (never sk-deploy / sk-audit smoke leftovers)
 pm2 jlist > /tmp/pm2j_guard.json
 python3 - <<'PY'
 import json
@@ -32,9 +32,19 @@ e = [x for x in json.load(open('/tmp/pm2j_guard.json')) if x['name'] == 'tgbot']
 pl = e.get('PROXY_LIST') or ''
 n = len([x for x in pl.split(';') if x.strip()])
 smoke = e.get('AUDIT_SMOKE')
-print({'status': e.get('status'), 'PROXY': n, 'AUDIT_SMOKE': smoke})
+key = str(e.get('OPENAI_API_KEY') or '')
+fake = (
+    (not key)
+    or len(key) < 20
+    or key in ('sk-deploy', 'sk-a', 'sk-test')
+    or key.startswith('sk-deploy')
+    or key.startswith('sk-audit')
+    or key.startswith('sk-test')
+)
+print({'status': e.get('status'), 'PROXY': n, 'AUDIT_SMOKE': smoke, 'openai_len': len(key), 'openai_fake': fake})
 assert e.get('status') == 'online', 'tgbot not online'
 assert n >= 5, 'REFUSE_PROXY'
+assert not fake, 'REFUSE_OPENAI_FAKE_KEY — restore from .env before pm2 --update-env'
 if smoke not in (None, '', '0'):
     print('WARN live AUDIT_SMOKE still set — server.js must scrub; health.audit_smoke must be false')
 PY
@@ -80,7 +90,22 @@ ops_t = ops.read_text(encoding='utf-8', errors='ignore') if ops.exists() else ''
 head = cl[:2500]
 assert tag in head, ('changelog tag not near top', tag)
 assert 'LOVERUSSIAN_UPDATES' in fe and 'LOVERUSSIAN_UPDATES' in ops_t, 'dual updates missing'
+# Miniapp index must stay worker UI (never OPS html from scp name-clash)
+assert 'операторская, вне Telegram' not in idx, 'REFUSE_FRONTEND_IS_OPS'
+assert 'app-splash' in idx, 'REFUSE_FRONTEND_NOT_MINIAPP'
 print('changelog_sync', {'v': v, 'tag': tag})
+PY
+
+# 6) Static security gates (source on disk)
+python3 - <<'PY'
+from pathlib import Path
+base = Path('/root/opt/tgbot/tg-miniapp-loverussian')
+get_uid = (base / 'backend' / 'lib' / 'getUserId.js').read_text(encoding='utf-8', errors='ignore')
+server = (base / 'backend' / 'server.js').read_text(encoding='utf-8', errors='ignore')
+assert 'return 1' not in get_uid.replace(' ', ''), 'REFUSE_GETUSERID_FALLBACK_1'
+assert '401' in get_uid, 'REFUSE_GETUSERID_NO_401'
+assert 'origin: true' not in server and "origin: '*'" not in server and 'origin: "*"' not in server, 'REFUSE_CORS_WILDCARD'
+print('security_static_ok')
 PY
 
 echo DEPLOY_GUARD_OK

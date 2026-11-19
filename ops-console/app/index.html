@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="rose">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'self'; object-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>LoveRussian OPS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css?v=136" />
+  </head>
+  <body>
+    <div class="titlebar-drag" aria-hidden="true"></div>
+    <div class="glow glow-a" aria-hidden="true"></div>
+    <div class="glow glow-b" aria-hidden="true"></div>
+
+    <header class="top">
+      <div class="brand">
+        <span class="brand-mark">LR</span>
+        <div>
+          <h1>LoveRussian</h1>
+          <p class="brand-sub">операторская, вне Telegram</p>
+        </div>
+      </div>
+      <nav class="tabs" id="tabs" role="tablist" aria-label="Разделы">
+        <button class="tab is-on" data-tab="funnel" type="button" role="tab" aria-selected="true">Воронка</button>
+        <button class="tab" data-tab="accounts" type="button" role="tab" aria-selected="false">Аккаунты</button>
+        <button class="tab" data-tab="control" type="button" role="tab" aria-selected="false">Управление</button>
+        <button class="tab" data-tab="activity" type="button" role="tab" aria-selected="false">Логи</button>
+        <button class="tab" data-tab="updates" type="button" role="tab" aria-selected="false">Обновления</button>
+        <button class="tab" data-tab="settings" type="button" role="tab" aria-selected="false">Настройки</button>
+      </nav>
+      <div class="top-meta">
+        <span id="meta-line" class="meta-line">загрузка…</span>
+        <button id="btn-dense" class="btn btn-ghost" type="button" title="Плотный режим">Плотно</button>
+        <button id="btn-csv" class="btn btn-ghost" type="button" title="CSV лидов">CSV</button>
+        <button id="btn-refresh" class="btn" type="button">Обновить</button>
+      </div>
+    </header>
+
+    <section class="view is-on" data-view="funnel" id="view-funnel">
+      <section class="stats" id="stats" aria-label="Сводка"></section>
+      <section class="toolbar">
+        <div class="filters" id="filters" role="tablist">
+          <button class="chip is-on" data-filter="all" type="button">Все</button>
+          <button class="chip" data-filter="waiting" type="button">Ждут ответа</button>
+          <button class="chip" data-filter="ai" type="button">Ведёт ИИ</button>
+          <button class="chip" data-filter="operator" type="button">Ведёт оператор</button>
+        </div>
+        <p id="board-hint" class="board-hint"></p>
+      </section>
+      <main class="board" id="board" aria-label="Воронка"></main>
+    </section>
+
+    <section class="view" data-view="accounts" id="view-accounts" hidden>
+      <div class="panel-card">
+        <div class="panel-card__head">
+          <h2>Аккаунты</h2>
+          <p id="accounts-hint" class="board-hint"></p>
+        </div>
+        <div class="accounts-table-wrap">
+          <table class="accounts-table" aria-label="Список аккаунтов">
+            <thead>
+              <tr>
+                <th>Имя / телефон</th>
+                <th>Владелец</th>
+                <th>Статус</th>
+                <th>AI</th>
+                <th>Сегодня</th>
+                <th>Неделя</th>
+              </tr>
+            </thead>
+            <tbody id="accounts-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="account-drawer" class="acc-drawer" hidden aria-hidden="true">
+        <div class="acc-drawer__scrim" data-action="close-account-drawer"></div>
+        <aside class="acc-drawer__panel" role="dialog" aria-modal="true" aria-labelledby="acc-drawer-title">
+          <header class="acc-drawer__head">
+            <div>
+              <p class="acc-drawer__kicker">Аккаунт</p>
+              <h2 id="acc-drawer-title">—</h2>
+            </div>
+            <button class="btn" type="button" data-action="close-account-drawer" aria-label="Закрыть">Закрыть</button>
+          </header>
+          <div id="acc-drawer-body" class="acc-drawer__body"></div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="view" data-view="control" id="view-control" hidden>
+      <div class="control-layout">
+        <aside class="control-nav" id="control-nav" role="tablist">
+          <button class="control-nav__btn is-on" data-panel="ai" data-i18n="ctrlAiNav" type="button">AI / аккаунты</button>
+          <button class="control-nav__btn" data-panel="blacklist" data-i18n="ctrlBlNav" type="button">Чёрный список</button>
+          <button class="control-nav__btn" data-panel="add" data-i18n="ctrlAddNav" type="button">Добавить аккаунт</button>
+          <button class="control-nav__btn" data-panel="proxies" data-i18n="ctrlProxyNav" type="button">Прокси</button>
+          <button class="control-nav__btn" data-panel="logs" data-i18n="ctrlLogsNav" type="button">Консоль логов</button>
+          <button class="control-nav__btn" data-panel="metrics" type="button">Метрики</button>
+        </aside>
+        <div class="control-panels">
+          <div class="panel-card control-panel is-on" data-panel="ai" id="panel-ai">
+            <div class="panel-card__head">
+              <h2 data-i18n="ctrlAiTitle">Ответ AI</h2>
+              <div class="btn-row">
+                <button class="btn btn--soft" type="button" id="btn-ai-all-on" data-i18n="ctrlAiAllOn">Вкл все</button>
+                <button class="btn btn--soft" type="button" id="btn-ai-all-off" data-i18n="ctrlAiAllOff">Выкл все</button>
+              </div>
+            </div>
+            <p class="settings-note" data-i18n="ctrlAiNote">Включение / выключение автоответа и удаление аккаунта.</p>
+            <div class="accounts-table-wrap">
+              <table class="accounts-table" aria-label="Управление AI">
+                <thead>
+                  <tr>
+                    <th>Аккаунт</th>
+                    <th>Владелец</th>
+                    <th>AI</th>
+                    <th>Действия</th>
+                  </tr>
+                </thead>
+                <tbody id="ctrl-ai-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel-card control-panel" data-panel="blacklist" id="panel-blacklist" hidden>
+            <div class="panel-card__head">
+              <h2 data-i18n="ctrlBlTitle">Чёрный список</h2>
+              <button class="btn btn--soft" type="button" id="btn-bl-refresh" data-i18n="refresh">Обновить</button>
+            </div>
+            <p class="settings-note" data-i18n="ctrlBlNote">Как в Telegram-админке: блокировка воркеров, не собеседников ИИ.</p>
+            <form class="ctrl-form" id="form-bl" autocomplete="off">
+              <label>
+                <span>@username или Telegram ID</span>
+                <input name="input" type="text" required placeholder="@sicretsolo / 7607083426" />
+              </label>
+              <button class="btn" type="submit">В ЧС</button>
+            </form>
+            <div class="accounts-table-wrap" style="margin-top:14px">
+              <table class="accounts-table">
+                <thead>
+                  <tr>
+                    <th>Воркер</th>
+                    <th>Telegram ID</th>
+                    <th>Аккаунты</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="ctrl-bl-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel-card control-panel" data-panel="add" id="panel-add" hidden>
+            <div class="panel-card__head">
+              <h2 data-i18n="ctrlAddTitle">Добавить / подключить</h2>
+            </div>
+            <form class="ctrl-form ctrl-form--stack" id="form-add" autocomplete="off">
+              <label>
+                <span>Телефон</span>
+                <input name="phone" type="text" required placeholder="+79991234567" />
+              </label>
+              <label>
+                <span>Owner Telegram ID</span>
+                <input name="ownerTelegramId" type="text" required placeholder="id владельца в users" />
+              </label>
+              <label>
+                <span>Промпт (опционально)</span>
+                <textarea name="prompt" rows="4" placeholder="Ты — …"></textarea>
+              </label>
+              <div class="btn-row">
+                <button class="btn" type="submit" name="action" value="create">Создать запись</button>
+                <button class="btn btn--soft" type="submit" name="action" value="code">Запросить код</button>
+              </div>
+            </form>
+            <form class="ctrl-form" id="form-code" autocomplete="off" hidden>
+              <label>
+                <span>Код из Telegram</span>
+                <input name="code" type="text" required placeholder="12345" />
+              </label>
+              <button class="btn" type="submit">Подтвердить код</button>
+              <button class="btn btn--soft" type="button" id="btn-code-resend">Ещё раз код</button>
+            </form>
+            <form class="ctrl-form" id="form-2fa" autocomplete="off" hidden>
+              <label>
+                <span>Облачный пароль 2FA</span>
+                <input name="password" type="password" required />
+              </label>
+              <button class="btn" type="submit">Подтвердить пароль</button>
+            </form>
+            <p class="settings-note" id="add-status"></p>
+          </div>
+
+          <div class="panel-card control-panel" data-panel="proxies" id="panel-proxies" hidden>
+            <div class="panel-card__head">
+              <h2 data-i18n="ctrlProxyTitle">Прокси</h2>
+              <div class="btn-row">
+                <button class="btn btn--soft" type="button" id="btn-proxy-refresh" data-i18n="proxyList">Список</button>
+                <button class="btn" type="button" id="btn-proxy-check" data-i18n="proxyCheck">Проверить SOCKS</button>
+              </div>
+            </div>
+            <p class="settings-note" id="proxy-hint" data-i18n="proxyHintStatic">Рабочие: чаты ИИ. Резидентские: вход по коду и QR.</p>
+            <div id="proxy-results" class="proxy-results"></div>
+          </div>
+
+          <div class="panel-card control-panel" data-panel="logs" id="panel-logs" hidden>
+            <div class="panel-card__head">
+              <h2 data-i18n="ctrlLogsTitle">Консоль логов</h2>
+              <div class="btn-row">
+                <button class="btn btn--soft" type="button" id="btn-logs-refresh" data-i18n="refresh">Обновить</button>
+                <button class="btn btn--soft" type="button" id="btn-logs-clear" data-i18n="ctrlLogsClear">Очистить</button>
+                <label class="chk">
+                  <input type="checkbox" id="logs-live" checked />
+                  <span>live</span>
+                </label>
+              </div>
+            </div>
+            <pre class="log-console" id="log-console" aria-live="polite"></pre>
+          </div>
+
+          <div class="panel-card control-panel" data-panel="metrics" id="panel-metrics" hidden>
+            <div class="panel-card__head">
+              <h2>Метрики (админ)</h2>
+              <div class="btn-row">
+                <button class="btn btn--soft" type="button" id="btn-metrics-refresh">Обновить</button>
+                <button class="btn btn--soft" type="button" id="btn-notifier-restart">Рестарт notifier</button>
+              </div>
+            </div>
+            <p class="settings-note">Ответы, клише, AI без ответа >30м. Только для админов.</p>
+            <pre class="log-console" id="metrics-console" style="min-height:180px"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" data-view="activity" id="view-activity" hidden>
+      <div class="panel-card activity-card">
+        <div class="activity-top">
+          <div class="activity-top__row">
+            <h2 data-i18n="activityTitle">Логи</h2>
+            <div class="activity-actions">
+              <button class="btn" type="button" id="btn-activity-refresh" data-i18n="refresh">Обновить</button>
+              <label class="chk">
+                <input type="checkbox" id="activity-live" checked />
+                <span>live</span>
+              </label>
+            </div>
+          </div>
+          <div class="activity-filters" id="activity-filters" role="tablist">
+            <button class="chip is-on" data-akind="all" type="button">Все</button>
+            <button class="chip" data-akind="media" type="button">Фото / кружок</button>
+            <button class="chip" data-akind="nft" type="button">NFT / ГС</button>
+            <button class="chip" data-akind="lead" type="button">Лиды</button>
+          </div>
+        </div>
+        <p class="settings-note" data-i18n="activityLead">Как в боте: просьба фото/кружка, ГС NFT-кампании, лид готов, согласие помочь.</p>
+        <div id="activity-list" class="activity-feed" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section class="view" data-view="updates" id="view-updates" hidden>
+      <div class="panel-card updates-card">
+        <div class="panel-card__head">
+          <h2 data-i18n="updatesTitle">Обновления</h2>
+        </div>
+        <p class="settings-note" data-i18n="updatesLead">Та же лента крупных и мелких изменений, что в мини-приложении.</p>
+        <div id="updates-list" class="updates-feed" aria-label="Обновления"></div>
+      </div>
+    </section>
+
+    <section class="view" data-view="settings" id="view-settings" hidden>
+      <div class="panel-card settings-card">
+        <h2 data-i18n="settingsTitle">Настройки</h2>
+        <div id="access-banner" class="access-banner" hidden data-i18n="accessBanner">
+          Чтобы видеть воронку и логи как у команды, сохрани ключ доступа ниже.
+        </div>
+        <p class="settings-lead" data-i18n="accessLead">Доступ к кабинету</p>
+        <p class="settings-note" data-i18n="accessHint">
+          Один ключ даёт ту же воронку, аккаунты и логи, что на сервере. Вставь ключ админа команды.
+        </p>
+        <form class="access-form" id="form-access" autocomplete="off">
+          <label>
+            <span data-i18n="accessToken">Ключ доступа</span>
+            <input
+              id="access-token"
+              name="token"
+              type="password"
+              spellcheck="false"
+              autocomplete="off"
+              placeholder="вставь ключ…"
+            />
+          </label>
+          <div class="btn-row">
+            <button class="btn" type="submit" data-i18n="accessSave">Сохранить и войти</button>
+            <p class="access-status" id="access-status" aria-live="polite"></p>
+          </div>
+        </form>
+        <p class="settings-lead" data-i18n="themeLead">Тема оформления</p>
+        <div class="theme-groups" id="theme-grid" role="radiogroup" aria-label="Тема"></div>
+        <p class="settings-lead" data-i18n="langLead">Язык</p>
+        <div class="lang-grid" id="lang-grid" role="radiogroup" aria-label="Язык">
+          <button class="lang-card is-on" data-lang="ru" type="button">
+            <strong>RU</strong>
+            <span>Русский</span>
+          </button>
+          <button class="lang-card" data-lang="en" type="button">
+            <strong>EN</strong>
+            <span>English</span>
+          </button>
+        </div>
+        <p class="settings-note" data-i18n="settingsNote">
+          Выбор и ключ сохраняются только на этом компьютере. Ключ в сборку не кладём.
+        </p>
+      </div>
+    </section>
+
+    <div id="toast" class="toast" hidden></div>
+    <script src="updates.js?v=255"></script>
+    <script src="ops-web-bridge.js?v=2"></script>
+    <script src="i18n.js?v=2"></script>
+    <script src="adminPanel.js?v=2"></script>
+    <script src="renderer.js?v=247"></script>
+  </body>
+</html>

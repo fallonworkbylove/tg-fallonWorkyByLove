@@ -1,0 +1,290 @@
+[
+  {
+    "i": 0,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "хай)"
+  },
+  {
+    "i": 1,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "да просто общаюсь"
+  },
+  {
+    "i": 2,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "ну, иногда нужно"
+  },
+  {
+    "i": 3,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "короче чем занят сегодня?"
+  },
+  {
+    "i": 4,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "да, попадаются всякие) но не без этого"
+  },
+  {
+    "i": 5,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "смотрела вчера новый сериал, интересный, про путешествия"
+  },
+  {
+    "i": 6,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "ага, вот так и живём"
+  },
+  {
+    "i": 7,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "называется "
+  },
+  {
+    "i": 8,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "хах, ну да, было бы прикольно"
+  },
+  {
+    "i": 9,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "Haha, you're sweet"
+  },
+  {
+    "i": 10,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "хм, да так, ничего особенного, просто кофе пью"
+  },
+  {
+    "i": 11,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "привет) переезжаю из Липецка в Архангельск"
+  },
+  {
+    "i": 12,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "I’d say I’m caring and a bit"
+  },
+  {
+    "i": 13,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "хах, не знаю, просто переписываюсь"
+  },
+  {
+    "i": 14,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "не скажу) стройная, этого достаточно"
+  },
+  {
+    "i": 15,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "не, не играю, просто общаюсь"
+  },
+  {
+    "i": 16,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "A bit playful, I guess"
+  },
+  {
+    "i": 17,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "ну спасибо"
+  },
+  {
+    "i": 18,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "иногда сериалы смотрю"
+  },
+  {
+    "i": 19,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "хах ладно чуть позже)"
+  },
+  {
+    "i": 20,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "да так, поболтать"
+  },
+  {
+    "i": 21,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "Glad you think so"
+  },
+  {
+    "i": 22,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "ок, скажу"
+  },
+  {
+    "i": 23,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "I can be both, depends on the situation"
+  },
+  {
+    "i": 24,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "работаю онлайн, занимаюсь флипингом NFT)\nучёбы нет, только работа"
+  },
+  {
+    "i": 25,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "да, свет есть)\nсейчас живу в центре, у мамы"
+  },
+  {
+    "i": 26,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "жесть, это не очень)\nнадеюсь, скоро восстановят"
+  },
+  {
+    "i": 27,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "поняла, ты в каком)\nсечас в Липецке, но скоро в Донецк. ищу новых знакомых и общения)"
+  },
+  {
+    "i": 28,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "не знаю, как получится)\nэто было бы ну ок)"
+  },
+  {
+    "i": 29,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "поняла, ты в Архангельск)\nя сейчас в Липецке. переезжаю к маме, она нуждается в поддержке"
+  },
+  {
+    "i": 30,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "дела нормально, спасибо)\nпереезжаю из Липецка в Архангельск"
+  },
+  {
+    "i": 31,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "работаю онлайн)\nцели? просто развиваться и наслаждаться жизнью)"
+  },
+  {
+    "i": 32,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "иногда смотрю, но не всегда)\nтянет, конечно, но держусь)"
+  },
+  {
+    "i": 33,
+    "verdict": "BAD",
+    "category": "chat-continuity",
+    "heuristic": "chat-continuity",
+    "model": null,
+    "bot": "да, давай продолжим общение)\nготова, посмотрим, что будет дальше"
+  },
+  {
+    "i": 34,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "да, вполне)\nигра престолов» пересматриваю"
+  },
+  {
+    "i": 35,
+    "verdict": "OK",
+    "category": "ok",
+    "heuristic": null,
+    "model": null,
+    "bot": "не, недалеко)\nдостаточно близко"
+  }
+]

@@ -82,7 +82,7 @@ async function buildMenuHomeText() {
   try {
     const [[h]] = await db.execute(
       `SELECT COUNT(*) AS c FROM operator_lead_flags
-       WHERE funnel_stage IN ('interest', 'pitch', 'operator')`,
+       WHERE funnel_stage IN ('day3', 'day4', 'interest', 'pitch', 'operator')`,
     );
     hot = Number(h?.c || 0);
   } catch (_) {}
@@ -900,8 +900,8 @@ async function handleAdminText(api, chatId, text) {
     });
   };
 
-  // Мастер доступа (тестер/админ)
-  if (opsAdmin.isWizardActive()) {
+  // Мастер доступа (тестер/админ) — только wizard этого chatId
+  if (opsAdmin.isWizardActive(chatId)) {
     if (await opsAdmin.handleText(api, chatId, text, sendWizard)) return true;
   }
 

@@ -5,7 +5,7 @@
  * soft: «?» → не NFT
  */
 const path = require('path');
-process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'sk-test';
+process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'local-smoke-only';
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const oh = require('../services/objectionHandler');
 const ar = require('../services/aiResponder');

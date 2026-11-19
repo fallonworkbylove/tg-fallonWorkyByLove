@@ -5,16 +5,57 @@
 
 const db = require('../db');
 
-const FUNNEL_STAGES = ['hello', 'chat', 'interest', 'pitch', 'operator', 'filtered'];
+/** Колонки доски / чипы миниаппа — дни NFT-кампании. */
+const FUNNEL_BOARD_STAGES = ['day1', 'day2', 'day3', 'day4'];
+/** Все допустимые этапы (включая отсев для метрик/howlong). */
+const FUNNEL_STAGES = [...FUNNEL_BOARD_STAGES, 'filtered'];
 const FUNNEL_LABELS = {
-  hello: 'Знакомство',
-  chat: 'Общение',
-  interest: 'Интерес',
-  pitch: 'Предложка',
-  operator: 'Оператор',
+  day1: '1 день',
+  day2: '2 день',
+  day3: '3 день · NFT',
+  day4: '4 день · NFT',
   filtered: 'Отсев',
 };
-const READY_STAGES = new Set(['pitch', 'operator']);
+const LEGACY_FUNNEL_MAP = {
+  hello: 'day1',
+  chat: 'day2',
+  interest: 'day3',
+  pitch: 'day4',
+  operator: 'day4',
+};
+/** Совпадает с nftCampaign.NFT_VOICE_AFTER_HOURS (без циклического require). */
+const FUNNEL_VOICE_AFTER_HOURS = 48;
+const FUNNEL_DAY4_HOURS = 72;
+const READY_STAGES = new Set(['day3', 'day4']);
+
+function normalizeFunnelStage(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  if (FUNNEL_STAGES.includes(s)) return s;
+  if (LEGACY_FUNNEL_MAP[s]) return LEGACY_FUNNEL_MAP[s];
+  return null;
+}
+
+function dayStageFromAge(ageHours, nftVoice) {
+  const age = Number(ageHours);
+  const h = Number.isFinite(age) && age >= 0 ? age : 0;
+  if (nftVoice || h >= FUNNEL_DAY4_HOURS) return 'day4';
+  if (h >= FUNNEL_VOICE_AFTER_HOURS) return 'day3';
+  if (h >= 24) return 'day2';
+  return 'day1';
+}
+
+/** Срез служебных ярлыков цитаты с карточки OPS / миниаппа. */
+function cleanBoardSnippet(text) {
+  return String(text || '')
+    .replace(
+      /\[(?:уточнение к твоей фразе|ответ на(?:\s+его\s+сообщение)?|ответ на твою фразу|Ответ на сообщение(?:\s+собеседника)?)[^\]]*\]:?\s*/gi,
+      '',
+    )
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+}
 
 let schemaReady = false;
 
@@ -253,46 +294,37 @@ function scoreConversation(row) {
 }
 
 /**
- * Авто-этап воронки. Ручной funnel_stage (если задан) важнее.
+ * Авто-этап воронки по дням кампании. Ручной funnel_stage важнее.
+ * day1 <24ч → day2 <48ч → day3 NFT (ждём/шлём голос) → day4 NFT (голос ушёл / ≥72ч).
  */
-function detectFunnelStage(row, score) {
-  const manual = String(row.funnel_stage_manual || '').trim();
-  if (manual && FUNNEL_STAGES.includes(manual)) return { stage: manual, auto: false };
+function detectFunnelStage(row, _score) {
+  const manualRaw = String(row.funnel_stage_manual || '').trim();
+  const manual = normalizeFunnelStage(manualRaw);
+  if (manual) return { stage: manual, auto: false };
 
-  const msgs = Number(row.message_count || 0);
-  const hotHits = Number(row.hot_hits || 0);
-  const nftVoice = Number(row.nft_voice_sent || 0) > 0;
   const pauseReason = String(row.pause_reason || '');
-  const paused = Number(row.autoreply_disabled) === 1;
-  const focused = Number(row.operator_focus) === 1;
-
-  if (pauseReason === 'filtered') {
+  if (pauseReason === 'filtered' || manualRaw === 'filtered') {
     return { stage: 'filtered', auto: true };
   }
 
-  if (paused || focused || pauseReason === 'nft_voice_sent' || pauseReason === 'operator_pause') {
-    // Голос NFT уже ушёл, но оператор ещё не взял — это пич.
-    if (nftVoice && !focused && pauseReason === 'nft_voice_sent') {
-      return { stage: 'pitch', auto: true };
-    }
-    if (paused || focused) return { stage: 'operator', auto: true };
-  }
-  if (nftVoice) return { stage: 'pitch', auto: true };
-  if (hotHits >= 2 || score >= 70) return { stage: 'interest', auto: true };
-  if (msgs >= 6) return { stage: 'chat', auto: true };
-  return { stage: 'hello', auto: true };
+  const nftVoice =
+    Number(row.nft_voice_sent || 0) > 0 || pauseReason === 'nft_voice_sent';
+  return {
+    stage: dayStageFromAge(row.age_hours, nftVoice),
+    auto: true,
+  };
 }
 
 function funnelOrder(stage) {
   if (stage === 'filtered') return -1;
-  const i = FUNNEL_STAGES.indexOf(stage);
+  const i = FUNNEL_BOARD_STAGES.indexOf(stage);
   return i < 0 ? 0 : i;
 }
 
 /**
  * Список диалогов с lead_score и funnel_stage.
  * sort: 'score' | 'recent' | 'funnel'
- * stage: hello|chat|interest|pitch|operator|null
+ * stage: day1|day2|day3|day4|filtered|null
  */
 async function listScoredConversations(
   userId,
@@ -312,6 +344,7 @@ async function listScoredConversations(
             SUM(cm.role = 'assistant') AS bot_msgs,
             MAX(cm.created_at) AS last_at,
             MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END) AS last_user_at,
+            TIMESTAMPDIFF(HOUR, MIN(cm.created_at), NOW()) AS age_hours,
             SUM(cm.role = 'user' AND (${HOT_SQL})) AS hot_hits,
             SUM(cm.role = 'user' AND (${COLD_SQL})) AS cold_hits,
             SUM(cm.role = 'assistant' AND cm.content LIKE '%nft.ogg%') AS nft_voice_sent,
@@ -354,10 +387,10 @@ async function listScoredConversations(
          AND MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END)
            >= (NOW() - INTERVAL 14 DAY)
        )
-       -- Предложка / оператор — только пока свежие (не вечный хвост NFT)
+       -- День 3–4 NFT / оператор — только пока свежие (не вечный хвост)
        OR (
          (
-           MAX(olf.funnel_stage) IN ('pitch', 'operator')
+           MAX(olf.funnel_stage) IN ('day3', 'day4', 'pitch', 'operator', 'interest')
            OR MAX(ad.reason) IN ('nft_voice_sent', 'operator_pause')
          )
          AND MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END)
@@ -416,6 +449,7 @@ async function listScoredConversations(
       hot_hits: Number(row.hot_hits || 0),
       cold_hits: Number(row.cold_hits || 0),
       nft_voice_sent: Number(row.nft_voice_sent || 0) > 0,
+      age_hours: Number(row.age_hours || 0),
       lead_score: score,
       lead_tier: tier,
       funnel_stage: funnel.stage,
@@ -454,7 +488,12 @@ async function listScoredConversations(
     list.sort((a, b) => new Date(b.last_at) - new Date(a.last_at));
   }
 
-  return { conversations: list, funnel: funnelCounts, stages: FUNNEL_STAGES, labels: FUNNEL_LABELS };
+  return {
+    conversations: list,
+    funnel: funnelCounts,
+    stages: FUNNEL_BOARD_STAGES,
+    labels: FUNNEL_LABELS,
+  };
 }
 
 /**
@@ -473,6 +512,7 @@ async function listGlobalScoredConversations({ limit = 400 } = {}) {
             SUM(cm.role = 'assistant') AS bot_msgs,
             MAX(cm.created_at) AS last_at,
             MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END) AS last_user_at,
+            TIMESTAMPDIFF(HOUR, MIN(cm.created_at), NOW()) AS age_hours,
             SUM(cm.role = 'user' AND (${HOT_SQL})) AS hot_hits,
             SUM(cm.role = 'user' AND (${COLD_SQL})) AS cold_hits,
             SUM(cm.role = 'assistant' AND cm.content LIKE '%nft.ogg%') AS nft_voice_sent,
@@ -516,7 +556,7 @@ async function listGlobalScoredConversations({ limit = 400 } = {}) {
        OR MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END) >= (NOW() - INTERVAL 7 DAY)
        OR (
          (
-           MAX(olf.funnel_stage) IN ('filtered', 'pitch', 'operator')
+           MAX(olf.funnel_stage) IN ('filtered', 'day3', 'day4', 'pitch', 'operator', 'interest')
            OR MAX(ad.reason) IN ('filtered', 'nft_voice_sent', 'operator_pause')
          )
          AND MAX(CASE WHEN cm.role = 'user' THEN cm.created_at END)
@@ -541,13 +581,11 @@ async function listGlobalScoredConversations({ limit = 400 } = {}) {
       account_id: row.account_id,
       peer_id: row.peer_id,
       peer_username: row.peer_username,
-      snippet: String(row.last_user_text || '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 120),
+      snippet: cleanBoardSnippet(row.last_user_text),
       message_count: Number(row.message_count || 0),
       last_at: row.last_at,
       last_user_at: row.last_user_at,
+      age_hours: Number(row.age_hours || 0),
       account_phone: row.account_phone,
       worker: row.worker_username ? `@${row.worker_username}` : null,
       autoreply_disabled: Number(row.autoreply_disabled) === 1,
@@ -569,7 +607,7 @@ async function listGlobalScoredConversations({ limit = 400 } = {}) {
   return {
     conversations: list,
     funnel: funnelCounts,
-    stages: FUNNEL_STAGES,
+    stages: FUNNEL_BOARD_STAGES,
     labels: FUNNEL_LABELS,
   };
 }
@@ -730,7 +768,7 @@ async function maybeNotifyLeadReady(accountId, peerId, reason = 'ready') {
     `INSERT INTO operator_lead_flags (account_id, peer_id, focus, note, funnel_stage, digest_sent_at)
      VALUES (?, ?, 0, NULL, ?, CURRENT_TIMESTAMP)
      ON DUPLICATE KEY UPDATE digest_sent_at = CURRENT_TIMESTAMP`,
-    [accountId, peer, flags?.funnel_stage || (reason === 'nft_voice_sent' ? 'pitch' : 'operator')],
+    [accountId, peer, flags?.funnel_stage || 'day4'],
   );
   return true;
 }
@@ -741,17 +779,14 @@ async function setFunnelStage(userId, accountId, peerId, stage) {
     err.status = 404;
     throw err;
   }
-  const value =
-    stage === null || stage === '' || stage === 'auto'
-      ? null
-      : FUNNEL_STAGES.includes(stage)
-        ? stage
-        : null;
-  if (stage && stage !== 'auto' && stage !== null && stage !== '' && !FUNNEL_STAGES.includes(stage)) {
+  const normalized =
+    stage === null || stage === '' || stage === 'auto' ? null : normalizeFunnelStage(stage);
+  if (stage && stage !== 'auto' && stage !== null && stage !== '' && !normalized) {
     const err = new Error('Неизвестный этап воронки');
     err.status = 400;
     throw err;
   }
+  const value = normalized;
 
   const {
     disableAutoreplyForPeer,
@@ -814,9 +849,9 @@ async function setAutoreplyPaused(userId, accountId, peerId, paused) {
   } = require('./helpRequestNotifier');
   if (paused) {
     await disableAutoreplyForPeer(accountId, peerId, 'operator_pause');
-    // Пауза = оператор взял чат → этап «Оператор».
-    await upsertLeadFlags(accountId, peerId, { funnel_stage: 'operator' });
-    maybeNotifyLeadReady(accountId, peerId, 'operator').catch((e) =>
+    // Пауза = оператор взял чат → день 4 NFT (хендофф).
+    await upsertLeadFlags(accountId, peerId, { funnel_stage: 'day4' });
+    maybeNotifyLeadReady(accountId, peerId, 'day4').catch((e) =>
       console.error('[leadScoring] digest notify:', e.message),
     );
   } else {
@@ -907,10 +942,14 @@ async function getPeerScoreSnapshot(accountId, peerId) {
 
 module.exports = {
   FUNNEL_STAGES,
+  FUNNEL_BOARD_STAGES,
   FUNNEL_LABELS,
   ensureSchema,
   scoreConversation,
   detectFunnelStage,
+  dayStageFromAge,
+  cleanBoardSnippet,
+  normalizeFunnelStage,
   getPeerScoreSnapshot,
   listScoredConversations,
   listGlobalScoredConversations,

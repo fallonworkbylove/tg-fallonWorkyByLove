@@ -1,0 +1,32 @@
+---
+description: Всегда читать и применять skills/plugins — Tasty, superpowers, Graphify, LoveRussian
+alwaysApply: true
+---
+
+# Skills / plugins — обязательно
+
+Перед ответом и перед кодом: открой нужный `SKILL.md` через Read и следуй ему. Не работай «из памяти скилла».
+
+## Стек по умолчанию
+
+| Когда | Что |
+|-------|-----|
+| UI / миниапп / «криво» / polish / анимации | **Tasty** — `.agents/skills/design-taste-frontend/SKILL.md` (и `tasty-ui.mdc`) |
+| Любая нетривиальная задача / баг / фича / план | **superpowers** — `using-superpowers` → дальше brainstorming / debugging / TDD / writing-plans / verification-before-completion по типу работы |
+| Где символ, кто зовёт, impact, «как устроено» | **Graphify** MCP `user-graphify` — `query_graph` / `graphify_find` / `graphify_callers` / `graphify_impact` до правок; repo `fallonworkbylove/tg-fallonWorkyByLove` |
+| Фикс / выкат LoveRussian | **loverussian-fix-loop** (+ deploy / proxy-alive / post-add-audit) |
+| Доки библиотек | **Context7** MCP |
+
+## Порядок
+
+1. Классифицируй задачу → выбери skill/plugin из таблицы.
+2. `Read` SKILL.md (или вызови Graphify/Context7) **до** правок и до уточняющих вопросов.
+3. LoveRussian UI: Tasty **и** fix-loop параллельно по смыслу.
+4. Код-структура: сначала Graphify; grep только для литералов/конфига/непроиндексированного.
+
+## Нельзя
+
+- Закрывать UI без Tasty.
+- Чинить «наугад» без superpowers-debugging / triage skill, если есть баг/лог/скрин.
+- Искать архитектуру только grep’ом, когда Graphify доступен.
+- Писать «готово» / «на проде» без loverussian post-add audit после выката.

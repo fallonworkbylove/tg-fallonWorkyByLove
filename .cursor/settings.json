@@ -1,0 +1,13 @@
+{
+  "plugins": {
+    "superpowers": {
+      "enabled": true
+    },
+    "context7": {
+      "enabled": true
+    },
+    "blackbird-concierge": {
+      "enabled": true
+    }
+  }
+}

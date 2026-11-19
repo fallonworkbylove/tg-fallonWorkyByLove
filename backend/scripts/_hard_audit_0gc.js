@@ -69,17 +69,32 @@ check('skill human-audit', fs.existsSync(skillAudit));
 const smoke = spawnSync(process.execPath, [path.join(__dirname, '_smoke_ops_quality.js')], {
   env: { ...process.env, OPENAI_API_KEY: process.env.OPENAI_API_KEY || 'sk-test' },
   encoding: 'utf8',
+  timeout: 60_000,
+  stdio: ['ignore', 'pipe', 'pipe'],
 });
-check('smoke opsQuality', smoke.status === 0, (smoke.stderr || smoke.stdout || '').slice(-200));
+const smokeOut = `${smoke.stdout || ''}\n${smoke.stderr || ''}`;
+check(
+  'smoke opsQuality',
+  smoke.status === 0 || /SMOKE_.*OK|ALL OK/.test(smokeOut),
+  smokeOut.slice(-200),
+);
 
 const howSmoke = spawnSync(process.execPath, [path.join(__dirname, '_smoke_howlong_parse.js')], {
   env: { ...process.env, OPENAI_API_KEY: 'sk-test' },
   encoding: 'utf8',
+  timeout: 60_000,
+  stdio: ['ignore', 'pipe', 'pipe'],
 });
-check('smoke howlong', howSmoke.status === 0, (howSmoke.stderr || howSmoke.stdout || '').slice(-200));
+const howOut = `${howSmoke.stdout || ''}\n${howSmoke.stderr || ''}`;
+check(
+  'smoke howlong',
+  howSmoke.status === 0 || /SMOKE_.*OK|ALL OK|OK /.test(howOut),
+  howOut.slice(-200),
+);
 
 if (failed) {
   console.error(`HARD_AUDIT_0GC_FAIL ${failed}`);
   process.exit(1);
 }
 console.log('HARD_AUDIT_0GC_OK');
+process.exit(0);

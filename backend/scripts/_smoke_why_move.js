@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'sk-test';
+process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'local-smoke-only';
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const oh = require('../services/objectionHandler');

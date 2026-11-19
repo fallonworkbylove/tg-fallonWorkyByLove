@@ -167,7 +167,7 @@ async function getConsoleSnapshot() {
   try {
     const [[h]] = await db.execute(
       `SELECT COUNT(*) AS c FROM operator_lead_flags
-       WHERE funnel_stage IN ('interest', 'pitch', 'operator')`,
+       WHERE funnel_stage IN ('day3', 'day4', 'interest', 'pitch', 'operator')`,
     );
     hot = Number(h?.c || 0);
   } catch (_) {}
@@ -211,6 +211,13 @@ async function getConsoleSnapshot() {
     stuckWorkNoVoice: Number(nft.stuckWorkNoVoice || 0),
     staleDialog: Number(nft.staleDialog || 0),
     liveDialog90: Number(nft.liveDialog90 || 0),
+    voiceArchive7d: Number(nft.voice7d || 0),
+    campaignArchive: {
+      voice7d: Number(nft.voice7d || 0),
+      workSent: Number(nft.workSent || 0),
+      stuck: Number(nft.stuckWorkNoVoice || 0),
+      stale: Number(nft.staleDialog || 0),
+    },
     hotLeads: hot,
   };
 

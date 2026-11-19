@@ -192,8 +192,8 @@ function reactThenTextDelayMs(accountId, reaction, outText) {
 }
 
 const MORNING_APOLOGY =
-  'Он писал, пока ты спала / не была на связи. Начни с короткого «сорян только увидела)» / «ой только сейчас)» — ' +
-  'потом сразу по сути его сообщения. Без длинных оправданий.';
+  'Он писал, пока ты спала / не была на связи. Начни с короткого «сорри спала)» / «сорян только увидела)» / «ой проспала)» — ' +
+  'потом сразу по сути его сообщения. Без длинных оправданий и без пачки идеальных ответов.';
 
 /**
  * Утро после ночи: сообщение старше N часов или час МСК 8–12 и возраст > 4ч.
@@ -230,7 +230,11 @@ function needsMorningApology(messageDate, now = new Date()) {
 }
 
 function morningApologyHint() {
-  return MORNING_APOLOGY;
+  try {
+    return require('./humanIdeas10').morningApologySleptHint();
+  } catch (_) {
+    return MORNING_APOLOGY;
+  }
 }
 
 /** Она молчала >40 мин после своего сообщения — «отвлеклась». */
@@ -264,6 +268,12 @@ async function lastAssistantAgeMinutes(accountId, peerId) {
  * и мы ещё не спрашивали про него (лёгкий, без БД — дополняет memoryTriggers).
  */
 function buildHisDetailCallbackHint(history, userMessage) {
+  try {
+    const mirror = require('./humanIdeas10').buildMirrorHisTopicHint(history, userMessage);
+    if (mirror) return mirror;
+  } catch (_) {
+    /* optional */
+  }
   const hist = Array.isArray(history) ? history : [];
   if (hist.length < 6) return null;
   const users = hist
@@ -282,7 +292,7 @@ function buildHisDetailCallbackHint(history, userMessage) {
     .map((h) => String(h.content || '').toLowerCase())
     .join('\n');
   if (recentBot.includes(key)) return null;
-  if (Math.random() > 0.12) return null;
+  if (Math.random() > 0.22) return null;
   return (
     `Можно вскользь вернуться к его теме «${m[0]}» одной короткой фразой или вопросом — ` +
     'только если сейчас не другой острый вопрос. Не каждый ответ.'

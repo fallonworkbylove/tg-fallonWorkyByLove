@@ -224,15 +224,27 @@ function fixRelationshipAsk(reply, userMessage) {
 const MOM_AGE_ALTS = ['за 50 уже)', 'ну за пятьдесят)', 'хм за пятьдесят)', 'около пятидесяти)'];
 const BOUQUET_ALTS = ['сама взяла)', 'с рынка)', 'подруга дала)', 'ну купила по пути)'];
 const LIVE_WITH_ALTS = ['ага, с родителями пока)', 'ну да, с мамой)', 'пока с родителями)'];
+const HEIGHT_ALTS = ['165)', 'ну 165 примерно)', 'хм 165)', 'на каблуках выше)'];
 
 /** Мелочь дня вместо города — баг «где живёшь? → кофе пью». */
 const ACTIVITY_FILLER_RE =
-  /кофе\s+пью|сериал\s+фоном|просто\s+отдыхаю|дома\s+сижу|валяюсь|ничего\s+особенного|обычный\s+день|устала\s+немного/i;
+  /кофе\s+пью|сериал\s+фоном|просто\s+отдыхаю|дома\s+сижу|валяюсь|ничего\s+особенного|обычный\s+день|устала\s+немного|на\s+работе|отработа|справилась|утомительн/i;
 
 function fixDirectFactAsk(reply, userMessage, prompt) {
   if (!reply) return reply;
   const msg = bare(userMessage);
   const { tag, body } = stripTags(reply);
+  const heightAsk =
+    /(?:какой|какая|какие|сколько)\s+(?:у\s+тебя\s+)?рост|рост\s+у\s+тебя|ты\s+высок|how\s+tall/i.test(
+      msg,
+    );
+  if (heightAsk) {
+    const hasHeight =
+      /\b1[5-8]\d\b|\bсм\b|на\s+каблук|высот|метр/i.test(body) || /^(?:ну\s+)?1[5-8]\d/i.test(body);
+    if (!hasHeight || ACTIVITY_FILLER_RE.test(body) || isWeak(body)) {
+      return tag + HEIGHT_ALTS[Math.floor(Math.random() * HEIGHT_ALTS.length)];
+    }
+  }
   const geoAsk =
     /(?:где\s+ты|ты\s+где|где\s+(?:ты\s+)?жив|а\s+где\s*\??\s*$|жив[её]шь|откуда\s+ты|ты\s+откуда|из\s+какого|как\s+давно|скол[ьк]ко(?:\s+уже)?\s+в\s+)/i.test(
       msg,

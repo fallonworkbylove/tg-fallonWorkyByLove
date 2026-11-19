@@ -10,15 +10,17 @@ const {
   pollQrLogin,
   confirmCode,
   confirmPassword,
+  releaseLoginHandoff,
   cancelPendingLogin,
   cancelAllPendingLoginsForUser,
   peekPendingLogin,
   extractLoginCode,
   normalizeLoginPhone,
-  qrImageUrl,
+  qrImagePngBuffer,
   QR_MARKER,
   activateAccount,
   deactivateAccount,
+  markFreshSession,
   isActive,
   accountLabel,
 } = require('./telegramClient');
@@ -582,15 +584,13 @@ async function startPhoneWizard(api, chatId, from, { editMessageId } = {}) {
   }
 }
 
-function qrCaption(loginUrl) {
+function qrCaption() {
   return (
     '<b>📷 QR-вход</b>\n\n' +
     '1. Открой <b>официальный Telegram</b> на нужном номере\n' +
     '2. Настройки → Устройства → <b>Подключить устройство</b>\n' +
-    '3. Отсканируй QR ниже\n\n' +
-    'Или открой ссылку с телефона этого аккаунта:\n' +
-    `<code>${esc(loginUrl)}</code>\n\n` +
-    'Жду сканирование. Токен обновляется сам, без лимита.'
+    '3. Отсканируй QR на картинке\n\n' +
+    'Ссылку с токеном в чат не пишем — только QR. Жду сканирование.'
   );
 }
 
@@ -612,7 +612,8 @@ async function beginQrFlow(api, chatId, from, isAdmin) {
     await apiSend(
       api,
       chatId,
-      'На аккаунте 2FA. Пришли <b>облачный пароль</b>.',
+      'Telegram просит <b>облачный пароль</b> (Настройки → Конфиденциальность → Двухэтапная проверка).\n' +
+        'Если пароля там нет — /cancel и новый QR.',
       cancelKeyboard(),
     );
     return;
@@ -628,10 +629,12 @@ async function beginQrFlow(api, chatId, from, isAdmin) {
   });
 
   try {
-    await apiSendPhoto(api, chatId, qrImageUrl(loginUrl), qrCaption(loginUrl), cancelKeyboard());
+    const png = await qrImagePngBuffer(loginUrl);
+    if (!png) throw new Error('QR png empty');
+    await apiSendPhotoBuffer(api, chatId, png, qrCaption(), cancelKeyboard());
   } catch (photoErr) {
     console.error('[workerConnect] QR photo fail:', photoErr.message);
-    await apiSend(api, chatId, qrCaption(loginUrl), cancelKeyboard());
+    await apiSend(api, chatId, qrCaption(), cancelKeyboard());
   }
 
   startQrPoller(api, chatId, from, isAdmin);
@@ -653,10 +656,12 @@ function startQrPoller(api, chatId, from, isAdmin) {
         if (st.loginUrl && st.loginUrl !== w.lastQrUrl) {
           touch(chatId, { lastQrUrl: st.loginUrl });
           try {
-            await apiSendPhoto(
+            const png = await qrImagePngBuffer(st.loginUrl);
+            if (!png) throw new Error('QR png empty');
+            await apiSendPhotoBuffer(
               api,
               chatId,
-              qrImageUrl(st.loginUrl),
+              png,
               '🔄 QR обновлён — отсканируй этот.',
               cancelKeyboard(),
             );
@@ -664,7 +669,7 @@ function startQrPoller(api, chatId, from, isAdmin) {
             await apiSend(
               api,
               chatId,
-              `🔄 Новый QR:\n<code>${esc(st.loginUrl)}</code>`,
+              '🔄 QR обновился, но картинка не ушла — нажми QR ещё раз.',
               cancelKeyboard(),
             );
           }
@@ -678,7 +683,8 @@ function startQrPoller(api, chatId, from, isAdmin) {
         await apiSend(
           api,
           chatId,
-          'На аккаунте 2FA. Пришли <b>облачный пароль</b>.',
+          'Telegram просит <b>облачный пароль</b> (Настройки → Конфиденциальность → Двухэтапная проверка).\n' +
+            'Если пароля там нет — /cancel и новый QR.',
           cancelKeyboard(),
         );
         return;
@@ -714,9 +720,14 @@ function startQrPoller(api, chatId, from, isAdmin) {
 
 async function finishConnect(api, chatId, userId, phone, sessionString, isAdmin) {
   const accountId = await saveSession(userId, normalizePhone(phone), sessionString);
+  const chatKey = String(chatId);
+  await releaseLoginHandoff(chatKey, phone === QR_MARKER || phone === 'qr' ? QR_MARKER : phone).catch(
+    () => {},
+  );
+  markFreshSession(accountId, sessionString);
   await deactivateAccount(accountId);
   const online = (await activateAccount(accountId, sessionString)) === true;
-  clearWizard(chatId, { keepPending: true }); // pending уже снят в confirm*
+  clearWizard(chatId, { keepPending: true });
   await apiSend(
     api,
     chatId,
@@ -736,7 +747,22 @@ async function handleText(api, chatId, text, from) {
   if (!isWizardActive(chatId)) {
     const pending = peekPendingLogin(chatKey);
     const maybeCode = extractLoginCode(text);
-    if (pending && maybeCode) {
+    if (pending?.needPassword && String(text || '').trim()) {
+      try {
+        const user = await ensureDbUser(chatId, from);
+        touch(chatId, {
+          step: 'password',
+          phone: pending.phone || QR_MARKER,
+          userId: user.id,
+        });
+        console.log(
+          `[workerConnect] revive password chat=${chatKey} (pending 2FA)`,
+        );
+      } catch (err) {
+        console.error('[workerConnect] revive fail:', err.message);
+        return false;
+      }
+    } else if (pending && maybeCode) {
       try {
         const user = await ensureDbUser(chatId, from);
         touch(chatId, {
@@ -873,6 +899,17 @@ async function handleText(api, chatId, text, from) {
       // startLogin отдельно от ответа боту: иначе «fetch failed» к api.telegram.org
       // выглядит как «код не ушёл», хотя sendCode уже ок.
       const result = await startLogin(chatKey, phone);
+      if (result?.alreadyAuthorized && result.sessionString) {
+        await finishConnect(
+          api,
+          chatId,
+          w.userId,
+          result.phone || phone,
+          result.sessionString,
+          isAdmin,
+        );
+        return true;
+      }
       const usePhone = result.phone || phone;
       touch(chatId, { step: 'code', phone: usePhone, userId: w.userId });
       const hint =
@@ -900,7 +937,7 @@ async function handleText(api, chatId, text, from) {
     if (w.step === 'code') {
       const code = extractLoginCode(text);
       console.log(
-        `[workerConnect] code step chat=${chatKey} phone=${w.phone} raw=${JSON.stringify(String(text).slice(0, 40))} extracted=${code || '-'}`,
+        `[workerConnect] code step chat=${chatKey} phone=${w.phone} extracted=${code ? 'yes' : 'no'}`,
       );
       if (!code) {
         await apiSend(
@@ -918,7 +955,8 @@ async function handleText(api, chatId, text, from) {
         await apiSend(
           api,
           chatId,
-          'На аккаунте включена 2FA. Пришли <b>облачный пароль</b>.',
+          'Telegram просит <b>облачный пароль</b> (Настройки → Конфиденциальность → Двухэтапная проверка).\n' +
+            'Если пароля там нет — /cancel и запроси код заново.',
           cancelKeyboard(),
         );
         return true;
@@ -1252,15 +1290,26 @@ async function apiSend(apiBase, chatId, text, reply_markup) {
   return apiCall(apiBase, 'sendMessage', payload);
 }
 
-async function apiSendPhoto(apiBase, chatId, photoUrl, caption, reply_markup) {
-  const payload = {
-    chat_id: chatId,
-    photo: photoUrl,
-    caption,
-    parse_mode: 'HTML',
-  };
-  if (reply_markup) payload.reply_markup = reply_markup;
-  return apiCall(apiBase, 'sendPhoto', payload);
+async function apiSendPhotoBuffer(apiBase, chatId, pngBuffer, caption, reply_markup) {
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  form.append('caption', String(caption || ''));
+  form.append('parse_mode', 'HTML');
+  if (reply_markup) form.append('reply_markup', JSON.stringify(reply_markup));
+  form.append('photo', new Blob([pngBuffer], { type: 'image/png' }), 'qr.png');
+  const url = `${String(apiBase).replace(/\/$/, '')}/sendPhoto`;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 45000);
+  try {
+    const res = await fetch(url, { method: 'POST', body: form, signal: ac.signal });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      throw new Error(data.description || `sendPhoto HTTP ${res.status}`);
+    }
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function apiEdit(apiBase, chatId, messageId, text, reply_markup) {

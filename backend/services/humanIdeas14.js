@@ -382,20 +382,33 @@ function hadRecentFarewell(history) {
     .some((m) => FAREWELL_RE.test(String(m.content || '')));
 }
 
-function shouldSkipUntilMorning(history, userMessage) {
+/**
+ * После нашего «спокойной» вечером/ночью — молчим до утра МСК.
+ * Hard media (явная просьба фото/видео) не глушим.
+ */
+function shouldSkipUntilMorning(history, userMessage, opts = {}) {
   if (!hadRecentFarewell(history)) return false;
-  // if he wrote again — allow
-  if (bare(userMessage)) return false;
+  if (opts && opts.hardMedia) return false;
+  try {
+    if (require('./mediaSend').isHardMediaRequest(userMessage, history)) return false;
+  } catch (_) {
+    /* optional */
+  }
   const h = mskHour();
-  return h >= 0 && h < 10;
+  // День 07–20 — новый круг, можно отвечать.
+  if (h >= 7 && h < 21) return false;
+  // 21–06 после farewell — тишина (не эссе / не второй «спокойной»).
+  return true;
 }
 
 function farewellRespectHint(history, userMessage) {
   if (!hadRecentFarewell(history)) return null;
-  if (bare(userMessage) && !FAREWELL_RE.test(bare(userMessage))) return null;
   const h = mskHour();
-  if (h >= 10 && h < 22) return null;
-  return 'Уже прощались на ночь — не пиши сама до утра, только если он написал.';
+  if (h >= 7 && h < 21) return null;
+  return (
+    'Уже прощались на ночь — не пиши сама до утра. Если он всё же написал коротко — ' +
+    'только ультракороткий ack без вопроса, без новой темы.'
+  );
 }
 
 /* ——— 16/20 медиа после «не покажу» / 2 отказа ——— */

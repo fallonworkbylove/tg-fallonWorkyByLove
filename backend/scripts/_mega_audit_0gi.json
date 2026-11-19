@@ -1,0 +1,341 @@
+{
+  "tag": "0gi",
+  "at": "2026-10-31T19:25:41.618Z",
+  "scores": {
+    "byArea": {
+      "ops": {
+        "got": 9,
+        "max": 9,
+        "fail": 0,
+        "score10": 10
+      },
+      "nft": {
+        "got": 17,
+        "max": 20,
+        "fail": 1,
+        "score10": 8.5
+      },
+      "human": {
+        "got": 6,
+        "max": 6,
+        "fail": 0,
+        "score10": 10
+      },
+      "archive": {
+        "got": 4,
+        "max": 4,
+        "fail": 0,
+        "score10": 10
+      },
+      "visual": {
+        "got": 7,
+        "max": 7,
+        "fail": 0,
+        "score10": 10
+      },
+      "live": {
+        "got": 5,
+        "max": 5,
+        "fail": 0,
+        "score10": 10
+      },
+      "accounts": {
+        "got": 2,
+        "max": 2,
+        "fail": 0,
+        "score10": 10
+      }
+    },
+    "got": 50,
+    "max": 53,
+    "total10": 9.4
+  },
+  "checks": [
+    {
+      "area": "ops",
+      "name": "tgbot online",
+      "ok": true,
+      "w": 3,
+      "detail": "online"
+    },
+    {
+      "area": "ops",
+      "name": "PROXY_LIST ≥5",
+      "ok": true,
+      "w": 3,
+      "detail": "proxy=9"
+    },
+    {
+      "area": "nft",
+      "name": "mayMentionFlipNft day1 gate",
+      "ok": true,
+      "w": 3,
+      "detail": ""
+    },
+    {
+      "area": "nft",
+      "name": "campaign ageHours < 24 off",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "nft",
+      "name": "dailyPhotos too_early ≥24",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "nft",
+      "name": "ticker shouldBlockNftPitchAsync",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "nft",
+      "name": "voice repeat callout skip",
+      "ok": true,
+      "w": 3,
+      "detail": ""
+    },
+    {
+      "area": "nft",
+      "name": "stripRepeatFlipPitch",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "nft",
+      "name": "peer_nft_gates persist",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "human",
+      "name": "humanIdeas10 present",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "human",
+      "name": "pipe life-lag",
+      "ok": true,
+      "w": 1,
+      "detail": ""
+    },
+    {
+      "area": "human",
+      "name": "pipe evening recall",
+      "ok": true,
+      "w": 1,
+      "detail": ""
+    },
+    {
+      "area": "human",
+      "name": "coffee combo strip",
+      "ok": true,
+      "w": 1,
+      "detail": ""
+    },
+    {
+      "area": "human",
+      "name": "self-told hobby",
+      "ok": true,
+      "w": 1,
+      "detail": ""
+    },
+    {
+      "area": "archive",
+      "name": "howlong 21d",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "archive",
+      "name": "isFolderFrozen",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "ops",
+      "name": "opsQuality schedulers",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "ops",
+      "name": "silent reaction",
+      "ok": true,
+      "w": 1,
+      "detail": ""
+    },
+    {
+      "area": "visual",
+      "name": "updates.js?v= present",
+      "ok": true,
+      "w": 2,
+      "detail": "v=113"
+    },
+    {
+      "area": "visual",
+      "name": "changelog human entry",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "visual",
+      "name": "styles.css non-empty",
+      "ok": true,
+      "w": 1,
+      "detail": "len=44479"
+    },
+    {
+      "area": "visual",
+      "name": "app.js funnel/отсев hooks",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "live",
+      "name": "no REFUSE_PROXY flood",
+      "ok": true,
+      "w": 2,
+      "detail": ""
+    },
+    {
+      "area": "live",
+      "name": "outbound alive",
+      "ok": true,
+      "w": 2,
+      "detail": "n=50"
+    },
+    {
+      "area": "live",
+      "name": "FROZEN noise contained",
+      "ok": true,
+      "w": 1,
+      "detail": "frozenLines=0"
+    },
+    {
+      "area": "nft",
+      "name": "early flip peers 7d low",
+      "ok": false,
+      "w": 3,
+      "detail": "early=52"
+    },
+    {
+      "area": "nft",
+      "name": "gates table alive",
+      "ok": true,
+      "w": 1,
+      "detail": "{\"n\":10,\"warm\":\"2\"}"
+    },
+    {
+      "area": "accounts",
+      "name": "accounts table",
+      "ok": true,
+      "w": 2,
+      "detail": "{\"n\":17}"
+    }
+  ],
+  "live": {
+    "pm2": {
+      "status": "online",
+      "proxy": 9,
+      "restarts": 334,
+      "uptimeMs": 215914
+    },
+    "errHits": 0,
+    "flipVoiceRecent": 1,
+    "calloutSeen": 1,
+    "day1FlipPhrases": 11,
+    "archiveHits": 40,
+    "outboundSample": 50,
+    "aiSilent": 15,
+    "errSample": [],
+    "flipVoiceSample": [
+      "[79601878688 — Машенька] outbound voice peer=suport_service_v file=flipping.ogg voiceOnly=1 hostile=0"
+    ]
+  },
+  "nft": {
+    "gates": {
+      "n": 10,
+      "warm": "2"
+    },
+    "flipMsgs24h": 53,
+    "profitMsgs48h": 30,
+    "photos48h": 28,
+    "earlyFlipPeers7d": 52
+  },
+  "accounts": {
+    "columns": [
+      "id",
+      "seq",
+      "user_id",
+      "phone",
+      "prompt",
+      "session_string",
+      "status",
+      "is_autoreply_enabled",
+      "created_at",
+      "updated_at",
+      "reply_delay_min",
+      "reply_delay_max",
+      "media_chat_link"
+    ],
+    "count": {
+      "n": 17
+    }
+  },
+  "visual": {
+    "updatesV": 113,
+    "hasHumanEntry": true,
+    "hasOperatorNote": true,
+    "cssSize": 44479,
+    "appSize": 131296,
+    "darkTheme": true
+  },
+  "holes": [
+    "[nft] early flip peers 7d low: early=52"
+  ],
+  "strengths": [
+    "[ops] tgbot online",
+    "[ops] PROXY_LIST ≥5",
+    "[nft] mayMentionFlipNft day1 gate",
+    "[nft] campaign ageHours < 24 off",
+    "[nft] dailyPhotos too_early ≥24",
+    "[nft] ticker shouldBlockNftPitchAsync",
+    "[nft] voice repeat callout skip",
+    "[nft] stripRepeatFlipPitch",
+    "[nft] peer_nft_gates persist",
+    "[human] humanIdeas10 present",
+    "[human] pipe life-lag",
+    "[human] pipe evening recall",
+    "[human] coffee combo strip",
+    "[human] self-told hobby",
+    "[archive] howlong 21d",
+    "[archive] isFolderFrozen",
+    "[ops] opsQuality schedulers",
+    "[ops] silent reaction",
+    "[visual] updates.js?v= present",
+    "[visual] changelog human entry",
+    "[visual] styles.css non-empty",
+    "[visual] app.js funnel/отсев hooks",
+    "[live] no REFUSE_PROXY flood",
+    "[live] outbound alive",
+    "[live] FROZEN noise contained",
+    "[nft] gates table alive",
+    "[accounts] accounts table"
+  ],
+  "verdict": "strong — fix listed holes"
+}

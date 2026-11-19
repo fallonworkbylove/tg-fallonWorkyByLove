@@ -358,8 +358,9 @@ const ASKING_ABOUT_SENT_PHOTO_RE =
 const ASKING_IF_FLIP_PHOTO_IS_HER_RE =
   /(?:^|[\s(])(?:а\s+)?это\s+ты(?:\s+на\s+(?:фото|фотк\w*|скрин\w*|картинк\w*))?\s*[?)!]?\s*$|ты\s+(?:это|на\s+(?:фото|фотк\w*|скрин\w*))\s*[?)!]?\s*$|это\s+ты\s*\?|это\s+ты\s+что\s+ли|это\s+тво[её]\s+(?:фото|селфи|лицо)|ты\s+сама\s+на\s+(?:фото|фотк)|is\s+th(?:is|at)\s+you\b|is\s+that\s+you\s+in\s+(?:the\s+)?(?:photo|pic)/i;
 
+// Без голого «это?» — иначе после daily flip ложный NFT-контекст на любой «это?».
 const SHORT_PHOTO_POINT_RE =
-  /^(this|that|это|вот это|а это|это что|and this|and that|а это что у тебя|это что у тебя)\s*\??$/i;
+  /^(this|that|вот это|а это|это что|and this|and that|а это что у тебя|это что у тебя)\s*\??$/i;
 
 /** Критика нашего фото / просьба нормального. */
 const PHOTO_CRITICISM_RE =
@@ -427,6 +428,12 @@ function softenFlipPhotoIdentityReply(reply, userMessage, history = [], opts = {
   const flipCtx =
     opts.flipRecent === true || recentFlipPhotoInHistory(history);
   if (!reply || !flipCtx) return reply;
+  // Своя аватарка / «это ты на моей аве» — не переписывать в NFT-отказ.
+  if (opts.matchesOwnAvatar === true || opts.skipOwnAvatar === true) return reply;
+  try {
+    const am = require('./avatarMatch');
+    if (am.messageHasOwnAvatarTag(userMessage)) return reply;
+  } catch (_) {}
   const raw = String(reply || '').trim();
   const user = String(userMessage || '');
   const askingId = isAskingIfFlipPhotoIsHer(user) || /это\s+ты|ты\s+на\s+фото|is\s+th(?:is|at)\s+you/i.test(user);
@@ -453,7 +460,95 @@ function softenFlipPhotoIdentityReply(reply, userMessage, history = [], opts = {
     // «да это я» без объяснения сделки — после скрина флипа почти всегда про аватар
     return 'хах нет, это нфт на скрине — просто показала сделку)';
   }
+  // «короче не, это не я)» без NFT — остаток путаницы после скрина флипа
+  if (
+    /(?:это\s+)?не\s+я(?![а-яё])|не\s+я\s*\)/i.test(raw) &&
+    !/флип|нфт|nft|профит|сделк|токен/i.test(raw)
+  ) {
+    return 'хах нет, это нфт на скрине — просто показала сделку)';
+  }
   return reply;
+}
+
+const OWN_AVATAR_CONFIRM_ALTS = [
+  'ага, это я)',
+  'ну да, моя фотка)',
+  'да, это я на аватарке)',
+];
+
+function pickOwnAvatarConfirm() {
+  return OWN_AVATAR_CONFIRM_ALTS[Math.floor(Math.random() * OWN_AVATAR_CONFIRM_ALTS.length)];
+}
+
+/**
+ * Он кидает фото и пишет «это твоя фотка»:
+ * — если это аватарка аккаунта → подтвердить «это я»;
+ * — иначе чужой кадр → не «прикольное фото», а «это не я».
+ */
+/** Достаёт подпись и чистый текст из inbound-обёртки vision. */
+function extractClaimProbeText(userMessage) {
+  const user = String(userMessage || '');
+  const cap =
+    (user.match(/Подпись:\s*"([^"]*)"/i) || user.match(/Подпись:\s*'([^']*)'/i) || [])[1] || '';
+  const bare = user
+    .replace(/\[[^\]]*фото[^\]]*\]:[^\n]*/gi, ' ')
+    .replace(/\[совпало с моей аватаркой\]/gi, ' ')
+    .replace(/Подпись:\s*["'][^"']*["']/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return `${cap} ${bare}`.trim();
+}
+
+function userClaimsHerPhoto(userMessage) {
+  const user = String(userMessage || '');
+  try {
+    const am = require('./avatarMatch');
+    if (am.messageHasOwnAvatarTag(user)) return true;
+  } catch (_) {}
+  const probe = extractClaimProbeText(user);
+  return /(?:реальн\w*\s+)?тво[еёя]\s+фот|это\s+ты\s+(?:на\s+)?фот|вот\s+эт[ао]\s+.{0,24}фот|это\s+ты\s*\??|узна[её]шь\s+себ|тво[яё]\s+аватар/i.test(
+    probe,
+  );
+}
+
+function softenClaimedHerPhotoReply(reply, userMessage, opts = {}) {
+  if (!reply) return reply;
+  const user = String(userMessage || '');
+  if (!userClaimsHerPhoto(user) && opts.matchesOwnAvatar !== true) return reply;
+
+  let matchesOwn = opts.matchesOwnAvatar === true;
+  if (!matchesOwn) {
+    try {
+      const am = require('./avatarMatch');
+      matchesOwn = typeof am.messageHasOwnAvatarTag === 'function' && am.messageHasOwnAvatarTag(user);
+    } catch (_) {}
+  }
+
+  const raw = String(reply || '').trim();
+  const deniesSelf = /(?:это\s+)?не\s+я(?![а-яё])|не\s+я\s*\)/i.test(raw);
+  const coolPhoto =
+    /прикольно?е?\s+фото|классн\w*\s+фот|у\s+тебя\s+тоже\s+есть|есть\s+такие\??/i.test(raw);
+
+  if (matchesOwn) {
+    if (deniesSelf || coolPhoto || !/(?:это\s+)?я(?![а-яё])|моя\s+фот|моя\s+аватар/i.test(raw)) {
+      return pickOwnAvatarConfirm();
+    }
+    return reply;
+  }
+
+  if (coolPhoto) {
+    return 'короче не, это не я)';
+  }
+  return reply;
+}
+
+function getOwnAvatarClaimHint() {
+  return (
+    'Собеседник прислал ТВОЮ аватарку / твоё фото с профиля и пишет, что это ты. ' +
+    'Подтверди коротко: «ага, это я)» / «ну да, моя фотка)». ' +
+    'ЗАПРЕЩЕНО: «это не я», «прикольное фото», «у тебя тоже есть такие?», «не моё». ' +
+    '1 короткая фраза.'
+  );
 }
 
 const FLIP_PHOTO_QUESTION_HINT =
@@ -652,13 +747,13 @@ function isAskedHerDv(text) {
   return ASKED_HER_DV_RE.test(String(text || '').trim());
 }
 
-/** Последний assistant в истории — наш вопрос «сколько на дв?». */
+/** Последний реплика в истории — наш вопрос «сколько на дв?» (ещё без ответа user). */
 function lastAssistantWasHowLongQuestion(history) {
   const recent = Array.isArray(history) ? history : [];
   for (let i = recent.length - 1; i >= 0; i -= 1) {
     const h = recent[i];
     if (!h) continue;
-    if (h.role === 'user') continue;
+    if (h.role === 'user') return false;
     if (h.role === 'assistant') {
       const c = String(h.content || '').toLowerCase();
       return c.includes('на дв?') || c.includes('давно тут сидишь');
@@ -1272,7 +1367,11 @@ function detectHint(text, history = [], options = {}) {
   // Просит голосовое — мягко и тепло отказать, не сухо «предпочитаю писать».
   // Если голосовая заготовка под тему ЕСТЬ, она уйдёт сама — тогда просто
   // короткий текст или тишина (см. conditions: options.voiceWillSend).
-  if (VOICE_REQUEST_RE.test(text)) {
+  // Входящее «[Голосовое]: …» — это его ГС, не просьба записать.
+  if (
+    VOICE_REQUEST_RE.test(text) &&
+    !/^\s*\[(?:одноразовое\s+)?голосов/i.test(String(text || ''))
+  ) {
     if (options && options.voiceWillSend) {
       return (
         'Собеседник просит голосовое, и голосовая заготовка уже уходит в этом же ответе. ' +
@@ -1288,6 +1387,8 @@ function detectHint(text, history = [], options = {}) {
       '«оой не, я лучше текстом) так спокойнее», ' +
       '«не буду голос, я вечно не то скажу) давай тут», ' +
       '«хах ну не) голосом не могу, а писать люблю». ' +
+      'СТРОГО ЗАПРЕЩЕНО обещать «сейчас запишу / щас надиктую» — файла нет, обещание = бот. ' +
+      'НЕ пиши служебные метки вроде [голосовое: …]. ' +
       'ОБЯЗАТЕЛЬНО добавь мягкую причину-нежность (стесняюсь / спокойнее / вечно ляпну не то) — ' +
       'голый отказ «не буду» выглядит холодно и подозрительно. ' +
       'НЕ повторяй одну и ту же фразу, если уже отказывала раньше — скажи иначе и короче. ' +
@@ -1467,7 +1568,7 @@ async function archiveSilentDialogs() {
       GROUP BY cm.account_id, cm.peer_id
       HAVING last_incoming_at IS NOT NULL
         AND last_incoming_at <= (NOW() - INTERVAL 2 DAY)
-        AND COALESCE(MAX(olf.funnel_stage), '') NOT IN ('interest', 'pitch', 'operator')
+        AND COALESCE(MAX(olf.funnel_stage), '') NOT IN ('day3', 'day4', 'interest', 'pitch', 'operator')
         AND msgs_7d < 12
     `);
 
@@ -1694,6 +1795,17 @@ async function sendSilenceVoiceReminders({ getAccountSettings, isWithinWorkingHo
             '(молчание 2-4ч, монетка 50%).',
         );
       } catch (err) {
+        let voiceForbidden = false;
+        try {
+          const { isVoiceForbiddenError } = require('./mediaSend');
+          voiceForbidden = typeof isVoiceForbiddenError === 'function' && isVoiceForbiddenError(err);
+        } catch (_) {}
+        if (voiceForbidden) {
+          console.warn(
+            `[Аккаунт ${row.account_id}] Голосовое напоминание пропуск — VOICE_MESSAGES_FORBIDDEN (${row.peer_username || row.peer_id}).`,
+          );
+          continue;
+        }
         console.error(
           `[Аккаунт ${row.account_id}] Ошибка отправки голосового напоминания ${row.peer_username || row.peer_id}:`,
           err.message,
@@ -1758,6 +1870,10 @@ module.exports = {
   isFraudRoleFrame,
   getFraudRoleFrameHint,
   softenFlipPhotoIdentityReply,
+  softenClaimedHerPhotoReply,
+  getOwnAvatarClaimHint,
+  userClaimsHerPhoto,
+  lastAssistantWasHowLongQuestion,
   isAskingIfFlipPhotoIsHer,
   isAskedHerDv,
   getHowLongAckHint,

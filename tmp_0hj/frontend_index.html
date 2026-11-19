@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- interactive-widget=resizes-content: клавиатура СЖИМАЕТ вьюпорт, поэтому
+         100dvh и прокрутка модалки работают корректно на телефоне.
+         viewport-fit=cover + safe-area отступы в CSS — для «чёлки» и жестовой полосы. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <title>LoveRussian</title>
+    <!-- Шрифты не блокируют первый кадр: в Telegram WebView googleapis часто тормозит. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
+      media="print"
+      onload="this.media='all'"
+    />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Figtree:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
+      />
+    </noscript>
+    <link rel="stylesheet" href="styles.css?v=70" />
+  </head>
+  <body>
+    <div id="tg-gate" class="tg-gate" hidden>
+      <div class="tg-gate__card card">
+        <p class="brand-mark">LoveRussian</p>
+        <p class="eyebrow">Telegram Mini App</p>
+        <h2>Откройте в Telegram</h2>
+        <p class="tg-gate__text">Это приложение работает внутри Telegram. Запустите его через вашего бота, чтобы авторизоваться и загрузить данные.</p>
+        <button id="tg-gate-bypass" class="btn btn-secondary full" type="button">Продолжить для теста</button>
+        <p class="tg-gate__hint">Тестовый режим работает без данных Telegram и предназначен только для разработки.</p>
+      </div>
+    </div>
+
+    <div class="workspace">
+    <aside class="side-nav" aria-label="Навигация">
+      <p class="side-nav__brand">LoveRussian</p>
+      <p class="side-nav__tag">операторская</p>
+      <button class="side-nav__btn active" data-tab="panel" type="button">Панель</button>
+      <button class="side-nav__btn" data-tab="leads" type="button">Лиды</button>
+      <button class="side-nav__btn" data-tab="accounts" type="button">Аккаунты TG</button>
+      <button class="side-nav__btn" data-tab="stats" type="button">Статы</button>
+      <button class="side-nav__btn" data-tab="learn" type="button">Учить</button>
+      <button class="side-nav__btn" data-tab="options" type="button">Опции</button>
+      <button class="side-nav__btn admin-only" data-tab="admin" type="button" hidden>Админ</button>
+      <button class="side-nav__btn" data-tab="info" type="button">Обновления</button>
+    </aside>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="topbar__content">
+          <div class="topbar__brand">
+            <p class="brand-mark">LoveRussian</p>
+            <h1 id="page-title">Панель</h1>
+          </div>
+          <div class="topbar__actions">
+            <button
+              id="notif-toggle"
+              class="icon-btn notif-btn"
+              type="button"
+              data-action="toggle-notifications"
+              aria-label="Центр уведомлений"
+              title="Уведомления"
+            >
+              <span class="icon-btn__glyph" aria-hidden="true">●</span>
+              <span id="notif-badge" class="notif-badge" hidden>0</span>
+            </button>
+            <button class="icon-btn" type="button" data-action="refresh" aria-label="Обновить" title="Обновить">
+              <span class="icon-btn__glyph" aria-hidden="true">↻</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div id="notif-center" class="notif-center" hidden>
+        <div class="notif-center__head">
+          <strong>Центр уведомлений</strong>
+          <button class="btn btn-secondary small" type="button" data-action="clear-notifications">Очистить</button>
+        </div>
+        <div id="notif-list" class="notif-list"></div>
+      </div>
+
+      <main class="content">
+        <section class="tab-panel active" data-panel="panel">
+          <div class="panel-strip card panel-rise">
+            <div class="panel-strip__mark" aria-hidden="true"></div>
+            <div class="panel-strip__text">
+              <p class="panel-hero__kicker">Панель</p>
+              <h2>Главная</h2>
+              <p id="panel-live" class="panel-strip__live">Загрузка…</p>
+            </div>
+            <button class="btn btn-secondary small panel-strip__refresh" data-action="refresh" type="button">↻</button>
+          </div>
+
+          <div id="panel-summary" class="stats-grid summary-grid summary-grid--panel panel-rise"></div>
+
+          <div class="panel-deck card panel-rise" aria-label="Быстрые действия">
+            <div class="panel-deck__row">
+              <p class="panel-bulk__label">Автоответ</p>
+              <div class="panel-bulk__actions">
+                <button id="bulk-start-panel" class="btn btn-primary bulk-action" data-action="bulk-start" type="button">Включить все</button>
+                <button id="bulk-stop-panel" class="btn btn-secondary bulk-action" data-action="bulk-stop" type="button">Выключить все</button>
+              </div>
+            </div>
+            <div class="panel-deck__divider" aria-hidden="true"></div>
+            <div class="panel-tools">
+              <button class="btn btn-secondary" data-action="open-accounts" type="button">+ Аккаунт</button>
+              <button class="btn btn-secondary" data-action="open-leads" type="button">К лидам</button>
+              <button class="btn btn-secondary" data-action="open-info" type="button">Обновления</button>
+              <button class="btn btn-secondary admin-only" data-action="open-admin" type="button" hidden>Админ</button>
+              <button class="btn btn-danger" data-action="logout" type="button">Выйти</button>
+            </div>
+          </div>
+
+          <div class="panel-section-label panel-rise">
+            <span>Аккаунты сейчас</span>
+            <button class="btn btn-secondary small" type="button" data-action="open-accounts">Все</button>
+          </div>
+          <div id="panel-accounts" class="stack panel-rise"></div>
+        </section>
+
+        <section class="tab-panel" data-panel="accounts">
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Аккаунты</h3>
+              <button class="btn btn-secondary small" type="button" data-action="refresh">Обновить</button>
+            </div>
+            <div id="accounts-bulk-bar" class="accounts-bulk-bar" hidden>
+              <span id="accounts-selected-count">Выбрано: 0</span>
+              <button class="btn btn-primary small" type="button" data-action="bulk-selected-start">AI вкл</button>
+              <button class="btn btn-secondary small" type="button" data-action="bulk-selected-stop">AI выкл</button>
+              <button class="btn btn-secondary small" type="button" data-action="clear-selection">Снять</button>
+            </div>
+            <div id="accounts-list" class="accounts-table-wrap"></div>
+          </div>
+
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Лимиты</h3>
+              <span class="badge badge-soft">Бесплатно</span>
+            </div>
+            <div id="limits-values" class="limits-grid">
+              <div>
+                <strong>0</strong>
+                <p>Использовано</p>
+              </div>
+              <div>
+                <strong>1</strong>
+                <p>Доступно</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-card card">
+            <h2>Подключить аккаунт</h2>
+            <form id="account-form" class="form-grid">
+              <div class="connect-method" role="group" aria-label="Способ входа">
+                <button type="button" class="btn btn-secondary connect-method__btn is-active" data-connect-method="qr">
+                  QR-код
+                </button>
+                <button type="button" class="btn btn-secondary connect-method__btn" data-connect-method="code">
+                  Код
+                </button>
+              </div>
+
+              <div id="connect-qr-panel" class="connect-qr-panel">
+                <p class="form-hint" style="display:block;margin:0">
+                  Открой Telegram на нужном номере → Настройки → Устройства → Подключить устройство → скан QR. Без SMS.
+                </p>
+                <div id="connect-qr-box" class="connect-qr-box" hidden>
+                  <img id="connect-qr-img" alt="QR для входа" width="240" height="240" />
+                  <p id="connect-qr-link" class="form-hint" style="display:block;word-break:break-all;margin:0"></p>
+                </div>
+              </div>
+
+              <label id="account-phone-field">
+                <span>Телефон</span>
+                <input id="account-phone" type="text" placeholder="+79990000000" />
+              </label>
+
+              <label id="account-code-field" hidden>
+                <span>Код из Telegram</span>
+                <input id="account-code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="12345" />
+              </label>
+
+              <label id="account-password-field" hidden>
+                <span>Облачный пароль (2FA)</span>
+                <input id="account-password" type="password" placeholder="Ваш пароль двухфакторной защиты" />
+              </label>
+
+              <label id="account-prompt-field" class="prompt-field">
+                <span>Промпт персонажа <em class="req-mark">обязательно</em></span>
+                <textarea
+                  id="account-prompt"
+                  rows="4"
+                  required
+                  placeholder="Кто она, город, возраст, как пишет. Без промпта AI не отвечает."
+                ></textarea>
+                <span class="field-hint">Нужен и для QR, и для входа по коду — иначе аккаунт молчит.</span>
+              </label>
+
+              <p id="account-form-hint" class="form-hint" hidden></p>
+
+              <button id="account-submit" class="btn btn-primary full" type="submit">Показать QR</button>
+            </form>
+          </div>
+
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Медиагалерея</h3>
+              <button class="btn btn-secondary small" type="button" data-action="open-media-gallery">Открыть</button>
+            </div>
+            <div id="media-gallery-preview" class="media-gallery-preview"></div>
+          </div>
+
+        </section>
+
+        <section class="tab-panel" data-panel="leads">
+          <div class="panel-hero card">
+            <div class="panel-hero__icon" aria-hidden="true"></div>
+            <div>
+              <h2>Лиды</h2>
+              <p>Воронка: знакомство → общение → интерес → предложка → оператор. Архив и без ответа 24ч+ — скрыты.</p>
+            </div>
+          </div>
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Диалоги</h3>
+              <button class="btn btn-secondary small" type="button" data-action="refresh">Обновить</button>
+            </div>
+            <div id="conversations-list" class="stack"></div>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="learn">
+          <div class="section-card card">
+            <h3>Новый пример</h3>
+            <form id="example-form" class="form-grid">
+              <label>
+                <span>Аккаунт</span>
+                <select id="example-account"></select>
+              </label>
+              <label>
+                <span>Сообщение человека</span>
+                <textarea id="example-client" rows="2" placeholder="Что написал человек"></textarea>
+              </label>
+              <label>
+                <span>Как надо ответить</span>
+                <textarea id="example-reply" rows="2" placeholder="Подходящий ответ"></textarea>
+              </label>
+              <label>
+                <span>Заметка</span>
+                <input id="example-note" type="text" placeholder="Например: отвечать конкретнее, без воды" />
+              </label>
+              <button class="btn btn-primary full" type="submit" data-action="save-example">Сохранить пример</button>
+            </form>
+          </div>
+
+          <div class="section-card card">
+            <div class="section-card__header">
+              <h3>Обучающие примеры</h3>
+              <span class="badge badge-soft">Примеры</span>
+            </div>
+            <div id="learn-list" class="stack"></div>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="info">
+          <p class="updates-feed-note">Лента с сентября 2026 · КРУПНОЕ и МАЛЕНЬКОЕ. Записей за июль–август в архиве нет.</p>
+          <div id="updates-list" class="updates-feed" aria-label="Обновления"></div>
+          <details class="updates-about card">
+            <summary>О сервисе и blacklist</summary>
+            <div class="updates-about__body">
+              <p>Кабинет для управления аккаунтами и обучения ответов.</p>
+              <p><strong>Blacklist</strong> — список Telegram User ID, которым AI не отвечает. Входящее видно системе, но ответа не будет. Удобно для спама или людей, с которыми пишет только оператор.</p>
+              <ul class="list">
+                <li>Добавляйте аккаунты с промптом и проверяйте лимиты.</li>
+                <li>Удачные сценарии сохраняйте в «Учить».</li>
+                <li>Задержку и чёрный список — в «Опции».</li>
+              </ul>
+            </div>
+          </details>
+        </section>
+
+        <section class="tab-panel" data-panel="options">
+          <div class="section-card card options-block">
+            <div class="section-card__header">
+              <h2>Задержка ответов</h2>
+              <button class="btn btn-secondary small" type="button" data-action="open-info">Обновления</button>
+            </div>
+            <div class="form-grid options-fields">
+              <label>
+                <span>Задержка (сек)</span>
+                <input id="delay-input" type="number" min="1" max="60" value="15" />
+              </label>
+              <div class="options-range">
+                <label>
+                  <span>Минимум</span>
+                  <input id="min-input" type="number" min="1" max="60" value="15" />
+                </label>
+                <label>
+                  <span>Максимум</span>
+                  <input id="max-input" type="number" min="1" max="60" value="25" />
+                </label>
+              </div>
+            </div>
+            <div id="options-preview" class="stack options-preview"></div>
+            <button id="save-options" class="btn btn-primary full" type="button" data-action="save-options">Сохранить задержку</button>
+          </div>
+
+          <div class="section-card card options-block">
+            <h2>Blacklist</h2>
+            <p class="options-hint">User ID, которым AI не отвечает.</p>
+            <label class="options-field">
+              <span>User ID</span>
+              <input id="blacklist-input" type="text" placeholder="123456789" inputmode="numeric" />
+            </label>
+            <div class="options-actions">
+              <button id="add-blacklist" class="btn btn-primary" type="button">Добавить</button>
+              <button id="clear-blacklist" class="btn btn-danger" type="button">Очистить список</button>
+            </div>
+            <details id="blacklist-panel" class="list-panel">
+              <summary class="list-panel__summary">
+                <span class="list-panel__title">Список</span>
+                <span id="blacklist-count" class="list-panel__count">0</span>
+              </summary>
+              <div id="blacklist-list" class="stack options-list list-panel__body"></div>
+            </details>
+          </div>
+
+          <div class="section-card card options-block">
+            <h2>Без распознавания фото</h2>
+            <p class="options-hint">От этих @username фото не анализируются на всех аккаунтах.</p>
+            <label class="options-field">
+              <span>Username</span>
+              <input id="photo-exception-input" type="text" placeholder="@username" autocomplete="off" />
+            </label>
+            <div class="options-actions">
+              <button id="add-photo-exception" class="btn btn-primary" type="button">Добавить</button>
+              <button id="clear-photo-exceptions" class="btn btn-danger" type="button">Очистить список</button>
+            </div>
+            <details id="photo-exceptions-panel" class="list-panel">
+              <summary class="list-panel__summary">
+                <span class="list-panel__title">Список</span>
+                <span id="photo-exceptions-count" class="list-panel__count">0</span>
+              </summary>
+              <div id="photo-exceptions-list" class="stack options-list list-panel__body"></div>
+            </details>
+          </div>
+        </section>
+
+        <section class="tab-panel" data-panel="stats">
+          <div class="section-card card stats-accounts-block">
+            <h3>Сообщения по аккаунтам</h3>
+            <div class="stats-bulk-actions">
+              <button class="btn btn-primary" data-action="bulk-start" type="button">Включить все</button>
+              <button class="btn btn-secondary" data-action="bulk-stop" type="button">Выключить все</button>
+            </div>
+            <div id="stats-accounts" class="stack stats-accounts-list"></div>
+          </div>
+          <div id="stats-cards" class="stats-grid summary-grid"></div>
+        </section>
+
+        <section class="tab-panel" data-panel="admin">
+          <div class="panel-strip card panel-rise">
+            <div class="panel-strip__mark" aria-hidden="true"></div>
+            <div class="panel-strip__text">
+              <p class="panel-hero__kicker">Админ</p>
+              <h2>Кабинет управления</h2>
+              <p id="admin-live" class="panel-strip__live">Как в программе на компьютере</p>
+            </div>
+            <button class="btn btn-secondary small panel-strip__refresh" data-action="admin-refresh" type="button">↻</button>
+          </div>
+
+          <div id="admin-summary" class="stats-grid summary-grid summary-grid--panel panel-rise"></div>
+
+          <div class="admin-subnav card panel-rise" role="tablist" aria-label="Разделы админки">
+            <button class="btn btn-secondary small chip-btn is-active" type="button" data-action="admin-sub" data-sub="accounts">AI / аккаунты</button>
+            <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="blacklist">ЧС</button>
+            <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="add">Добавить</button>
+            <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="proxies">Прокси</button>
+            <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="logs">Логи</button>
+            <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-sub" data-sub="activity">События</button>
+          </div>
+
+          <div id="admin-panel-accounts" class="section-card card admin-block" data-admin-panel="accounts">
+            <div class="section-card__header">
+              <h3>Ответ AI</h3>
+              <div class="admin-bulk">
+                <button class="btn btn-primary small" type="button" data-action="admin-bulk-ai-on">Вкл все</button>
+                <button class="btn btn-secondary small" type="button" data-action="admin-bulk-ai-off">Выкл все</button>
+              </div>
+            </div>
+            <p class="options-hint">Включение / выключение автоответа, пинг и удаление — как в OPS.</p>
+            <div id="admin-accounts-list" class="stack admin-accounts-list"></div>
+          </div>
+
+          <div id="admin-panel-blacklist" class="section-card card admin-block" data-admin-panel="blacklist" hidden>
+            <div class="section-card__header">
+              <h3>Чёрный список</h3>
+              <button class="btn btn-secondary small" type="button" data-action="admin-bl-refresh">Обновить</button>
+            </div>
+            <p class="options-hint">Как в Telegram-админке: блокировка воркеров, не собеседников ИИ.</p>
+            <label class="options-field">
+              <span>@username или Telegram ID</span>
+              <input id="admin-bl-input" type="text" placeholder="@sicretsolo / 7607083426" autocomplete="off" />
+            </label>
+            <div class="options-actions">
+              <button class="btn btn-primary" type="button" data-action="admin-bl-add">В ЧС</button>
+            </div>
+            <div id="admin-bl-list" class="stack options-list"></div>
+          </div>
+
+          <div id="admin-panel-add" class="section-card card admin-block" data-admin-panel="add" hidden>
+            <div class="section-card__header">
+              <h3>Добавить / подключить</h3>
+            </div>
+            <label class="options-field">
+              <span>Телефон</span>
+              <input id="admin-add-phone" type="text" placeholder="+79991234567" autocomplete="off" />
+            </label>
+            <label class="options-field">
+              <span>Owner Telegram ID</span>
+              <input id="admin-add-owner" type="text" placeholder="id владельца в users" inputmode="numeric" autocomplete="off" />
+            </label>
+            <label class="options-field">
+              <span>Промпт (опционально)</span>
+              <textarea id="admin-add-prompt" rows="4" placeholder="Ты — …"></textarea>
+            </label>
+            <div class="options-actions">
+              <button class="btn btn-primary" type="button" data-action="admin-add-create">Создать запись</button>
+              <button class="btn btn-secondary" type="button" data-action="admin-add-code">Запросить код</button>
+            </div>
+            <div id="admin-add-code-wrap" hidden>
+              <label class="options-field">
+                <span>Код из Telegram</span>
+                <input id="admin-add-code" type="text" inputmode="numeric" placeholder="12345" autocomplete="one-time-code" />
+              </label>
+              <div class="options-actions">
+                <button class="btn btn-primary" type="button" data-action="admin-add-confirm-code">Подтвердить код</button>
+                <button class="btn btn-secondary" type="button" data-action="admin-add-resend">Ещё раз код</button>
+              </div>
+            </div>
+            <div id="admin-add-2fa-wrap" hidden>
+              <label class="options-field">
+                <span>Облачный пароль 2FA</span>
+                <input id="admin-add-2fa" type="password" autocomplete="current-password" />
+              </label>
+              <div class="options-actions">
+                <button class="btn btn-primary" type="button" data-action="admin-add-confirm-2fa">Подтвердить пароль</button>
+              </div>
+            </div>
+            <p id="admin-add-status" class="options-hint"></p>
+          </div>
+
+          <div id="admin-panel-proxies" class="section-card card admin-block" data-admin-panel="proxies" hidden>
+            <div class="section-card__header">
+              <h3>Прокси</h3>
+              <div class="admin-bulk">
+                <button class="btn btn-secondary small" type="button" data-action="admin-proxy-refresh">Список</button>
+                <button class="btn btn-primary small" type="button" data-action="admin-proxy-check">Проверить SOCKS</button>
+              </div>
+            </div>
+            <p id="admin-proxy-hint" class="options-hint">Рабочие — чаты ИИ · Резидентские — вход по коду/QR</p>
+            <div id="admin-proxy-results" class="stack admin-proxy-results"></div>
+          </div>
+
+          <div id="admin-panel-logs" class="section-card card admin-block" data-admin-panel="logs" hidden>
+            <div class="section-card__header">
+              <h3>Консоль логов</h3>
+              <div class="admin-bulk">
+                <button class="btn btn-secondary small" type="button" data-action="admin-logs-refresh">Обновить</button>
+                <button class="btn btn-secondary small" type="button" data-action="admin-logs-clear">Очистить</button>
+                <label class="admin-live-chk">
+                  <input type="checkbox" id="admin-logs-live" checked />
+                  <span>live</span>
+                </label>
+              </div>
+            </div>
+            <pre class="admin-log-console" id="admin-log-console" aria-live="polite"></pre>
+          </div>
+
+          <div id="admin-panel-activity" class="section-card card admin-block" data-admin-panel="activity" hidden>
+            <div class="section-card__header">
+              <h3>Логи событий</h3>
+              <div class="admin-bulk">
+                <button class="btn btn-secondary small" type="button" data-action="admin-activity-refresh">Обновить</button>
+                <label class="admin-live-chk">
+                  <input type="checkbox" id="admin-activity-live" checked />
+                  <span>live</span>
+                </label>
+              </div>
+            </div>
+            <p class="options-hint">Как в боте: просьба фото/кружка, ГС NFT, лид готов, согласие помочь.</p>
+            <div class="admin-subnav admin-subnav--tight" id="admin-activity-filters">
+              <button class="btn btn-secondary small chip-btn is-active" type="button" data-action="admin-akind" data-akind="all">Все</button>
+              <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-akind" data-akind="media">Фото / кружок</button>
+              <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-akind" data-akind="nft">NFT / ГС</button>
+              <button class="btn btn-secondary small chip-btn" type="button" data-action="admin-akind" data-akind="lead">Лиды</button>
+            </div>
+            <div id="admin-activity-list" class="stack admin-activity-list"></div>
+          </div>
+        </section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="Вкладки">
+        <button class="nav-btn active" data-tab="panel" type="button"><span class="nav-btn__label">Панель</span></button>
+        <button class="nav-btn" data-tab="leads" type="button"><span class="nav-btn__label">Лиды</span></button>
+        <button class="nav-btn" data-tab="accounts" type="button"><span class="nav-btn__label">TG</span></button>
+        <button class="nav-btn" data-tab="stats" type="button"><span class="nav-btn__label">Статы</span></button>
+        <button class="nav-btn" data-tab="learn" type="button"><span class="nav-btn__label">Учить</span></button>
+        <button class="nav-btn" data-tab="options" type="button"><span class="nav-btn__label">Опции</span></button>
+        <button class="nav-btn admin-only" data-tab="admin" type="button" hidden><span class="nav-btn__label">Админ</span></button>
+      </nav>
+    </div>
+    </div>
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="updates.js?v=139"></script>
+    <script src="app.js?v=69"></script>
+    </body>
+    </html>

@@ -3,7 +3,7 @@
  * Smoke: «А давно в Краснодаре?» без «а ты там живёшь?» + отказ от generate-текста.
  */
 require('dotenv').config();
-if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = 'sk-test-smoke';
+if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = 'local-smoke-only';
 
 const ar = require('../services/aiResponder');
 const oh = require('../services/objectionHandler');

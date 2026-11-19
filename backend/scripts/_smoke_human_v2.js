@@ -53,3 +53,4 @@ assert(
 );
 
 console.log('done', process.exitCode || 0);
+process.exit(process.exitCode || 0);

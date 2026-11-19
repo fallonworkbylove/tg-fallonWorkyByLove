@@ -1,8 +1,63 @@
-сможе Changelog для тгк — 24–26 октября 2026
+﻿сможе Changelog для тгк — 24–26 октября 2026
 
 Готовые посты, можно копировать по одному. Нумерация подряд: … → 0df → 0dg → …
 
 ---
+
+## 0m0. 19 ноя — audit C: exit hang fix · childOk marker-first
+
+Hard `_hard_audit_0ht/0gc` теперь `process.exit(0)` (иначе open handles → ETIMEDOUT и ложный P0). Full audit: OK-marker важнее timeout. Busy smoke/gates учитывают ночной ×1.45 (≤9/26/29м). Proxy burst dead TTL = DEFAULT 12м. Ultra читает `backend/.env`. Лента: (updates.js?v=257).
+
+## 0lz. 19 ноя — harden: operator waiting skip · audit C reliable · FE/security guard
+
+Waiting/silence больше не трогают `funnel_stage=operator`. Full hard audit: timeout 180s + smokes 0lu–0lz + `_hard_audit_0lz`. Deploy guard: getUserId≠1, CORS≠*. Лента: (updates.js?v=256).
+
+## 0ly. 19 ноя — restore frontend miniapp index (OPS overwrite)
+
+Deploy scp name-clash: `frontend/index.html` был затёрт OPS html → чёрный экран/каша в Telegram. Restore worker index + gate `app-splash` / refuse OPS subtitle. Лента: (updates.js?v=255).
+
+## 0lx. 19 ноя — waiting push off after work day · heal stale till 01
+
+Пуш «ждут ответа» молчит вне 09–23 и в 01–08. Silence-heal догоняет stale (>20м) после sleep аккаунта до night quiet. Smoke `_smoke_waiting_night_0lx.js`. Лента: (updates.js?v=254).
+
+## 0lw. 18 ноя — waiting-leads: exclude archive / пока / call
+
+`runWaitingLeadsWatch` больше не считает archived / filtered / «бери трубку» / «пока» — ложный пуш «10 диалогов». Smoke `_smoke_waiting_filter_0lw.js`. Лента: (updates.js?v=253).
+
+## 0lv. 18 ноя — OpenAI skip dead proxies (no 60s thrash)
+
+`openaiCreateWithProxyFailover`: сначала liveIdx, skip DEAD; mark dead TTL 12м (было 60с → повторные timeout и «молчание»). Smoke `_smoke_openai_skip_dead_0lv.js`. Лента: (updates.js?v=252).
+
+## 0lu. 18 ноя — Connection error → OpenAI proxy failover
+
+`isProxyTransportError` теперь матчит OpenAI `Connection error.` / `APIConnectionError` (раньше 0 ротаций при тысячах fail). RAG/learning через `openaiCreateWithProxyFailover`. Silence-heal: skip «бери трубку», fail-cooldown 12м. Smoke `_smoke_conn_error_failover_0lu.js`. Лента: (updates.js?v=251).
+
+## 0lt. 17 ноя — disable Day4 escalate admin push
+
+`runDay4EscalateWatch` no-op + removed from opsQuality interval (noise: already post-nft.ogg). Лента: (updates.js?v=250).
+
+## 0ls. 17 ноя — peer photo ≠ packed-things excuse
+
+`isPeerIncomingMediaCaption` + `resolveMediaPromise`: его фото/стикер (машина и т.п.) больше не подменяется «ну давай без фото коробок». Регресс Екатерина→Александр. Smoke `_smoke_packed_things_0iq.js`. Лента: (updates.js?v=249).
+
+## 0lr. 17 ноя — restore OPENAI key · guard refuse sk-deploy
+
+Корень: `_deploy_0lq` export `OPENAI_API_KEY=sk-deploy` + `pm2 --update-env` → 401 на всех ответах. Восстановлен ключ из `.env` в pm2. `_deploy_guard` REFUSE_OPENAI_FAKE_KEY. Smoke `_smoke_deploy_openai_guard_0lr.js`. Лента: (updates.js?v=248).
+
+## 0lq. 17 ноя — audit C UX: snippet strip · empty board · bad-reply target · CSV guard
+
+`cleanBoardSnippet` в leadScoring — OPS/миниапп без `[уточнение…]`. OPS: empty day columns без ключа, CSV no-op без лидов, после save ключа → воронка. Miniapp `admin-bad-reply` читает `target.dataset`. Smoke `_smoke_audit_c_fix_0lq.js`. Лента: (updates.js?v=247).
+
+## 0lp. 17 ноя — bad-reply 1-tap · login DC probe · audit digest · NFT archive UI
+
+Worker `POST .../bad-reply` + chips Echo/Offtopic/Robot. `warmProbeLoginProxies` before QR/SMS. `_cron_audit_c.sh` always `sendAdminAlert` digest. Miniapp+OPS NFT archive cards. Smoke `_smoke_wave_0lp.js`. Lenta: (updates.js?v=246).
+## 0lo. 17 ноя — wave ideas: soft gates + OPS denser + waiting push
+
+`softHumanGates` 0lo: topic drift, laugh-echo, sticker short, clarify, NFT scam bank, EN stick, blind photo, after-circle trim, evening short, no repeat work-ask, heard-tail kill. OPS: day-bar, dense, CSV, J/K, worker compare hint. Miniapp: funnel onboard + start-AI checklist. Infra: OpenAI circuit 3-fail/2m, waiting≥3/10m push, day4 escalate ≥6ч. Smoke `_smoke_wave_0lo.js`. Лента: (updates.js?v=245).
+
+## 0ln. 16 ноя — воронка day1–day4 (NFT)
+
+Доска OPS + миниапп: вместо hello/chat/interest/pitch/operator/filtered → `day1` / `day2` / `day3·NFT` / `day4·NFT` по возрасту диалога + nft voice. `leadScoring.detectFunnelStage`, i18n, 4 колонки. Smoke `_smoke_funnel_days_0ln.js`. Лента: (updates.js?v=244).
 
 ## 0lm. 16 ноя — A2/? · empty quotes · vague filler · login rate · guard changelog · audit fast
 

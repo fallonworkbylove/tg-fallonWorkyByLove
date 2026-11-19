@@ -101,6 +101,8 @@ const {
   isHardMediaRequest,
   isExplicitMediaRequest,
   isMediaPromiseText,
+  isMediaRefusalText,
+  pickMediaSendAck,
   unfulfilledMediaPromiseCount,
   resolveMediaPromise,
   detectRequestedMediaType,
@@ -119,6 +121,15 @@ const {
   maybeNotifyMediaMissed,
   sendRequestedMediaOrDeflect,
 } = require('./mediaSend');
+
+/** Если файл уходит в этом ходе — отказный текст → короткий ack. */
+function ensureMediaAckText(outText, mediaType) {
+  if (!mediaType) return outText;
+  if (!outText || isMediaRefusalText(outText) || isMediaPromiseText(outText)) {
+    return pickMediaSendAck();
+  }
+  return outText;
+}
 const {
   howLongInFlight,
   HOWLONG_ARCHIVE_DAYS,
@@ -417,6 +428,23 @@ async function fireReengage(accountId, peerId) {
     reengageInFlight.delete(key);
     return;
   }
+  try {
+    const i14 = require('./humanIdeas14');
+    const histFarewell = Array.isArray(history) ? history : await getHistory(accountId, peerId);
+    if (
+      i14.shouldSkipUntilMorning(histFarewell, text, {
+        hardMedia: isHardMediaRequest(text, histFarewell),
+      })
+    ) {
+      console.log(
+        `[${accountLabel(accountId)}] Отложенный ответ отменён — ${senderName} после спокойной, тишина до утра.`,
+      );
+      reengageInFlight.delete(key);
+      return;
+    }
+  } catch (_) {
+    /* optional */
+  }
   // Архив — никогда не читаем и не пишем, в том числе отложенным ответом.
   if (await isPeerArchived(client, sender)) {
     console.log(
@@ -429,6 +457,52 @@ async function fireReengage(accountId, peerId) {
   if (await cancelReplyIfDialogGone(client, accountId, sender, senderName, message, 'отложенный')) {
     reengageInFlight.delete(key);
     return;
+  }
+
+  // Howlong-отсев и в отложенном ответе (иначе «месяц» в busy-pending утекает из архива).
+  try {
+    const histHow = Array.isArray(history) ? history : await getHistory(accountId, peerId);
+    if (isAnswerToHowLong(histHow)) {
+      const stayDays = parseStayDays(text);
+      console.log(
+        `[${accountLabel(accountId)}] ${senderName} ответил (reengage), сколько на дв: "${String(text).slice(0, 80)}" → ${stayDays ?? '?'} дн.`,
+      );
+      if (stayDays != null && stayDays >= HOWLONG_ARCHIVE_DAYS) {
+        await markPeerAsRead(client, sender, message);
+        try {
+          const leadScoring = require('./leadScoring');
+          const { formatFilterNote } = require('./opsQuality');
+          await leadScoring.markPeerFiltered(
+            accountId,
+            peerId,
+            formatFilterNote('howlong', `${stayDays} дн. (≥${HOWLONG_ARCHIVE_DAYS})`),
+          );
+        } catch (e) {
+          console.error(
+            `[${accountLabel(accountId)}] Не удалось пометить отсев ${senderName}:`,
+            e.message,
+          );
+        }
+        try {
+          await archivePeer(client, sender);
+        } catch (e) {
+          console.error(
+            `[${accountLabel(accountId)}] Не удалось архивировать ${senderName}:`,
+            e.errorMessage || e.message,
+          );
+        }
+        console.log(
+          `[${accountLabel(accountId)}] ${senderName} на дв ${stayDays} дн. (≥${HOWLONG_ARCHIVE_DAYS}) — отсев + архив (reengage).`,
+        );
+        reengageInFlight.delete(key);
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn(
+      `[${accountLabel(accountId)}] howlong reengage:`,
+      e?.message || e,
+    );
   }
 
   let workMentionClaimed = false;
@@ -531,7 +605,13 @@ async function fireReengage(accountId, peerId) {
     const dialogAgeHours = await getDialogAgeHours(accountId, peerId);
     // How-long ack важнее generic later/dont_understand — иначе «потом» съедает реакцию на дв.
     let objectionHint = null;
-    if (flipPhotoQuestion) {
+    let ownAvatarHitEarly = false;
+    try {
+      ownAvatarHitEarly = require('./avatarMatch').messageHasOwnAvatarTag(text);
+    } catch (_) {}
+    if (ownAvatarHitEarly && typeof objectionHandler.getOwnAvatarClaimHint === 'function') {
+      objectionHint = objectionHandler.getOwnAvatarClaimHint();
+    } else if (flipPhotoQuestion) {
       objectionHint = objectionHandler.getFlipPhotoQuestionHint();
     } else if (isAnswerToHowLong(replyHistory)) {
       objectionHint = objectionHandler.getHowLongAckHint(text);
@@ -674,10 +754,23 @@ async function fireReengage(accountId, peerId) {
     if (typeof objectionHandler.softenFraudAdmissionReply === 'function') {
       rawReply = objectionHandler.softenFraudAdmissionReply(rawReply, text, replyHistory);
     }
-    if (typeof objectionHandler.softenFlipPhotoIdentityReply === 'function') {
-      rawReply = objectionHandler.softenFlipPhotoIdentityReply(rawReply, text, replyHistory, {
-        flipRecent: Boolean(flipPhotoQuestion),
-      });
+    {
+      let matchesOwnAvatar = false;
+      try {
+        const am = require('./avatarMatch');
+        matchesOwnAvatar = am.messageHasOwnAvatarTag(text);
+      } catch (_) {}
+      if (typeof objectionHandler.softenFlipPhotoIdentityReply === 'function') {
+        rawReply = objectionHandler.softenFlipPhotoIdentityReply(rawReply, text, replyHistory, {
+          flipRecent: Boolean(flipPhotoQuestion),
+          matchesOwnAvatar,
+        });
+      }
+      if (typeof objectionHandler.softenClaimedHerPhotoReply === 'function') {
+        rawReply = objectionHandler.softenClaimedHerPhotoReply(rawReply, text, {
+          matchesOwnAvatar,
+        });
+      }
     }
     if (humanHardening.detectDeferredMediaPromise(rawReply)) {
       const job = humanHardening.scheduleDeferredMedia(accountId, peerId, { kind: 'photo' });
@@ -884,6 +977,15 @@ async function fireReengage(accountId, peerId) {
       }
     } catch (_) {
       /* optional */
+    }
+    if (mediaType && mediaLink) {
+      const beforeAck = outText;
+      outText = ensureMediaAckText(outText, mediaType);
+      if (beforeAck !== outText) {
+        console.log(
+          `[${accountLabel(accountId)}] Медиа-ack вместо отказа для ${senderName}: "${beforeAck || ''}" → "${outText}"`,
+        );
+      }
     }
 
     // Не слать «щас по работе» поверх «щас скину милое» / фото.
@@ -1572,6 +1674,24 @@ async function processBufferedMessages(
     // 1. Берём историю диалога (до текущего сообщения).
     const history = await getHistory(accountId, peerId);
 
+    // После нашего «спокойной» вечером/ночью — молчим до утра (кроме hard media).
+    try {
+      const i14 = require('./humanIdeas14');
+      if (
+        i14.shouldSkipUntilMorning(history, contextualText || text, {
+          hardMedia: isHardMediaRequest(contextualText || text, history),
+        })
+      ) {
+        console.log(
+          `[${accountLabel(accountId)}] ${senderName}: после спокойной — тишина до утра.`,
+        );
+        await saveMessage(accountId, peerId, senderName, 'user', contextualText);
+        return;
+      }
+    } catch (_) {
+      /* optional */
+    }
+
     // 2. Сохраняем входящее сообщение собеседника.
     await saveMessage(accountId, peerId, senderName, 'user', contextualText);
 
@@ -1989,7 +2109,13 @@ async function processBufferedMessages(
     const dialogAgeHours = await getDialogAgeHours(accountId, peerId);
     // How-long ack важнее generic later/dont_understand — иначе «потом» съедает реакцию на дв.
     let objectionHint = null;
-    if (flipPhotoQuestion) {
+    let ownAvatarHit = false;
+    try {
+      ownAvatarHit = require('./avatarMatch').messageHasOwnAvatarTag(contextualText || text);
+    } catch (_) {}
+    if (ownAvatarHit && typeof objectionHandler.getOwnAvatarClaimHint === 'function') {
+      objectionHint = objectionHandler.getOwnAvatarClaimHint();
+    } else if (flipPhotoQuestion) {
       objectionHint = objectionHandler.getFlipPhotoQuestionHint();
     } else if (isAnswerToHowLong(history)) {
       objectionHint = objectionHandler.getHowLongAckHint(text);
@@ -2140,13 +2266,25 @@ async function processBufferedMessages(
       if (typeof objectionHandler.softenFraudAdmissionReply === 'function') {
         rawReply = objectionHandler.softenFraudAdmissionReply(rawReply, nudeSrc, history);
       }
-      if (typeof objectionHandler.softenFlipPhotoIdentityReply === 'function') {
-        rawReply = objectionHandler.softenFlipPhotoIdentityReply(
-          rawReply,
-          nudeSrc,
-          history,
-          { flipRecent: Boolean(flipPhotoQuestion) },
-        );
+      {
+        let matchesOwnAvatar = false;
+        try {
+          const am = require('./avatarMatch');
+          matchesOwnAvatar = am.messageHasOwnAvatarTag(nudeSrc);
+        } catch (_) {}
+        if (typeof objectionHandler.softenFlipPhotoIdentityReply === 'function') {
+          rawReply = objectionHandler.softenFlipPhotoIdentityReply(
+            rawReply,
+            nudeSrc,
+            history,
+            { flipRecent: Boolean(flipPhotoQuestion), matchesOwnAvatar },
+          );
+        }
+        if (typeof objectionHandler.softenClaimedHerPhotoReply === 'function') {
+          rawReply = objectionHandler.softenClaimedHerPhotoReply(rawReply, nudeSrc, {
+            matchesOwnAvatar,
+          });
+        }
       }
       rawReply = externalFacts.groundClockReply(
         rawReply,
@@ -2383,6 +2521,15 @@ async function processBufferedMessages(
       }
     } catch (_) {
       /* optional */
+    }
+    if (mediaType && mediaLink) {
+      const beforeAck = outText;
+      outText = ensureMediaAckText(outText, mediaType);
+      if (beforeAck !== outText) {
+        console.log(
+          `[${accountLabel(accountId)}] Медиа-ack вместо отказа для ${senderName}: "${beforeAck || ''}" → "${outText}"`,
+        );
+      }
     }
 
     // Не слать «щас по работе» поверх «щас скину милое» / фото.

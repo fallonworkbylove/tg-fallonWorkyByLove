@@ -138,6 +138,9 @@ const FACT_PATTERNS = [
   { type: 'work', re: /(на работе|уволил|начальник|коллег|смена сегодня|устал[а]? на работе|устрои(лся|лась) на работу|я\s+(барбер|дизайнер|водитель|программист|врач|повар|строитель|менеджер|фотограф|музыкант|учитель|студент)|работаю\s+(как\s+)?[а-яёa-z]{3,})/i },
   { type: 'city', re: /(живу в|я из |переехал[а]? в|у нас в городе)/i },
   { type: 'hobby', re: /(я\s+(играю|хожу|занимаюсь|люблю)\s+|хобби|в зал|в качалк|на рыбалк|в футбол|гитар|фотограф\w* как хобби)/i },
+  { type: 'sport', re: /(я\s+(?:хожу\s+)?(?:в\s+)?зал|качалк|кроссфит|бег\w*|футбол|баскетбол|теннис|бокс|плава\w*|трен[ии]ровк)/i },
+  { type: 'show', re: /(сериал|смотрю\s+\w+|досмотр\w+|нетфликс|netflix|кино\s+смотр|фильм\s+(?:смотр|нравит))/i },
+  { type: 'car', re: /(моя?\s+(?:машин|тачк)|у меня\s+(?:машин|тачк)|еду\s+на\s+(?:машин|авто)|на\s+работе\s+на\s+машин)/i },
   { type: 'plans', re: /(завтра\s+(иду|поеду|буду|работаю)|на выходн|в субботу|в воскресенье|собираюсь\s+(пойти|поехать|вечером))/i },
   // Без голого «я Завтра» — только явное представление.
   { type: 'name', re: /(?:меня зовут|мо[её]\s+имя)\s+([А-ЯЁA-Z][а-яёa-z]{2,15})\b/ },
@@ -149,7 +152,8 @@ const SELF_PATTERNS = [
   { type: 'name', re: /меня зовут\s+([А-ЯЁа-яё]{2,20})/i, capture: true },
   { type: 'city', re: /(?:живу в|я в|сейчас в)\s+([А-ЯЁа-яё\-]{3,30})/i, capture: true },
   { type: 'move', re: /(переезжа\w+|собираю вещи|коробк\w+|к маме)/i, capture: false },
-  { type: 'job', re: /(флип\w*|токен\w*|nft|цифров\w+\s+токен)/i, capture: false },
+  { type: 'job', re: /(флип\w*|токен\w*|nft|цифров\w+\s+токен|работаю\s+онлайн|сама\s+на\s+себя)/i, capture: false },
+  { type: 'hobby', re: /(?:люблю|кайфую|занимаюсь)\s+(?:кофе|сериал|гул|прогул|зал|музык|фильм|рисова|фотк)\w*|(?:кофе|сериал\w*|гулять|в\s+зал)/i, capture: false },
   { type: 'family', re: /(мама|маме|к маме)/i, capture: false },
 ];
 
@@ -274,12 +278,26 @@ const FOLLOW_UP_HINTS = {
     `Ранее он упоминал город («${fact}»). Опереться утверждением («ты же в …»), БЕЗ вопроса и БЕЗ «а ты?».`,
   hobby: (fact) =>
     `Ранее он говорил про хобби («${fact}»). Короткая отсылка-утверждение, без нового допроса.`,
+  sport: (fact) =>
+    `Ранее он говорил про спорт/зал («${fact}»). Вскользь отсылка без допроса («ну как тренировки»).`,
+  show: (fact) =>
+    `Ранее он упоминал сериал/кино («${fact}»). Можно коротко опереться, без «а что смотришь?» снова.`,
+  car: (fact) =>
+    `Ранее он говорил про машину («${fact}»). Мягкая отсылка ок, без допроса про марку.`,
   plans: (fact) =>
     `Ранее у него были планы («${fact}»). Можно вскользь опереться («ну как там с …»), без допроса.`,
   name: (fact) =>
     `Его зовут ${fact}. Можешь иногда обращаться по имени, без навязчивости.`,
-  pref: (fact) =>
-    `Он говорил о предпочтении («${fact}»). Учитывай это, не спорь в лоб без нужды.`,
+  pref: (fact) => {
+    const f = String(fact || '');
+    if (/не\s+люблю|ненавижу|терпеть\s+не\s+могу/i.test(f)) {
+      return (
+        `Он НЕ ЛЮБИТ: «${f.slice(0, 80)}». ЗАПРЕЩЕНО предлагать/хвалить/возвращать эту тему. ` +
+        'Если всплывёт — коротко признай и смени тему.'
+      );
+    }
+    return `Он говорил о предпочтении («${f.slice(0, 80)}»). Учитывай это, не спорь в лоб без нужды.`;
+  },
   family: (fact) =>
     `Он упоминал семью («${fact}»). Если уместно — мягкая отсылка, без допроса.`,
 };
@@ -317,7 +335,7 @@ async function getDueFollowUp(accountId, peerId) {
       `SELECT id, fact_type, fact_text FROM peer_memory_facts
        WHERE account_id = ? AND peer_id = ? AND followed_up_at IS NULL
          AND created_at <= (NOW() - INTERVAL 8 HOUR)
-         AND created_at >= (NOW() - INTERVAL 4 DAY)
+         AND created_at >= (NOW() - INTERVAL 7 DAY)
        ORDER BY created_at ASC LIMIT 1`,
       [accountId, String(peerId)],
     );
@@ -378,28 +396,71 @@ async function buildMemoryContextHint(accountId, peerId) {
     const [aboutHim] = await db.execute(
       `SELECT fact_type, fact_text FROM peer_memory_facts
        WHERE account_id = ? AND peer_id = ?
-         AND created_at > (NOW() - INTERVAL 30 DAY)
+         AND created_at > (NOW() - INTERVAL 7 DAY)
        ORDER BY id DESC LIMIT 8`,
       [accountId, String(peerId)],
     );
     const [aboutSelf] = await db.execute(
       `SELECT fact_type, fact_text FROM peer_self_told
        WHERE account_id = ? AND peer_id = ?
-         AND created_at > (NOW() - INTERVAL 30 DAY)
+         AND created_at > (NOW() - INTERVAL 7 DAY)
        ORDER BY id DESC LIMIT 8`,
       [accountId, String(peerId)],
     );
     const prefHint = await buildPreferenceHint(accountId, peerId);
-    if (!aboutHim.length && !aboutSelf.length && !prefHint) return null;
+    if (!aboutHim.length && !aboutSelf.length && !prefHint) {
+      try {
+        return require('./humanRhythm').appendHonestMemoryRule('');
+      } catch (_) {
+        return null;
+      }
+    }
 
     const lines = [];
+    // #5 компактная карточка: город / работа / не любит / дети / имя
     if (aboutHim.length) {
+      const byType = (t) => aboutHim.find((f) => f.fact_type === t);
+      const cardBits = [];
+      const nameF = byType('name');
+      const cityF = byType('city');
+      const jobF = byType('job');
+      const kidsF = byType('family') || byType('kids');
+      const petF = byType('pet');
+      const hobbyF = byType('hobby');
+      const dislikeF = aboutHim.find(
+        (f) =>
+          f.fact_type === 'pref' &&
+          /не\s+люблю|ненавижу|терпеть\s+не\s+могу/i.test(String(f.fact_text || '')),
+      );
+      if (nameF) cardBits.push(`имя ${String(nameF.fact_text).slice(0, 30)}`);
+      if (cityF) cardBits.push(`город ${String(cityF.fact_text).slice(0, 40)}`);
+      if (jobF) cardBits.push(`работа ${String(jobF.fact_text).slice(0, 40)}`);
+      if (petF) cardBits.push(`питомец ${String(petF.fact_text).slice(0, 40)}`);
+      if (hobbyF) cardBits.push(`хобби ${String(hobbyF.fact_text).slice(0, 40)}`);
+      if (kidsF) cardBits.push(`семья ${String(kidsF.fact_text).slice(0, 40)}`);
+      if (dislikeF) cardBits.push(`не любит ${String(dislikeF.fact_text).slice(0, 40)}`);
+      if (cardBits.length) {
+        lines.push('КАРТОЧКА собеседника (держись фактов, не выдумывай): ' + cardBits.join(' · '));
+      }
       lines.push(
         'ПАМЯТЬ о нём (уже знаешь, не переспрашивай как в первый раз): ' +
           aboutHim
             .map((f) => `${TYPE_LABELS[f.fact_type] || f.fact_type}: «${String(f.fact_text).slice(0, 60)}»`)
             .join('; '),
       );
+      // #75 — явный бан «не люблю X»
+      const dislikes = aboutHim.filter(
+        (f) =>
+          f.fact_type === 'pref' &&
+          /не\s+люблю|ненавижу|терпеть\s+не\s+могу/i.test(String(f.fact_text || '')),
+      );
+      if (dislikes.length) {
+        lines.push(
+          'НЕ ПРЕДЛАГАЙ и не возвращай темы, которые он не любит: ' +
+            dislikes.map((f) => `«${String(f.fact_text).slice(0, 50)}»`).join('; ') +
+            '.',
+        );
+      }
     }
     if (aboutSelf.length) {
       // «переезд» не показываем: с ним бот в каждом диалоге съезжает на коробки.
@@ -414,10 +475,50 @@ async function buildMemoryContextHint(accountId, peerId) {
       }
     }
     if (prefHint) lines.push(prefHint);
-    return lines.join('\n');
+    let out = lines.join('\n');
+    try {
+      out = require('./humanIdeas10').strengthenSelfToldBan(out) || out;
+    } catch (_) {
+      /* optional */
+    }
+    try {
+      out = require('./humanRhythm').appendHonestMemoryRule(out) || out;
+    } catch (_) {
+      /* optional */
+    }
+    return out;
   } catch (err) {
     console.error('[memoryTriggers] Не удалось собрать memory context:', err.message);
     return null;
+  }
+}
+
+/** Сырые факты о нём для honest-forget / карточки (без LLM). */
+async function listPeerFacts(accountId, peerId) {
+  try {
+    await ensureSchema();
+    const [rows] = await db.execute(
+      `SELECT fact_type, fact_text FROM peer_memory_facts
+       WHERE account_id = ? AND peer_id = ?
+         AND created_at > (NOW() - INTERVAL 7 DAY)
+       ORDER BY id DESC LIMIT 16`,
+      [accountId, String(peerId)],
+    );
+    return Array.isArray(rows) ? rows : [];
+  } catch (err) {
+    console.error('[memoryTriggers] listPeerFacts:', err.message);
+    return [];
+  }
+}
+
+/** Чистка старше 7 дней — память не раздувается. */
+async function pruneOldMemory() {
+  try {
+    await ensureSchema();
+    await db.execute(`DELETE FROM peer_memory_facts WHERE created_at < (NOW() - INTERVAL 7 DAY)`);
+    await db.execute(`DELETE FROM peer_self_told WHERE created_at < (NOW() - INTERVAL 7 DAY)`);
+  } catch (err) {
+    console.warn('[memoryTriggers] prune:', err.message);
   }
 }
 
@@ -430,4 +531,6 @@ module.exports = {
   buildMemoryContextHint,
   updateChatPrefs,
   buildPreferenceHint,
+  listPeerFacts,
+  pruneOldMemory,
 };

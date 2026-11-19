@@ -1,0 +1,15 @@
+{
+  "success": true,
+  "data": {
+    "id": 2,
+    "localapiUrl": "{\"archive\": \"https://dolphin-anty-cdn.com/local-api/2026.10.08-cdf970e0-production/2026.10.08-cdf970e0-production.zip\", \"checksum\": \"680dcb4f3a7ac00c5b22140bb1355c17\", \"checksums\": {\"linux-x64\": \"0e2e7df6902a56ce45b989358189f167\", \"win32-x64\": \"0666868a6737ef13cef01653e8c7820b\", \"darwin-x64\": \"f7ffc31d18596feb7efc4e9b86ff20e5\", \"darwin-arm64\": \"0806439f20f4bc513ecf4204cd092879\"}, \"2026.10.08-cdf970e0-production.zip\": \"https://dolphin-anty-cdn.com/local-api/2026.10.08-cdf970e0-production/2026.10.08-cdf970e0-production.zip\", \"2026.10.08-cdf970e0-production.zip.md5\": \"https://dolphin-anty-cdn.com/local-api/2026.10.08-cdf970e0-production/2026.10.08-cdf970e0-production.zip.md5\"}",
+    "frontendUrl": "https://dolphin-anty-cdn.com/frontend/2026.10.08-cdf970e0-production/index.html",
+    "backendUrl": "https://anty-api.com",
+    "type": "production",
+    "name": "master",
+    "hash": "13374aa8115fae8f14df69d2ecfaed18"
+  },
+  "meta": {
+    "autoUpdateElectron": false
+  }
+}

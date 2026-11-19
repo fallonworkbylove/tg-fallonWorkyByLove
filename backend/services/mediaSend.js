@@ -80,7 +80,22 @@ const MEDIA_TOKEN_RE = /<<\s*(?:PHOTO|VIDEO|CIRCLE)\s*>>/gi;
 // отправкой медиа. Модель иногда путает отказ в номере с просьбой кружка
 // и пишет «давай пока тут общаться» + <<CIRCLE>> — выглядит как фейк.
 const REFUSAL_RE =
-  /(пока рано|попозже|не могу|не буду|не кину|не кидаю|потом|в другой раз|рано ещё|рано еще|не сейчас|стесняюсь|давай пока тут|тут общаться|мне так удобнее|не даю|обща(ться|емся) тут|без (кружк|фото|видео)|не записываю|не снимаю)/i;
+  /(пока рано|попозже|не могу|не буду|не кину|не кидаю|потом|в другой раз|рано ещё|рано еще|не сейчас|не сегодня|не\s+сегодня|извини|извин\b|стесняюсь|давай пока тут|тут общаться|мне так удобнее|не даю|обща(ться|емся) тут|без (кружк|фото|видео)|не записываю|не снимаю)/i;
+
+/** Короткий ack перед реальной отправкой файла (не отказ). */
+const MEDIA_SEND_ACK_POOL = [
+  'окей, щас найду)',
+  'ща найду)',
+  'ок, секунду)',
+  'окей, секунду)',
+  'ща)',
+  'держи)',
+  'лови)',
+];
+
+function pickMediaSendAck() {
+  return MEDIA_SEND_ACK_POOL[Math.floor(Math.random() * MEDIA_SEND_ACK_POOL.length)];
+}
 
 /**
  * Текст противоречит отправке медиа (отказ / «давай только текстом»).
@@ -94,9 +109,15 @@ function isContradictoryMediaText(text) {
   const bare = t.replace(/<<Q:[\d,]+>>\s*/gi, '').trim();
   if (/^(не|неа|нет|no|nope)\b/i.test(bare) && bare.length < 80) return true;
   if (REFUSAL_RE.test(bare) && bare.length < 120) return true;
+  if (/не\s+сегодня/i.test(bare) && bare.length < 120) return true;
   // Длинный ответ: отказ только если он занимает заметную долю (не «потом» в другом смысле).
   const lines = bare.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  const refusalLines = lines.filter((l) => REFUSAL_RE.test(l) || /^(не|неа|нет|no|nope)\b/i.test(l));
+  const refusalLines = lines.filter(
+    (l) =>
+      REFUSAL_RE.test(l) ||
+      /не\s+сегодня/i.test(l) ||
+      /^(не|неа|нет|no|nope)\b/i.test(l),
+  );
   if (refusalLines.length && refusalLines.length >= Math.ceil(lines.length / 2)) return true;
   return false;
 }
@@ -111,11 +132,22 @@ function stripContradictoryMediaParts(text) {
       const tag = (line.match(/^\s*(?:<<Q:[\d,]+>>\s*)?/) || [''])[0];
       let body = line.slice(tag.length).trim();
       if (!body) return '';
-      if (REFUSAL_RE.test(body) || /^(не|неа|нет|no|nope)\b/i.test(body)) return '';
+      if (
+        REFUSAL_RE.test(body) ||
+        /не\s+сегодня/i.test(body) ||
+        /^(не|неа|нет|no|nope)\b/i.test(body)
+      ) {
+        return '';
+      }
       // Отказ во второй половине: «флиплю токены, фото попозже»
       body = body
         .split(/(?<=[.!)])\s+/)
-        .filter((part) => !REFUSAL_RE.test(part) && !/^(не|неа|нет|no|nope)\b/i.test(part.trim()))
+        .filter(
+          (part) =>
+            !REFUSAL_RE.test(part) &&
+            !/не\s+сегодня/i.test(part) &&
+            !/^(не|неа|нет|no|nope)\b/i.test(part.trim()),
+        )
         .join(' ')
         .trim();
       return body ? tag + body : '';
@@ -246,7 +278,24 @@ const MEDIA_PROMISE_MAX = 2;
 // иначе файл уходит против её же слов, а постобработка калечит текст
 // («не могу такое скинуть» → «не могу такое ть»).
 const MEDIA_REFUSAL_RE =
-  /(не\s+(?:могу|буду|хочу|стану)\s+(?:такое|это|тебе|сейчас)|не\s+(?:могу|буду|хочу)\s+\S{0,12}\s*(?:скин|кину|отправ|присл|показ|запис)|без\s+фот|не\s+(?:по\s+)?фотк|не\s+в\s+настроении\s+(?:кидать|скидывать|фоткаться))/i;
+  /(не\s+(?:могу|буду|хочу|стану)\s+(?:такое|это|тебе|сейчас|сегодня)|не\s+(?:могу|буду|хочу)\s+\S{0,12}\s*(?:скин|кину|отправ|присл|показ|запис)|не\s+сегодня|не\s+сейчас(?:\s*[,.]?\s*извин\w*)?|извин\w*(?:\s*[,.]?\s*)?(?:не\s+сегодня|не\s+сейчас|не\s+кину)|без\s+фот|не\s+(?:по\s+)?фотк|не\s+в\s+настроении\s+(?:кидать|скидывать|фоткаться))/i;
+
+/** Отказный текст, который нельзя оставлять рядом с уходящим файлом. */
+function isMediaRefusalText(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (REFUSAL_RE.test(t)) return true;
+  if (MEDIA_REFUSAL_RE.test(t)) return true;
+  if (
+    /не\s+кину|не\s+кидаю|без\s+фот|стыдно|расскажу\s+текстом|давай\s+без\s+фото|не\s+сегодня|не\s+сейчас|извин/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/^(не|неа|нет|no|nope)\b/i.test(t) && t.length < 80) return true;
+  return false;
+}
 
 /**
  * Сколько раз подряд бот пообещала медиа и ничего не прислала.
@@ -273,35 +322,61 @@ const MEDIA_PROMISE_WITH_OBJECT_RE =
 
 /** «щас поищу и скину» / «щас найду и кину» — целиком, без объекта. */
 const MEDIA_PROMISE_FIND_AND_SEND_RE =
-  /(?:ага\s*)?(?:щас|сейчас|ща|щя|ok|okay|one\s+sec)[,\s]+(?:подожди[,\s]+)?(?:найду|поищу|выберу)(?:\s+и\s+(?:скину|кину|отправлю))?(?:\s+(?:тебе\s+)?(?:фот\w*|фото|круж\w*|видео|видос|селфи|мил\w+))?[\s)!.,]*/gi;
+  /(?:(?:ну|ага|угу|ок|окей|ладно|короче)\s+)*(?:щас|сейчас|ща|щя|ok|okay|one\s+sec)[,\s]+(?:подожд\w*[,\s]+)?(?:найду|поищу|выберу)(?:\s+и\s+(?:скину|кину|отправлю))?(?:\s+(?:тебе\s+)?(?:фот\w*|фото|круж\w*|видео|видос|селфи|мил\w+|нормальн\w*|хорош\w*|что-то\s+\w+))?[\s)!.,]*/gi;
 
 /** «щас скину что-то милое» / «на утро отправлю». */
 const CUTE_MEDIA_PROMISE_STRIP_RE =
   /(?:ага\s*)?(?:щас|сейчас|ща|щя)?[,\s]*(?:что-то\s+)?мил(?:ое|ую|ый|ая)[^.!?\n]{0,40}(?:скину|кину|отправлю|пришлю|найду|поищу)|(?:щас|сейчас|ща|щя)[,\s]+(?:скину|кину|отправлю|пришлю)\s+(?:что-то\s+)?мил\w*[)!.]*|(?:на\s+утро|утром)[^.!?\n]{0,24}(?:скину|кину|отправлю|пришлю)|(?:скину|кину|отправлю|пришлю)[^.!?\n]{0,24}(?:на\s+утро|утром|мил\w*)/gi;
 
-/** Обрубок после частичного стрипа: «и скину», «подожди немного)», «скину». */
+/** Обрубок после частичного стрипа: «и скину», «подожди немного)», «скину», «нормальное фото». */
 const MEDIA_PROMISE_REMNANT_RE =
-  /^(?:(?:ну|ага|угу|ок|окей)\s+)?(?:и\s+)?(?:скину|кину|отправлю|поищу|найду|выберу|подожди(?:\s+(?:немного|чуть|секунду|сек))?)(?:\s+(?:тебе|немного|чуть|секунду|сек|фот\w*|фото|круж\w*|видео|селфи))?[\s)!.]*$/i;
+  /^(?:(?:ну|ага|угу|ок|окей|ладно|короче|хах|ахах)\s+)*(?:и\s+)?(?:скину|кину|отправлю|поищу|найду|выберу|подожд\w*|секунду|сек)(?:\s+(?:тебе|немного|чуть|секунду|сек|фот\w*|фото|круж\w*|видео|селфи|нормальн\w*|хорош\w*|что-то|интересн\w*))*(?:\s*,?\s*(?:подожд\w*(?:\s+\w+){0,2})?)?[\s)!.]*$/i;
+
+/** Хвосты «нормальное фото», «хорошую», пустой <<>> после стрипа обещания. */
+const MEDIA_PROMISE_LEFTOVER_RE =
+  /(?:^|[\s,.;:]+)(?:нормальн\w*|хорош\w*|интересн\w*|прикольно\w*|мил\w*)(?:\s+(?:фото|фотк\w*|круж\w*|видео|кадр\w*))?[\s)!,.]*$/gi;
 
 /** Убирает из ответа само обещание, оставляя остальной текст. */
 function stripMediaPromise(outText) {
   let cleaned = String(outText || '')
+    // Пустые/битые токены модели
+    .replace(/<<\s*>>/g, ' ')
+    .replace(/<<[^>\n]{0,40}>>/g, ' ')
     .replace(CUTE_MEDIA_PROMISE_STRIP_RE, ' ')
     .replace(MEDIA_PROMISE_FIND_AND_SEND_RE, ' ')
     .replace(MEDIA_PROMISE_WITH_OBJECT_RE, ' ')
     .replace(MEDIA_PROMISE_RE, ' ')
     .replace(MEDIA_STALL_RE, ' ')
-    // Хвост «… и скину)» / «… скину)» после частичного вырезания.
+    // «поищу нормальное / хорошую / что-то прикольное» без «щас»
     .replace(
-      /(?:^|[\s,.;:]+)(?:и\s+)?(?:скину|кину|отправлю|поищу|найду)(?:\s+(?:тебе\s+)?(?:фот\w*|фото|круж\w*|видео|селфи|мил\w+))?[\s)!.]*$/gi,
+      /(?:^|[\s,.;:]+)(?:поищу|найду|выберу)(?:\s+(?:тебе\s+)?(?:что-то\s+)?(?:нормальн\w*|хорош\w*|интересн\w*|прикольно\w*|мил\w*|фот\w*|фото|круж\w*|видео))?[\s)!.]*/gi,
       ' ',
     )
+    // Хвост «… и скину)» / «… скину)» / «… подожди)» после частичного вырезания.
+    .replace(
+      /(?:^|[\s,.;:]+)(?:и\s+)?(?:скину|кину|отправлю|поищу|найду|подожд\w*)(?:\s+(?:тебе|немного|чуть|секунду|сек|фот\w*|фото|круж\w*|видео|селфи|мил\w+|нормальн\w*|хорош\w*))?[\s)!.]*$/gi,
+      ' ',
+    )
+    .replace(MEDIA_PROMISE_LEFTOVER_RE, ' ')
+    // Висячие «подожд)» / «короче)» / «а фото»
+    .replace(/(?:^|[\s,])(?:короче|а\s+фото|фото)\s*\)?\s*$/gi, ' ')
     .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+,/g, ',')
     .replace(/^[\s,.;:]+|[\s,.;:]+$/g, '')
+    .replace(/\(\s*\)/g, '')
     .trim();
   if (cleaned.length < 4) return '';
   if (MEDIA_PROMISE_REMNANT_RE.test(cleaned)) return '';
+  if (/^(?:подожд\w*|нормальн\w*|хорош\w*|короче)[\s)!.]*$/i.test(cleaned)) return '';
   if (isMediaPromiseText(cleaned) || MEDIA_STALL_RE.test(cleaned)) return '';
+  // После стрипа остался только «подожди» внутри короткой фразы
+  if (
+    cleaned.length < 48 &&
+    /подожд/i.test(cleaned) &&
+    !/(?:встрет|мамой|мама|дел|серил|кофе|город|приед)/i.test(cleaned)
+  ) {
+    return '';
+  }
   return cleaned;
 }
 
@@ -387,8 +462,19 @@ function recentUserAskedMedia(text, history) {
  */
 function resolveMediaPromise(outText, mediaType, text, history, hasMediaLink) {
   if (!outText) return { outText, forceMedia: false };
-  // Вещи/коробки — раньше любого force: кадров нет, селфи не подставляем.
-  if (isPackedThingsPhotoAsk(text, history) || isPackedThingsPhotoAsk(outText, history)) {
+  // Вещи/коробки — только если ОН просил кадр сборов.
+  // Нельзя смотреть на outText/историю, когда он прислал СВОЁ фото (машина и т.п.):
+  // иначе срабатывает отмазка «без фото коробок» вместо реакции на его кадр.
+  if (isPeerIncomingMediaCaption(text)) {
+    // fall through — обычная реакция на его медиа
+  } else if (isPackedThingsPhotoAsk(text, history)) {
+    return {
+      outText: pickPackedThingsExcuse(),
+      forceMedia: false,
+      packedThings: true,
+    };
+  } else if (mediaType && isPackedThingsPhotoAsk(outText, history)) {
+    // Модель сама собралась слать «фото коробок» → отмазка, не селфи из пула.
     return {
       outText: pickPackedThingsExcuse(),
       forceMedia: false,
@@ -400,16 +486,14 @@ function resolveMediaPromise(outText, mediaType, text, history, hasMediaLink) {
   // готовый файл. Оставляем только живую реакцию, иначе собеседник ждёт «сейчас»
   // и ловит рассинхрон («это же не сейчас»).
   if (mediaType) {
-    // Файл реально уходит — не оставляем «и скину» / «подожди немного)».
-    // И не оставляем отказ («не кину / без фоток») вместе с файлом.
+    // Файл реально уходит — не оставляем «подожди / поищу / отказ» вместе с файлом.
     let cleaned = stripMediaPromise(outText);
-    if (
-      MEDIA_REFUSAL_RE.test(cleaned) ||
-      /не\s+кину|не\s+кидаю|без\s+фот|стыдно|расскажу\s+текстом|давай\s+без\s+фото/i.test(
-        cleaned,
-      )
-    ) {
-      cleaned = ['ща)', 'держи)', 'лови)', 'ну лови)'][Math.floor(Math.random() * 4)];
+    const stillBad =
+      !cleaned ||
+      isMediaRefusalText(cleaned) ||
+      /подожд|поищу|нормальн\w*\s+фото|хорош\w+\s*$/i.test(cleaned);
+    if (stillBad) {
+      cleaned = pickMediaSendAck();
     }
     return { outText: cleaned, forceMedia: false };
   }
@@ -422,9 +506,11 @@ function resolveMediaPromise(outText, mediaType, text, history, hasMediaLink) {
   }
   const promised = isMediaPromiseText(outText);
   const stalling = userWantsMedia && MEDIA_STALL_RE.test(outText);
+  // Жёсткий отказ («не могу / не сегодня») — не форсим файл, даже если есть stall/promise.
+  if (isMediaRefusalText(outText) && !promised) {
+    return { outText, forceMedia: false };
+  }
   if (!promised && !stalling) return { outText, forceMedia: false };
-  // Жёсткий отказ («не могу такое скинуть») — не форсим файл.
-  // Мягкая оттяжка («попозже») уже в promised/stalling — не глотаем её тут.
   if (MEDIA_REFUSAL_RE.test(outText) && !promised && !stalling) {
     return { outText, forceMedia: false };
   }
@@ -500,7 +586,22 @@ function pickPackedThingsExcuse() {
  * Просьба кадра вещей/коробок/«сколько собрала» — в пуле таких фото нет.
  * history: короткий «покажешь?» после разговора про сборы тоже ловим.
  */
+/** Входящее фото/стикер/видео от него — не путать с просьбой «скинь коробки». */
+function isPeerIncomingMediaCaption(text) {
+  const raw = String(text || '');
+  if (
+    /\[(?:фото|видео|кружок|стикер|одноразовое|спойлер)[^\]]*от\s+собеседника\]/i.test(raw)
+  ) {
+    return true;
+  }
+  if (/\[стикер(?:-приветствие)?\]/i.test(raw)) return true;
+  if (/^на\s+фото\s+изображен/i.test(raw.trim())) return true;
+  return false;
+}
+
 function isPackedThingsPhotoAsk(text, history = null) {
+  // Его кадр (машина/селфи/стикер) — никогда не «просьба фото коробок».
+  if (isPeerIncomingMediaCaption(text)) return false;
   const t = userTextForMediaIntent(text);
   if (!t) return false;
   if (PACKED_THINGS_TOPIC_RE.test(t) && PACKED_THINGS_WANT_RE.test(t)) return true;
@@ -613,6 +714,9 @@ function stripLeakedMediaHistoryTag(reply) {
   let text = String(reply || '');
   const typeMap = { фото: 'photo', видео: 'video', кружок: 'circle', медиа: 'photo' };
   let leakedType = null;
+
+  // Модель копирует метку истории «[голосовое: za_.ogg]» — в Telegram уходит текстом.
+  text = text.replace(/\[\s*голосовое\s*:[^\]]*\]/gi, '');
 
   // Служебные теги вырезаем ЦЕЛИКОМ — описание внутри {кружок: …} в чат не пускаем.
   text = text.replace(
@@ -741,6 +845,9 @@ function extractMediaRequest(reply) {
   // противоречивый текст — раз медиа реально уходит, отказ выглядит как фейк.
   if (mediaType && isContradictoryMediaText(text)) {
     text = stripContradictoryMediaParts(text);
+  }
+  if (mediaType && (!text || isMediaRefusalText(text))) {
+    text = pickMediaSendAck();
   }
 
   return { text, mediaType, fromLeak };
@@ -886,13 +993,23 @@ const OWN_MEDIA_DESC_PATH = path.join(__dirname, '..', 'media', 'own_media_desc.
 const OWN_MEDIA_LABEL = { photo: 'фото', video: 'видео', circle: 'кружок' };
 const OWN_MEDIA_LABEL_GEN = { photo: 'фото', video: 'видео', circle: 'кружка' };
 let ownMediaDescCache = null;
+let ownMediaDescMtimeMs = 0;
 
 function loadOwnMediaDesc() {
-  if (ownMediaDescCache) return ownMediaDescCache;
   try {
+    if (!fs.existsSync(OWN_MEDIA_DESC_PATH)) {
+      ownMediaDescCache = {};
+      ownMediaDescMtimeMs = 0;
+      return ownMediaDescCache;
+    }
+    const st = fs.statSync(OWN_MEDIA_DESC_PATH);
+    if (ownMediaDescCache && st.mtimeMs === ownMediaDescMtimeMs) {
+      return ownMediaDescCache;
+    }
     ownMediaDescCache = JSON.parse(fs.readFileSync(OWN_MEDIA_DESC_PATH, 'utf8')) || {};
+    ownMediaDescMtimeMs = st.mtimeMs;
   } catch (_) {
-    ownMediaDescCache = {};
+    ownMediaDescCache = ownMediaDescCache || {};
   }
   return ownMediaDescCache;
 }
@@ -900,6 +1017,12 @@ function loadOwnMediaDesc() {
 function saveOwnMediaDesc(cache) {
   try {
     fs.writeFileSync(OWN_MEDIA_DESC_PATH, JSON.stringify(cache, null, 1));
+    ownMediaDescCache = cache;
+    try {
+      ownMediaDescMtimeMs = fs.statSync(OWN_MEDIA_DESC_PATH).mtimeMs;
+    } catch (_) {
+      ownMediaDescMtimeMs = Date.now();
+    }
   } catch (e) {
     console.error('Не удалось сохранить описания своих медиа:', e.message);
   }
@@ -1373,6 +1496,9 @@ module.exports = {
   isTypoFixMessage,
   isContradictoryMediaText,
   stripContradictoryMediaParts,
+  isMediaRefusalText,
+  pickMediaSendAck,
+  MEDIA_SEND_ACK_POOL,
   userTextForMediaIntent,
   lastAssistantPromisedMedia,
   userAskedViaQuoteOnly,
@@ -1388,6 +1514,7 @@ module.exports = {
   detectRequestedMediaType,
   pickMediaFailDeflect,
   isPackedThingsPhotoAsk,
+  isPeerIncomingMediaCaption,
   pickPackedThingsExcuse,
   BARE_MEDIA_FILLER_RE,
   lastAssistantWasMedia,

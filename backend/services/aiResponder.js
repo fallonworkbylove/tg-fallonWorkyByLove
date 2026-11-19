@@ -90,50 +90,114 @@ function isOpenAiProxyTransportError(err) {
   try {
     return require('./proxyPools').isProxyTransportError(err);
   } catch (_) {
+    const name = String((err && (err.name || err.constructor?.name)) || '');
+    if (/APIConnectionError/i.test(name)) return true;
     const msg = String((err && err.message) || err || '');
-    return /timed out|timeout|ECONN|Socks|fetch failed|UND_ERR|network/i.test(msg);
+    return /timed out|timeout|ECONN|Socks|fetch failed|UND_ERR|network|Connection error/i.test(msg);
   }
 }
 
 /**
  * OpenAI create с мгновенной сменой SOCKS при транспортной ошибке.
  */
+/** Circuit: 3 транспортные ошибки подряд → пауза 2 мин на OpenAI. */
+let openaiCircuitFails = 0;
+let openaiCircuitOpenUntil = 0;
+
+function noteOpenAiCircuit(ok) {
+  if (ok) {
+    openaiCircuitFails = 0;
+    return;
+  }
+  openaiCircuitFails += 1;
+  if (openaiCircuitFails >= 3) {
+    openaiCircuitOpenUntil = Date.now() + 2 * 60 * 1000;
+    console.warn('[openai] circuit OPEN 2м после 3 transport fail');
+  }
+}
+
+function isOpenAiSocksMarkedDead(socks) {
+  try {
+    return require('./proxyPools').isProxyDead({
+      ip: socks.host,
+      port: socks.port,
+    });
+  } catch (_) {
+    return false;
+  }
+}
+
 async function openaiCreateWithProxyFailover(run) {
   if (!openai) {
     throw new Error('OpenAI client is null (AUDIT_SMOKE?). Не могу ответить.');
   }
+  if (Date.now() < openaiCircuitOpenUntil) {
+    const waitSec = Math.ceil((openaiCircuitOpenUntil - Date.now()) / 1000);
+    throw new Error(`OpenAI circuit open (~${waitSec}s)`);
+  }
   const list = socks5ListFromEnv();
-  if (!list.length) return run(openai);
-  let lastErr;
-  for (let attempt = 0; attempt < list.length; attempt += 1) {
-    const idx = (openaiSocksIndex + attempt) % list.length;
-    const socks = list[idx];
+  if (!list.length) {
     try {
-      if (attempt > 0) {
+      const out = await run(openai);
+      noteOpenAiCircuit(true);
+      return out;
+    } catch (err) {
+      if (isOpenAiProxyTransportError(err)) noteOpenAiCircuit(false);
+      throw err;
+    }
+  }
+  // Сначала живые; если все DEAD — всё равно пробуем (TTL мог ещё тикать).
+  const liveIdx = [];
+  const deadIdx = [];
+  for (let i = 0; i < list.length; i += 1) {
+    if (isOpenAiSocksMarkedDead(list[i])) deadIdx.push(i);
+    else liveIdx.push(i);
+  }
+  const order = liveIdx.length ? liveIdx : deadIdx;
+  const startPos = (() => {
+    const cur = order.indexOf(openaiSocksIndex % list.length);
+    return cur >= 0 ? cur : 0;
+  })();
+
+  let lastErr;
+  let transportFails = 0;
+  let tried = 0;
+  for (let step = 0; step < order.length; step += 1) {
+    const idx = order[(startPos + step) % order.length];
+    const socks = list[idx];
+    tried += 1;
+    try {
+      if (idx !== openaiSocksIndex || tried > 1) {
         openaiSocksIndex = idx;
         openai = rebuildOpenAIClient(socks);
       } else {
         openaiSocksIndex = idx;
       }
-      return await run(openai);
+      const out = await run(openai);
+      noteOpenAiCircuit(true);
+      return out;
     } catch (err) {
       lastErr = err;
       if (!isOpenAiProxyTransportError(err)) throw err;
+      transportFails += 1;
       console.warn(
-        `[openai] proxy ${socks.host}:${socks.port} сдох → следующий (${attempt + 1}/${list.length})`,
+        `[openai] proxy ${socks.host}:${socks.port} сдох → следующий (${tried}/${order.length})`,
       );
       try {
+        // Явно 12м — не долбить тот же хост каждую минуту (раньше 60с → лаги/тишина).
         require('./proxyPools').markProxyDeadByHost(
           socks.host,
           socks.port,
           err.message || 'openai transport',
-          60_000,
+          12 * 60 * 1000,
         );
       } catch (_) {
         /* optional */
       }
     }
   }
+  // Circuit только если весь пул транспортно мёртв — не после 3-го hop внутри одного запроса.
+  if (transportFails > 0) noteOpenAiCircuit(false);
   throw lastErr;
 }
 
@@ -194,6 +258,8 @@ function openAiProxyPoolLen() {
 module.exports.buildOpenAIOptions = buildOpenAIOptions;
 module.exports.isOpenAiClientReady = isOpenAiClientReady;
 module.exports.openAiProxyPoolLen = openAiProxyPoolLen;
+module.exports.openaiCreateWithProxyFailover = openaiCreateWithProxyFailover;
+module.exports.isOpenAiProxyTransportError = isOpenAiProxyTransportError;
 
 // Модель для чата (ответы). Задаётся через .env: OPENAI_MODEL=gpt-4o.
 // Значение читается один раз при старте процесса и не меняется во время

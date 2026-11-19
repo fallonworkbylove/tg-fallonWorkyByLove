@@ -1,0 +1,6 @@
+Backup before layout rearrange (2026-10-24).
+Purple accent + fonts already applied in these files.
+
+Restore:
+  copy index.html, styles.css, app.js from this folder back to frontend/
+  then scp to VPS /root/opt/tgbot/tg-miniapp-loverussian/frontend/

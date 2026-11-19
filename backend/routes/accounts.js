@@ -410,7 +410,65 @@ router.post('/conversations/:accountId/:peerId/focus', async (req, res) => {
   }
 });
 
-// Ручной этап воронки (stage=auto|hello|chat|interest|pitch|operator).
+/**
+ * 1-тап «плохой ответ»: последний assistant → pinned_bad в learning.
+ * body.reason: echo|offtopic|robot|other (опц.)
+ */
+router.post('/conversations/:accountId/:peerId/bad-reply', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const accountId = Number(req.params.accountId);
+    const peerId = String(req.params.peerId || '');
+    if (!accountId || !peerId) {
+      return res.status(400).json({ success: false, error: 'Нужны accountId и peerId' });
+    }
+    const [[own]] = await db.execute(
+      `SELECT id FROM accounts WHERE id = ? AND user_id = ? LIMIT 1`,
+      [accountId, userId],
+    );
+    if (!own) {
+      return res.status(404).json({ success: false, error: 'Аккаунт не найден' });
+    }
+    const reason = String(req.body?.reason || 'other').slice(0, 32);
+    let botReply = String(req.body?.reply || '').trim();
+    let trigger = String(req.body?.trigger || '').trim();
+    if (!botReply) {
+      const [[bot]] = await db.execute(
+        `SELECT content FROM conversation_messages
+         WHERE account_id = ? AND peer_id = ? AND role = 'assistant'
+         ORDER BY created_at DESC LIMIT 1`,
+        [accountId, peerId],
+      );
+      botReply = String(bot?.content || '').trim();
+    }
+    if (!trigger) {
+      const [[usr]] = await db.execute(
+        `SELECT content FROM conversation_messages
+         WHERE account_id = ? AND peer_id = ? AND role = 'user'
+         ORDER BY created_at DESC LIMIT 1`,
+        [accountId, peerId],
+      );
+      trigger = String(usr?.content || '').trim();
+    }
+    if (!botReply || botReply.length < 2) {
+      return res.status(400).json({ success: false, error: 'Нет ответа бота для метки' });
+    }
+    const learning = require('../services/learningDb');
+    const stage = String(req.body?.stage || 'general');
+    const result = await learning.recordChurnNegative({
+      userMsg: trigger.slice(0, 400) || `worker:${reason}`,
+      botReply: botReply.slice(0, 500),
+      reason: `worker_${reason}`,
+      stage,
+    });
+    res.json({ success: true, ok: true, reason, ...result });
+  } catch (error) {
+    console.error('bad-reply error:', error);
+    res.status(500).json({ success: false, error: 'Не удалось сохранить' });
+  }
+});
+
+// Ручной этап воронки (stage=auto|day1|day2|day3|day4|filtered).
 router.post('/conversations/:accountId/:peerId/funnel', async (req, res) => {
   try {
     const userId = getUserId(req);
