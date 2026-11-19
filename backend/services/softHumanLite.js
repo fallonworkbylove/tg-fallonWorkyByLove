@@ -1125,6 +1125,11 @@ function applySoftLite(reply, history, userMessage) {
   out = fixVagueFillerReply(out, userMessage);
   out = applyWave0loGates(out, history, userMessage);
   out = applyWave0m1Gates(out, history, userMessage);
+  try {
+    out = require('./replyGateRegistry').fixLiveClicheOveruse(out, history);
+  } catch (_) {
+    /* optional */
+  }
   out = mergeTwoQuestionBubbles(out, userMessage);
   out = fixCirclePlaceMismatch(out, history, userMessage);
   // voprosy-strip + ensureAck — финал в aiResponderPostprocess / replySendPrep.
@@ -1180,6 +1185,11 @@ function applySoftLite(reply, history, userMessage) {
   out = fixVagueFillerReply(out, userMessage);
   out = applyWave0loGates(out, history, userMessage);
   out = applyWave0m1Gates(out, history, userMessage);
+  try {
+    out = require('./replyGateRegistry').fixLiveClicheOveruse(out, history);
+  } catch (_) {
+    /* optional */
+  }
   return out;
 }
 

@@ -1,9 +1,10 @@
 #!/bin/bash
 # Ship LoveRussian updates from Mac → VPS (scp + remote _deploy_<tag>.sh).
 # Usage:
-#   bash scripts/mac-ship.sh                 # interactive: next tag from CHANGELOG + changed files
-#   bash scripts/mac-ship.sh 0m1             # tag only — expects backend/scripts/_deploy_0m1.sh
-#   bash scripts/mac-ship.sh 0m1 file1 file2 # tag + extra files to /tmp/<tag>/
+#   bash scripts/mac-ship.sh                 # top CHANGELOG tag + auto files from _deploy_*.sh
+#   bash scripts/mac-ship.sh 0m2             # tag — auto-collects SRC basenames from deploy script
+#   bash scripts/mac-ship.sh 0m2 file1 …     # tag + extra files (still auto-collects)
+#   MAC_SHIP_NO_AUTO=1 bash scripts/mac-ship.sh 0m2 file1  # only explicit files
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,7 +28,7 @@ print(m.group(1) if m else '')
 PY
 )
   if [[ -z "$TAG" ]]; then
-    echo "No tag in CHANGELOG_TG.md — pass tag: bash scripts/mac-ship.sh 0m1"
+    echo "No tag in CHANGELOG_TG.md — pass tag: bash scripts/mac-ship.sh 0m2"
     exit 1
   fi
   echo "Using top CHANGELOG tag: $TAG"
@@ -67,23 +68,85 @@ if [[ -f backend/scripts/_deploy_guard.sh ]]; then
   scp -q backend/scripts/_deploy_guard.sh "${HOST}:${TMP}/_deploy_guard.sh"
 fi
 
-# Extra files from CLI — basename into /tmp/tag/
-for f in "$@"; do
+ship_one() {
+  local f="$1"
   if [[ ! -f "$f" ]]; then
     echo "Skip missing: $f"
-    continue
+    return 0
   fi
+  local base
   base="$(basename "$f")"
   scp -q "$f" "${HOST}:${TMP}/${base}"
   echo "  + $f → ${TMP}/${base}"
+}
+
+# 0m2: parse `$SRC/name` from deploy script → local paths
+if [[ "${MAC_SHIP_NO_AUTO:-}" != "1" ]]; then
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    case "$rel" in
+      index_frontend.html|index_fe.html|index_ops.html|updates_fe.js|updates_ops.js|_deploy_*.sh|_deploy_guard.sh|CHANGELOG_TG.md)
+        continue
+        ;;
+      _smoke_*|_hard_audit_*|_ultra_*|_deploy_*)
+        ship_one "backend/scripts/${rel}"
+        ;;
+      *.js)
+        if [[ -f "backend/services/${rel}" ]]; then
+          ship_one "backend/services/${rel}"
+        elif [[ -f "backend/routes/${rel}" ]]; then
+          ship_one "backend/routes/${rel}"
+        elif [[ -f "frontend/${rel}" ]]; then
+          ship_one "frontend/${rel}"
+        elif [[ -f "backend/scripts/${rel}" ]]; then
+          ship_one "backend/scripts/${rel}"
+        else
+          found=$(find backend frontend ops-console -name "$rel" -type f 2>/dev/null | head -1 || true)
+          if [[ -n "$found" ]]; then
+            ship_one "$found"
+          else
+            echo "Skip unresolved: $rel"
+          fi
+        fi
+        ;;
+      *.css|*.html)
+        if [[ -f "frontend/${rel}" ]]; then
+          ship_one "frontend/${rel}"
+        else
+          found=$(find frontend ops-console -name "$rel" -type f 2>/dev/null | head -1 || true)
+          [[ -n "$found" ]] && ship_one "$found" || echo "Skip unresolved: $rel"
+        fi
+        ;;
+      *)
+        found=$(find backend frontend ops-console -name "$rel" -type f 2>/dev/null | head -1 || true)
+        [[ -n "$found" ]] && ship_one "$found" || echo "Skip unresolved: $rel"
+        ;;
+    esac
+  done < <(
+    MAC_SHIP_DEPLOY_SH="$DEPLOY_SH" python3 - <<'PY'
+import os, re
+from pathlib import Path
+text = Path(os.environ['MAC_SHIP_DEPLOY_SH']).read_text(encoding='utf-8', errors='ignore')
+names = set()
+for m in re.finditer(r'\$SRC/([A-Za-z0-9_.-]+)', text):
+    names.add(m.group(1))
+for m in re.finditer(r'"\$SRC"/([A-Za-z0-9_.-]+)', text):
+    names.add(m.group(1))
+for n in sorted(names):
+    print(n)
+PY
+  )
+fi
+
+# Extra files from CLI — basename into /tmp/tag/
+for f in "$@"; do
+  ship_one "$f"
 done
 
-# Common service/script names if present as args were empty — optional bulk of dirty paths via env
 if [[ -n "${MAC_SHIP_EXTRA:-}" ]]; then
   # shellcheck disable=SC2086
   for f in $MAC_SHIP_EXTRA; do
-    [[ -f "$f" ]] || continue
-    scp -q "$f" "${HOST}:${TMP}/$(basename "$f")"
+    ship_one "$f"
   done
 fi
 

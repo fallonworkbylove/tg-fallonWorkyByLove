@@ -82,6 +82,13 @@ build/
 backend/config/proxies*.txt
 **/proxies-login.txt
 
+# VPS SSH private key (pub + README ok; never commit private)
+secrets/ssh/id_ed25519
+secrets/ssh/*.pem
+secrets/ssh/*_rsa
+!secrets/ssh/*.pub
+!secrets/ssh/README.md
+
 # Tagged worker secrets / miniapp export
 tagged/accounts.json
 tagged/accounts.from-db.json

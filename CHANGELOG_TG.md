@@ -4,6 +4,10 @@
 
 ---
 
+## 0m2. 20 ноя — harden: gate registry · live cliche · auto mac-ship · SSH key out of git
+
+Реестр волн `replyGateRegistry` + postfilter клише из `CLICHE_TRACK` (кайф/ну ок/ага…). `mac-ship` сам собирает файлы из `_deploy_<tag>.sh`. Private SSH key убран из git. Smoke `_smoke_wave_0m2` + hard `_hard_audit_0m2`. Лента: (updates.js?v=259).
+
 ## 0m1. 20 ноя — scale pack: reply gates · admin radar · single NFT voice
 
 Анти-цикл тем, mood echo, soft-meet, toxic soft, bot-score. Админ: day-N, error feed, health/compare/CSV, proxy-low push. Создатель `fallonsociapat`: идея дня. NFT-кампания: только одно голосовое `nft.ogg` (без A/B). Smoke `_smoke_wave_0m1` + hard `_hard_audit_0m1`. Лента: (updates.js?v=258).

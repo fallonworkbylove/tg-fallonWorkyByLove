@@ -36,10 +36,11 @@ bash scripts/mac-ship.sh 0m1 backend/services/opsQuality.js backend/services/sil
 ## 3. Через Cursor на Mac
 
 Те же skills: **loverussian-deploy** / **loverussian-fix-loop**.  
-SSH host: `loverussian` или `root@loverussian.duckdns.org` (ключ из `secrets/ssh`).
+SSH host: `loverussian` или `root@loverussian.duckdns.org` (ключ в `~/.ssh/` после install).
 
 ## Важно
 
 - `frontend` и `ops` index — разные имена (`index_frontend.html` / `index_ops.html`), иначе миниапп снова станет OPS.
 - Не коммить `.env` и живые `proxies*.txt` без нужды; на VPS они уже в `backend/.env`.
-- Репозиторий с `secrets/ssh` держи **private**.
+- **Private** `secrets/ssh/id_ed25519` в git не лежит (только `.pub` + README). Локально — `~/.ssh/` или untracked copy для `install-ssh-mac.sh`.
+- `mac-ship` с 0m2 сам читает `_deploy_<tag>.sh` и scp-ит нужные basename’ы.
