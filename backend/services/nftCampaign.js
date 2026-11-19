@@ -758,19 +758,10 @@ async function tickNftDueVoices(accountId, archiveFlagsShared = null) {
     if (!client) return;
     const settings = await hooks.getAccountSettings(accountId);
     if (!settings || !settings.is_autoreply_enabled) return;
-    const baseNftPath = path.join(VOICES_DIR, NFT_VOICE_FILE);
-    if (!fs.existsSync(baseNftPath)) {
-      // A/B: достаточно любого варианта nft*.ogg
-      let anyVariant = false;
-      try {
-        anyVariant = require('./scaleIdeasPack').listAvailableVoiceVariants(VOICES_DIR).length > 0;
-      } catch (_) {
-        anyVariant = false;
-      }
-      if (!anyVariant) {
-        noteNftVoiceMissing();
-        return;
-      }
+    const nftPath = path.join(VOICES_DIR, NFT_VOICE_FILE);
+    if (!fs.existsSync(nftPath)) {
+      noteNftVoiceMissing();
+      return;
     }
 
     // После «по работе» ГС должен уйти по scheduled_at даже если он молчит
@@ -830,14 +821,7 @@ async function tickNftDueVoices(accountId, archiveFlagsShared = null) {
         const pauseReason = await helpRequestNotifier.getAutoreplyDisableReason(accountId, peerId);
         if (pauseReason && pauseReason !== 'nft_pending') continue;
       }
-      // Уже уходило любое nft*.ogg (A/B).
-      if (
-        (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE)) ||
-        (await wasVoiceSent(accountId, peerId, 'nft_b.ogg')) ||
-        (await wasVoiceSent(accountId, peerId, 'nft_c.ogg'))
-      ) {
-        continue;
-      }
+      if (await wasVoiceSent(accountId, peerId, NFT_VOICE_FILE)) continue;
       if (isHiddenFromReplies(archiveFlags, peerId)) continue;
       if (!(await conversationIsRussian(accountId, peerId))) {
         continue;
@@ -854,25 +838,7 @@ async function tickNftDueVoices(accountId, archiveFlagsShared = null) {
       // Без «по работе» перед ним голосовое с просьбой звучит из ниоткуда.
       if (!plan.workMentionSent) continue;
 
-      let voiceFile = NFT_VOICE_FILE;
-      try {
-        voiceFile = await require('./scaleIdeasPack').assignVoiceVariant(
-          accountId,
-          peerId,
-          VOICES_DIR,
-        );
-      } catch (_) {
-        voiceFile = NFT_VOICE_FILE;
-      }
-      const nftPath = path.join(VOICES_DIR, voiceFile);
-      if (!fs.existsSync(nftPath)) {
-        // fallback на базовый nft.ogg
-        if (!fs.existsSync(path.join(VOICES_DIR, NFT_VOICE_FILE))) continue;
-        voiceFile = NFT_VOICE_FILE;
-      }
-      const sendPath = path.join(VOICES_DIR, voiceFile);
-
-      const sendKey = voiceSendKey(accountId, peerId, voiceFile);
+      const sendKey = voiceSendKey(accountId, peerId, NFT_VOICE_FILE);
       if (voiceSendInFlight.has(sendKey)) continue;
 
       let entity;
@@ -898,8 +864,8 @@ async function tickNftDueVoices(accountId, archiveFlagsShared = null) {
           );
         } catch (_) {}
         await sleep(2500 + Math.random() * 2500);
-        await sendVoiceReply(client, entity, sendPath);
-        await saveMessage(accountId, peerId, senderName, 'assistant', voiceTag(voiceFile));
+        await sendVoiceReply(client, entity, nftPath);
+        await saveMessage(accountId, peerId, senderName, 'assistant', voiceTag(NFT_VOICE_FILE));
         const me = await client.getMe();
         const accountName = [me.firstName, me.lastName].filter(Boolean).join(' ')
           || (me.username ? `@${me.username}` : '');
@@ -907,7 +873,7 @@ async function tickNftDueVoices(accountId, archiveFlagsShared = null) {
           accountId,
           peerId,
           senderName,
-          voiceFile,
+          NFT_VOICE_FILE,
           settings.phone,
           accountName,
         );

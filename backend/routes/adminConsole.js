@@ -343,21 +343,17 @@ router.post('/learn/bad-reply', async (req, res) => {
   }
 });
 
-/* ——— 0m1 scale pack: day-N / voice A/B / health / errors / CSV / ideas ——— */
+/* ——— 0m1 scale pack: day-N / single NFT voice / health / errors / CSV / ideas ——— */
 router.get('/scale/day-n', async (req, res) => {
   try {
     if (!(await requireAdmin(req, res))) return;
     const pack = require('../services/scaleIdeasPack');
     const dayN = await pack.getDayNFunnelWeek();
-    const voice = await pack.getVoiceAbStats();
-    const winner = await pack.getVoiceAbWinner({ minN: 40 });
-    const voiceMode = pack.voiceAbMode();
+    const nftVoice = pack.nftVoiceStatus();
     return res.json({
       success: true,
       dayN,
-      voice,
-      winner: voiceMode.abEnabled ? winner : null,
-      voiceMode,
+      nftVoice,
     });
   } catch (error) {
     console.error('admin scale day-n:', error);

@@ -2277,25 +2277,11 @@ async function loadAdminRadar() {
       <div class="stat-card"><strong>${Number(dayN.filtered || 0)}</strong><span>Отсев</span></div>
     `;
   }
-  const voice = Array.isArray(dayRes.voice) ? dayRes.voice : [];
-  const winner = dayRes.winner || null;
-  const voiceMode = dayRes.voiceMode || {};
+  const nftVoice = dayRes.nftVoice || {};
   if (voiceEl) {
-    if (voiceMode.single || !voiceMode.abEnabled) {
-      voiceEl.innerHTML =
-        '<p class="options-hint">Сейчас одно голосовое NFT — идёт как есть. Для A/B положи рядом второй файл (nft_b.ogg).</p>';
-    } else if (!voice.length) {
-      voiceEl.innerHTML = '<p class="empty">A/B ещё без назначений</p>';
-    } else {
-      voiceEl.innerHTML = voice
-        .map((v) => {
-          const win = winner && winner === v.variant ? ' · победитель' : '';
-          return `<div class="admin-proxy-row"><strong>${escapeHtml(v.variant)}</strong> n=${Number(
-            v.n || 0,
-          )} · conv=${Number(v.conv || 0)}${win}</div>`;
-        })
-        .join('');
-    }
+    const file = escapeHtml(nftVoice.file || 'nft.ogg');
+    const ok = nftVoice.exists ? 'на месте' : 'файла нет на диске';
+    voiceEl.innerHTML = `<p class="options-hint">Голосовое NFT одно: <strong>${file}</strong> · ${ok}. Других вариантов нет.</p>`;
   }
   const errors = Array.isArray(errRes.errors) ? errRes.errors : [];
   if (errEl) {

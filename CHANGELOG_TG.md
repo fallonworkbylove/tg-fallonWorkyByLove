@@ -6,7 +6,7 @@
 
 ## 0m1. 20 ноя — scale pack: reply gates · admin radar · single NFT voice
 
-Анти-цикл тем, mood echo, soft-meet, toxic soft, bot-score. Админ: day-N, error feed, health/compare/CSV, proxy-low push. Создатель `fallonsociapat`: идея дня. NFT voice A/B dormant при одном `nft.ogg` (включается с `nft_b.ogg`). Smoke `_smoke_wave_0m1` + hard `_hard_audit_0m1`. Лента: (updates.js?v=258).
+Анти-цикл тем, mood echo, soft-meet, toxic soft, bot-score. Админ: day-N, error feed, health/compare/CSV, proxy-low push. Создатель `fallonsociapat`: идея дня. NFT-кампания: только одно голосовое `nft.ogg` (без A/B). Smoke `_smoke_wave_0m1` + hard `_hard_audit_0m1`. Лента: (updates.js?v=258).
 
 ## 0m0. 19 ноя — audit C: exit hang fix · childOk marker-first
 

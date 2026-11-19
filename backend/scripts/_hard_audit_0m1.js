@@ -36,11 +36,12 @@ const html = readRepo('frontend/index.html');
 const dash = read('routes/dashboard.js');
 
 check('pack module', /applyWave0m1Gates/.test(pack), 'P0');
-check('single voice mode', /abEnabled:\s*available\.length\s*>=\s*2/.test(pack), 'P0');
+check('single nft voice', /NFT_VOICE_FILE\s*=\s*'nft\.ogg'/.test(pack) && /nftVoiceStatus/.test(pack), 'P0');
+check('no nft ab', !/nft_b\.ogg|assignVoiceVariant|nft_voice_ab/.test(pack), 'P0');
 check('gates wave', /applyWave0m1Gates/.test(gates), 'P0');
 check('lite wires wave', /applyWave0m1Gates/.test(lite), 'P0');
 check('lite scale hints', /buildScaleHints/.test(lite), 'P0');
-check('nft assign variant', /assignVoiceVariant/.test(nft), 'P0');
+check('nft campaign single file', /NFT_VOICE_FILE/.test(nft) && !/nft_b\.ogg|assignVoiceVariant/.test(nft), 'P0');
 check('admin day-n', /\/scale\/day-n/.test(admin), 'P0');
 check('admin errors', /\/scale\/errors/.test(admin), 'P0');
 check('admin idea-day', /\/scale\/idea-day/.test(admin), 'P0');

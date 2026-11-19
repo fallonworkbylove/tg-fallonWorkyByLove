@@ -1,7 +1,7 @@
 /**
  * scaleIdeasPack (0m1) — выбранный пакет идей:
  * 1 loop · 5 mood echo · 6 typing · 7 soft meet · 10 toxic soft ·
- * 13 voice A/B · 16 day-N · 17 hot lead · 24/31 account card/health ·
+ * 13 single NFT voice · 16 day-N · 17 hot lead · 24/31 account card/health ·
  * 25 admin errors · 32 proxy rotate · 34 city TZ · 36 pools ·
  * 38 compare · 39 CSV · 40 proxy push · 46 bot-score · 48 smoke checklist ·
  * 50 idea-of-day (creator fallonsociapat).
@@ -18,7 +18,7 @@ const CREATOR_USERNAME = String(process.env.CREATOR_USERNAME || 'fallonsociapat'
   .replace(/^@+/, '')
   .toLowerCase();
 
-const NFT_VOICE_VARIANTS = ['nft.ogg', 'nft_b.ogg', 'nft_c.ogg'];
+const NFT_VOICE_FILE = 'nft.ogg';
 const TOPIC_BUCKETS = [
   { id: 'work', re: /работ|офис|смен|начальник|зарплат/i },
   { id: 'weather', re: /погод|дожд|снег|холод|жарк/i },
@@ -270,19 +270,6 @@ function buildScaleHints(history, userMessage) {
 async function ensureSchema() {
   if (schemaReady) return;
   await getDb().execute(`
-    CREATE TABLE IF NOT EXISTS nft_voice_ab (
-      account_id INT NOT NULL,
-      peer_id VARCHAR(64) NOT NULL,
-      variant VARCHAR(32) NOT NULL,
-      assigned_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      replied TINYINT(1) NOT NULL DEFAULT 0,
-      asked_how TINYINT(1) NOT NULL DEFAULT 0,
-      advanced TINYINT(1) NOT NULL DEFAULT 0,
-      PRIMARY KEY (account_id, peer_id),
-      KEY idx_variant (variant)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `);
-  await getDb().execute(`
     CREATE TABLE IF NOT EXISTS account_pools (
       account_id INT NOT NULL PRIMARY KEY,
       pool_key VARCHAR(64) NOT NULL,
@@ -304,109 +291,28 @@ async function ensureSchema() {
   schemaReady = true;
 }
 
-/** #13 A/B NFT voice — при одном файле всегда nft.ogg (без фейкового A/B). */
-function listAvailableVoiceVariants(voicesDir) {
+/** #13 — одно голосовое NFT-кампании: только nft.ogg. */
+function resolveNftVoiceFile(voicesDir) {
   const dir = voicesDir || path.join(__dirname, '..', 'voices');
-  return NFT_VOICE_VARIANTS.filter((f) => {
-    try {
-      return fs.existsSync(path.join(dir, f));
-    } catch (_) {
-      return false;
-    }
-  });
-}
-
-function voiceAbMode(voicesDir) {
-  const available = listAvailableVoiceVariants(voicesDir);
-  return {
-    available,
-    abEnabled: available.length >= 2,
-    single: available.length <= 1,
-  };
-}
-
-async function assignVoiceVariant(accountId, peerId, voicesDir) {
-  await ensureSchema();
-  const peer = String(peerId);
-  const [[existing]] = await getDb().execute(
-    `SELECT variant FROM nft_voice_ab WHERE account_id = ? AND peer_id = ? LIMIT 1`,
-    [accountId, peer],
-  );
-  if (existing?.variant) {
-    // Если в БД nft_b, а файла нет — откат на nft.ogg.
-    const mode = voiceAbMode(voicesDir);
-    if (mode.available.includes(existing.variant)) return existing.variant;
-    return mode.available[0] || 'nft.ogg';
+  const file = NFT_VOICE_FILE;
+  try {
+    if (fs.existsSync(path.join(dir, file))) return file;
+  } catch (_) {
+    /* optional */
   }
+  return file;
+}
 
-  const mode = voiceAbMode(voicesDir);
-  const pool = mode.available.length ? mode.available : ['nft.ogg'];
-  let variant = pool[0];
-  // A/B только когда реально ≥2 файла на диске.
-  if (mode.abEnabled) {
-    let winner = null;
-    try {
-      winner = await getVoiceAbWinner({ minN: 40 });
-    } catch (_) {
-      /* optional */
-    }
-    if (winner && pool.includes(winner) && Math.random() < 0.7) {
-      variant = winner;
-    } else {
-      variant = pool[Math.floor(Math.random() * pool.length)];
-    }
+function nftVoiceStatus(voicesDir) {
+  const file = resolveNftVoiceFile(voicesDir);
+  const dir = voicesDir || path.join(__dirname, '..', 'voices');
+  let exists = false;
+  try {
+    exists = fs.existsSync(path.join(dir, file));
+  } catch (_) {
+    exists = false;
   }
-  await getDb().execute(
-    `INSERT INTO nft_voice_ab (account_id, peer_id, variant)
-     VALUES (?, ?, ?)
-     ON DUPLICATE KEY UPDATE variant = VALUES(variant)`,
-    [accountId, peer, variant],
-  );
-  return variant;
-}
-
-async function markVoiceAbEvent(accountId, peerId, event) {
-  await ensureSchema();
-  const col =
-    event === 'replied' ? 'replied' : event === 'asked_how' ? 'asked_how' : event === 'advanced' ? 'advanced' : null;
-  if (!col) return;
-  await getDb().execute(
-    `UPDATE nft_voice_ab SET ${col} = 1 WHERE account_id = ? AND peer_id = ?`,
-    [accountId, String(peerId)],
-  );
-}
-
-async function getVoiceAbStats() {
-  await ensureSchema();
-  const [rows] = await getDb().execute(
-    `SELECT variant,
-            COUNT(*) AS n,
-            SUM(replied) AS replied,
-            SUM(asked_how) AS asked_how,
-            SUM(advanced) AS advanced
-     FROM nft_voice_ab
-     GROUP BY variant`,
-  );
-  return (rows || []).map((r) => {
-    const n = Number(r.n || 0) || 1;
-    const advanced = Number(r.advanced || 0);
-    return {
-      variant: r.variant,
-      n,
-      replied: Number(r.replied || 0),
-      asked_how: Number(r.asked_how || 0),
-      advanced,
-      conv: Number((advanced / n).toFixed(4)),
-    };
-  });
-}
-
-async function getVoiceAbWinner({ minN = 40 } = {}) {
-  const stats = await getVoiceAbStats();
-  const eligible = stats.filter((s) => s.n >= minN);
-  if (!eligible.length) return null;
-  eligible.sort((a, b) => b.conv - a.conv || b.n - a.n);
-  return eligible[0].variant;
+  return { file, exists, single: true };
 }
 
 /** #16 day-N funnel week */
@@ -671,17 +577,15 @@ async function compareAccounts(idA, idB) {
 /** #39 metrics CSV */
 async function buildMetricsCsvDay() {
   const dayN = await getDayNFunnelWeek();
-  const voice = await getVoiceAbStats().catch(() => []);
+  const voice = nftVoiceStatus();
   const lines = ['metric,value'];
   lines.push(`day1,${dayN.day1}`);
   lines.push(`day2,${dayN.day2}`);
   lines.push(`day3,${dayN.day3}`);
   lines.push(`day4,${dayN.day4}`);
   lines.push(`filtered,${dayN.filtered}`);
-  for (const v of voice) {
-    lines.push(`voice_${v.variant}_n,${v.n}`);
-    lines.push(`voice_${v.variant}_conv,${v.conv}`);
-  }
+  lines.push(`nft_voice_file,${voice.file}`);
+  lines.push(`nft_voice_exists,${voice.exists ? 1 : 0}`);
   try {
     const live = await require('./opsLiveMetrics').getLiveMetrics();
     lines.push(`replies_per_hour,${Number(live?.repliesPerHour || 0)}`);
@@ -820,7 +724,7 @@ async function getIdeaOfDay() {
   if (!ideas.length) {
     ideas.push(
       { text: 'Анти-цикл тем после 3 одинаковых ходов', source: 'pack' },
-      { text: 'A/B голосовых NFT — смотреть конверсию варианта', source: 'pack' },
+      { text: 'Радар day1–day4 и лента ошибок в админке', source: 'pack' },
       { text: 'Health-score аккаунтов на карточке админки', source: 'pack' },
     );
   }
@@ -838,7 +742,7 @@ async function getIdeaOfDay() {
 
 module.exports = {
   CREATOR_USERNAME,
-  NFT_VOICE_VARIANTS,
+  NFT_VOICE_FILE,
   detectTopicLoop,
   fixTopicLoopReply,
   topicLoopHint,
@@ -855,12 +759,8 @@ module.exports = {
   applyWave0m1Gates,
   buildScaleHints,
   ensureSchema,
-  listAvailableVoiceVariants,
-  voiceAbMode,
-  assignVoiceVariant,
-  markVoiceAbEvent,
-  getVoiceAbStats,
-  getVoiceAbWinner,
+  resolveNftVoiceFile,
+  nftVoiceStatus,
   getDayNFunnelWeek,
   formatHotLeadAlert,
   computeAccountHealth,

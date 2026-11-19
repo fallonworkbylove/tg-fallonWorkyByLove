@@ -36,8 +36,9 @@ grep -q 'app-splash' frontend/index.html
 grep -q 'updates.js?v=258' frontend/index.html
 grep -q 'Радар админа и живее ответы' frontend/updates.js
 grep -q '## 0m1\.' CHANGELOG_TG.md
-grep -q 'abEnabled: available.length >= 2' backend/services/scaleIdeasPack.js
-grep -q 'assignVoiceVariant' backend/services/nftCampaign.js
+grep -q "NFT_VOICE_FILE = 'nft.ogg'" backend/services/scaleIdeasPack.js
+! grep -q 'nft_b.ogg' backend/services/scaleIdeasPack.js
+! grep -q 'assignVoiceVariant' backend/services/nftCampaign.js
 grep -q 'applyWave0m1Gates' backend/services/softHumanLite.js
 
 (

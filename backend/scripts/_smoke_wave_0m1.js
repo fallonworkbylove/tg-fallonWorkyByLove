@@ -61,14 +61,14 @@ function assert(cond, msg) {
   assert(/полегче|агресс|неприятно|пауз/i.test(out), 'toxic soft');
 }
 
-// #13 single voice — no fake AB
+// #13 single NFT voice only
 {
-  const mode = pack.voiceAbMode(path.join(__dirname, '../voices'));
-  assert(typeof mode.abEnabled === 'boolean', 'voice mode');
-  // локально nft.ogg часто только на VPS — режим single/abEnabled согласован
-  if (mode.available.length < 2) {
-    assert(mode.abEnabled === false && mode.single === true, 'single voice mode');
-  }
+  const st = pack.nftVoiceStatus(path.join(__dirname, '../voices'));
+  assert(st.file === 'nft.ogg' && st.single === true, 'single nft voice');
+  assert(pack.resolveNftVoiceFile() === 'nft.ogg', 'resolve nft.ogg');
+  assert(!/nft_b|nft_c|assignVoiceVariant|getVoiceAbWinner/.test(
+    fs.readFileSync(path.join(__dirname, '../services/scaleIdeasPack.js'), 'utf8'),
+  ), 'no ab leftovers in pack');
 }
 
 // #46 bot score
