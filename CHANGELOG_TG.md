@@ -4,6 +4,10 @@
 
 ---
 
+## 0m8. 20 ноя — why-here dating answer · transport log rate-limit
+
+`isWhyHereAsk` + `fixWhyHereReply` (hint+postfilter). replyPipeline transport errors ≤1/30с на аккаунт. Лента: (updates.js?v=265).
+
 ## 0m7. 20 ноя — howLong marker fix · own-media GetFile retry · +alts
 
 Шаблон без «на дв?» ломал wasHowLongAsked/отсев — исправлен + assert. +2 alts. mediaSend own frames через downloadMediaWithRetry. Лента: (updates.js?v=264).

@@ -49,6 +49,39 @@ function isDatingSiteAsk(history, userMessage) {
   return /дайвинчик|давинчик|леомatch|leomatch|(?:^|[\s/])дв(?=[^а-яё]|$)|с\s+дайв/i.test(blob);
 }
 
+/** «Почему сюда собралась / зачем на дв» — ответ про знакомства, не про работу/город. */
+const WHY_HERE_RE =
+  /(?:почему|зачем|отчего|как\s+так).{0,40}(?:сюда|тут|на\s+дв|на\s+сайт|в\s+приложение)|(?:сюда|тут).{0,24}(?:собрал|попал|зашел|зашёл|оказал|пришл)|(?:что\s+ты\s+тут\s+делаешь|ты\s+чего\s+тут)/i;
+
+function isWhyHereAsk(userMessage) {
+  const msg = String(userMessage || '')
+    .replace(/^\[[^\]]*\]:\s*/gm, '')
+    .trim();
+  if (!msg) return false;
+  if (/(?:флип|nft|нфт|токен|крипт|переез|город|маме|мам[аеу])/i.test(msg)) return false;
+  return WHY_HERE_RE.test(msg);
+}
+
+const WHY_HERE_ALTS = [
+  'да просто поболтать зашла, анкеты посмотреть)',
+  'ну так, познакомиться хотела, без напряга)',
+  'хех просто сюда зашла поболтать)',
+  'да так, смотрю кто тут есть, поболтать)',
+];
+
+function fixWhyHereReply(reply, userMessage) {
+  if (!isWhyHereAsk(userMessage)) return reply;
+  const body = String(reply || '').trim();
+  if (!body) return WHY_HERE_ALTS[Math.floor(Math.random() * WHY_HERE_ALTS.length)];
+  // Уже про знакомства/болтать — ок.
+  if (/(?:поболтать|познакоми|анкет|просто\s+сюда|зашла\s+по|обща)/i.test(body)) return reply;
+  // Ушла в работу/NFT/город — подменяем.
+  if (/(?:флип|токен|nft|нфт|крипт|работ|удал[её]н|переез|маме|город)/i.test(body)) {
+    return WHY_HERE_ALTS[Math.floor(Math.random() * WHY_HERE_ALTS.length)];
+  }
+  return reply;
+}
+
 function softHint(history, userMessage) {
   const parts = [
     'Пиши как живая девушка в личке с телефона — эталон: короткий тёплый чат до любой «работы/токенов». ' +
@@ -86,6 +119,13 @@ function softHint(history, userMessage) {
       'ВАЖНО СЕЙЧАС: он про сайт/ДВ знакомств, НЕ про NFT. ' +
         'Ответь в контексте знакомств (общаюсь / смотрю анкеты / просто поболтать). ' +
         'Не пиши про коллекции NFT, токены и флиппинг.',
+    );
+  }
+
+  if (isWhyHereAsk(userMessage)) {
+    parts.push(
+      'ВАЖНО СЕЙЧАС: он спросил зачем ты сюда / на дв. ' +
+        'Коротко: поболтать / анкеты / познакомиться — БЕЗ работы, флипа, NFT и истории про город/маму.',
     );
   }
 
@@ -1138,6 +1178,7 @@ function applySoftLite(reply, history, userMessage) {
   out = fixAwkwardLadnoPredicate(out);
   out = fixAwkwardNuOkPredicate(out);
   out = breakKaifEcho(out, history, userMessage);
+  out = fixWhyHereReply(out, userMessage);
   try {
     const so = require('./scaleOps');
     out = so.breakShortAckEcho(out, history);
@@ -1170,12 +1211,15 @@ function applySoftLite(reply, history, userMessage) {
   out = fixEmptyQuotedTitles(out);
   out = fixVagueFillerReply(out, userMessage);
   out = applyWave0loGates(out, history, userMessage);
+  out = fixWhyHereReply(out, userMessage);
   return out;
 }
 
 module.exports = {
   softHint,
   isDatingSiteAsk,
+  isWhyHereAsk,
+  fixWhyHereReply,
   softenCoachy,
   softCompleteCut,
   fixAckOnBareGreeting,

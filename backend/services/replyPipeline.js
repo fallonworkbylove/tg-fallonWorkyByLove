@@ -2912,11 +2912,30 @@ async function processBufferedMessages(
     }
   } catch (err) {
     if (workMentionClaimed) await releaseWorkMention(accountId, peerId).catch(() => {});
-    console.error(
-      `Ошибка обработки сообщения (аккаунт ${accountId}):`,
-      err.message,
-    );
-    if (/Invalid body|failed to parse JSON/i.test(String(err && err.message))) {
+    const errMsg = String((err && err.message) || err || '');
+    const isTransport =
+      /Connection error|APIConnectionError|timed out|ECONN|Socks|fetch failed|UND_ERR|circuit open/i.test(
+        errMsg,
+      );
+    // Transport-спам: не печатать каждую строку — раз в 30с на аккаунт.
+    if (isTransport) {
+      if (!global.__lrPipeTransportLog) global.__lrPipeTransportLog = new Map();
+      const map = global.__lrPipeTransportLog;
+      const prev = map.get(accountId) || 0;
+      if (Date.now() - prev > 30_000) {
+        map.set(accountId, Date.now());
+        console.error(
+          `Ошибка обработки сообщения (аккаунт ${accountId}):`,
+          errMsg.slice(0, 120),
+        );
+      }
+    } else {
+      console.error(
+        `Ошибка обработки сообщения (аккаунт ${accountId}):`,
+        err.message,
+      );
+    }
+    if (/Invalid body|failed to parse JSON/i.test(errMsg)) {
       console.error(
         `[${accountLabel(accountId)}] Invalid body detail:`,
         (err && err.stack) || err,
@@ -2924,8 +2943,7 @@ async function processBufferedMessages(
     }
     // Transport / Connection error — пометить диалог на быстрый silence-heal.
     try {
-      const msg = String((err && err.message) || err || '');
-      if (/Connection error|APIConnectionError|timed out|ECONN|Socks|fetch failed|UND_ERR|circuit open/i.test(msg)) {
+      if (isTransport) {
         require('./silenceCatchup').noteTransportMiss(accountId, peerId);
       }
     } catch (_) {
