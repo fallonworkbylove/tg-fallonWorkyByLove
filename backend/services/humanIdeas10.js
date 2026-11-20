@@ -30,7 +30,7 @@ function strengthenSelfToldBan(memoryHint) {
 }
 
 /**
- * #2 life-lag: иногда 25–55с «отвлеклась» перед ответом.
+ * #2 life-lag: иногда 25–55с короткая пауза перед ответом.
  * Не на вопросы/? / медиа-просьбы / императивы — иначе 90с+restart = тишина навсегда
  * (read уже проставлен, catch-up непрочитанных не подхватит).
  */
@@ -81,7 +81,14 @@ function lifeLagPrefixChance() {
   return Math.random() < 0.55;
 }
 
-const LIFE_LAG_PREFIXES = ['сорри отвлеклась)', 'ой тут)', 'а, только увидела)'];
+// Без «отвлеклась» — иначе эхо в логах (0mb/0me).
+const LIFE_LAG_PREFIXES = [
+  'ой тут)',
+  'а, только увидела)',
+  'сек)',
+  'сорри, была занята)',
+  'ой сорри)',
+];
 
 function pickLifeLagPrefix() {
   return LIFE_LAG_PREFIXES[Math.floor(Math.random() * LIFE_LAG_PREFIXES.length)];
@@ -217,6 +224,7 @@ module.exports = {
   maybeLifeLagMs,
   lifeLagPrefixChance,
   pickLifeLagPrefix,
+  LIFE_LAG_PREFIXES,
   buildMirrorHisTopicHint,
   maybeForgetHintOnce,
   applyMoodLengthBias,

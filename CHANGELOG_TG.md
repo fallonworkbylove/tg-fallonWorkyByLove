@@ -4,6 +4,10 @@
 
 ---
 
+## 0me. 20 ноя — life-lag prefixes without «отвлеклась»
+
+LIFE_LAG_PREFIXES: сек/была занята/ой тут — без клише. Лента: (updates.js?v=271).
+
 ## 0md. 20 ноя — strip «путешествия и кофе» / увлечения hobby dump
 
 COFFEE_SERIES_WALK_RE + travel/coffee/увлечения. Лента: (updates.js?v=270).
