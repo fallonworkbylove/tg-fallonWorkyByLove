@@ -4,6 +4,10 @@
 
 ---
 
+## 0mv. 20 ноя — reaction-gate status fallback coffee day-only
+
+applyReactionGate empty-text fallback time-aware. Лента: (updates.js?v=288).
+
 ## 0mu. 20 ноя — lifeTexture rhythm hint coffee day-only
 
 buildChatRhythmHint detail list gated by isCoffeeOkHourMsk. Лента: (updates.js?v=287).

@@ -324,7 +324,15 @@ function applyReactionGate(userMessage, reaction, outText, accountId = null, pee
     try {
       text = require('./humanIdeas12').pickStatusAskLine(accountId, peerId);
     } catch (_) {
-      text = 'кофе остыл, сижу с телефоном)';
+      let coffeeOk = false;
+      try {
+        coffeeOk = require('./timeStyle').isCoffeeOkHourMsk();
+      } catch (_) {
+        /* optional */
+      }
+      text = coffeeOk
+        ? 'кофе остыл, сижу с телефоном)'
+        : 'сериал фоном, туплю)';
     }
   }
   return { reaction: null, outText: text };
