@@ -4,6 +4,10 @@
 
 ---
 
+## 0mu. 20 ноя — lifeTexture rhythm hint coffee day-only
+
+buildChatRhythmHint detail list gated by isCoffeeOkHourMsk. Лента: (updates.js?v=287).
+
 ## 0mt. 20 ноя — status pool no «курю» · coffee day-only
 
 humanIdeas12 STATUS_POOL: balcony without smoke; coffee via isCoffeeOkHourMsk. Лента: (updates.js?v=286).
