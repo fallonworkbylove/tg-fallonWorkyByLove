@@ -14,8 +14,7 @@
 const STATUS_ASK_RE =
   /что\s+(?:делаешь|поделываешь|там)|чем\s+(?:занят(?:а)?|занимаешься)|как\s+(?:дела|жизнь|ты)(?=$|[\s?!.])|[чc][её]\s+делаешь|(?:^|[\s?])ты\s+где\s*\??\s*$/i;
 
-const STATUS_POOL = [
-  'кофе остыл, сижу с телефоном)',
+const STATUS_POOL_BASE = [
   'сериалы листаю бездумно)',
   'ногти красила криво, переделываю)',
   'соседи сверлят, схожу с ума)',
@@ -23,7 +22,7 @@ const STATUS_POOL = [
   'в пледе сижу, лень даже встать)',
   'мама звонила, только повесила)',
   'искала зарядку полчаса)',
-  'на балконе курю и мёрзну)',
+  'на балконе мёрзну, воздух ловлю)',
   'рисую фигню в заметках)',
   'душ приняла, волосы сушу)',
   'музыку кручу и туплю в потолок)',
@@ -37,7 +36,25 @@ const STATUS_POOL = [
   'пишу тебе вот)',
   'собиралась выйти и передумала)',
   'стирку кручу, романтика)',
+  'в телефоне сижу, туплю)',
 ];
+
+const STATUS_POOL_COFFEE = [
+  'кофе остыл, сижу с телефоном)',
+];
+
+function statusPoolNow() {
+  let coffeeOk = true;
+  try {
+    coffeeOk = require('./timeStyle').isCoffeeOkHourMsk();
+  } catch (_) {
+    /* optional */
+  }
+  return coffeeOk ? [...STATUS_POOL_BASE, ...STATUS_POOL_COFFEE] : STATUS_POOL_BASE;
+}
+
+/** @deprecated use statusPoolNow — left for smoke/compat */
+const STATUS_POOL = STATUS_POOL_BASE;
 
 /** accountId:peerId → recent status lines */
 const recentStatusByPeer = new Map();
@@ -85,8 +102,9 @@ function isStatusAsk(userMessage) {
 function pickStatusAskLine(accountId, peerId) {
   const key = peerKey(accountId || 0, peerId || '');
   const used = recentStatusByPeer.get(key) || [];
-  const pool = STATUS_POOL.filter((l) => !used.includes(l));
-  const pickFrom = pool.length ? pool : STATUS_POOL;
+  const full = statusPoolNow();
+  const pool = full.filter((l) => !used.includes(l));
+  const pickFrom = pool.length ? pool : full;
   const line = pickFrom[Math.floor(Math.random() * pickFrom.length)];
   const next = [...used, line].slice(-8);
   recentStatusByPeer.set(key, next);

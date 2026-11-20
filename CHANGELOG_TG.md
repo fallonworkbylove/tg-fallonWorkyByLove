@@ -4,6 +4,10 @@
 
 ---
 
+## 0mt. 20 ноя — status pool no «курю» · coffee day-only
+
+humanIdeas12 STATUS_POOL: balcony without smoke; coffee via isCoffeeOkHourMsk. Лента: (updates.js?v=286).
+
 ## 0ms. 20 ноя — wiring regression smoke · CORS_ORIGIN fill
 
 _smoke_0ms guards scaleIdeasPack/registry; fill CORS_ORIGIN if empty. Лента: (updates.js?v=285).
