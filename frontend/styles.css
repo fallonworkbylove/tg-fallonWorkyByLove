@@ -3733,15 +3733,47 @@ canvas {
   overflow: auto;
   margin: 0 0 14px;
 }
-.admin-compare-row {
+/* Сравнение акк A/B: не вылезать за экран (2 колонки + кнопка снизу на узком) */
+.options-actions.admin-compare-row {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
   align-items: end;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.options-actions.admin-compare-row > .options-field {
+  min-width: 0;
+  width: 100%;
+}
+.options-actions.admin-compare-row > .options-field input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.options-actions.admin-compare-row > .btn {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+@media (min-width: 560px) {
+  .options-actions.admin-compare-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+  .options-actions.admin-compare-row > .btn {
+    grid-column: auto;
+    width: auto;
+    min-width: 7.5rem;
+  }
 }
 .admin-compare-out {
   margin-top: 10px;
   max-height: 220px;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .admin-idea-card {
   padding: 12px 14px;
