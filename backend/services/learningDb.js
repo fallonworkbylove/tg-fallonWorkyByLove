@@ -70,13 +70,16 @@ function isHumanStyleReply(text) {
   if (!t) return false;
   if (isMeetLeakReply(t)) return false;
   if (t.length < 2 || t.length > 140) return false;
+  // Ультра-коротыши не учим — иначе RAG/learning кормят «хм)» / «кайф)».
+  if (t.length <= 8 && !/[?]/.test(t)) return false;
   if (/\n/.test(t)) return false;
   if (AI_ESSAY_REPLY_RE.test(t)) return false;
   if (/(^|\n)\s*[-•*]\s+/m.test(t)) return false;
   // Пустые кивки не учим как «успех» — иначе модель пишет на отъебись.
-  if (/^(?:ну\s+|да\s+)?(?:ага|угу|ок|окей|ладно|поняла|ясно|согласна|ну да)\s*[).!]?\s*$/i.test(t)) {
+  if (/^(?:ну\s+|да\s+)?(?:ага|угу|ок|окей|ладно|поняла|ясно|согласна|ну да|кайф)\s*[).!]?\s*$/i.test(t)) {
     return false;
   }
+  if (/^кайф\b/i.test(t) && t.length <= 24 && !/[?]/.test(t)) return false;
   const words = t.replace(/[)….!?]+/g, ' ').split(/\s+/).filter(Boolean);
   if (words.length < 3 && !/[?]/.test(t)) return false;
   const clauses = t.split(/[.!?]+/).map((s) => s.trim()).filter(Boolean);

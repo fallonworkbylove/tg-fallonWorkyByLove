@@ -2922,6 +2922,15 @@ async function processBufferedMessages(
         (err && err.stack) || err,
       );
     }
+    // Transport / Connection error — пометить диалог на быстрый silence-heal.
+    try {
+      const msg = String((err && err.message) || err || '');
+      if (/Connection error|APIConnectionError|timed out|ECONN|Socks|fetch failed|UND_ERR|circuit open/i.test(msg)) {
+        require('./silenceCatchup').noteTransportMiss(accountId, peerId);
+      }
+    } catch (_) {
+      /* optional */
+    }
   } finally {
     if (voiceDialogKey) voiceSendInFlight.delete(voiceDialogKey);
     processingInFlight.delete(inFlightKey);

@@ -4,6 +4,10 @@
 
 ---
 
+## 0m2. 20 ноя — transport→heal · learning reject short/kaif · howLong alts · CORS scrub
+
+`noteTransportMiss` после Connection error → silence-heal быстрее. `isHumanStyleReply` режет ≤8 и кайф-кивки. HowLong +2 формулировки. `_scrub_cors_env.py` на VPS. Лента: (updates.js?v=259).
+
 ## 0m1. 20 ноя — offline watch quiet · proxy TTL never-shorten · night-bye heal · bare ack≤8
 
 OFFLINE_WATCH: uptime≥10м, night skip, session_string only, threshold 4/35%. Proxy dead TTL не укорачивается (socks-hook/openai). Silence/waiting skip «сладких снов». ensureAck ultraShort≤8. Ultra theme acid green. Лента: (updates.js?v=258).

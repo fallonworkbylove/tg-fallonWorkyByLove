@@ -456,6 +456,14 @@ async function runSilenceCatchupHeal({ limit = 8 } = {}) {
   return { healed, scanned: merged.length, mediaSoft: mediaGaps.length };
 }
 
+/** После Connection error / transport — разрешить silence-heal быстрее догнать дыру. */
+function noteTransportMiss(accountId, peerId) {
+  const key = `${accountId}:${String(peerId)}`;
+  healFailCooldown.delete(key);
+  // Не блокируем heal полным cooldown — через ~1м можно догнать.
+  healedRecently.set(key, Date.now() - HEAL_COOLDOWN_MS + 60_000);
+}
+
 module.exports = {
   configureSilenceCatchup,
   findDbSilenceGaps,
@@ -463,4 +471,5 @@ module.exports = {
   runSilenceCatchupHeal,
   healOneGap,
   resolvePeerEntity,
+  noteTransportMiss,
 };
