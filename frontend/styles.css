@@ -3746,10 +3746,16 @@ canvas {
 .admin-idea-card {
   padding: 12px 14px;
   border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--line, #d8d2c8) 80%, transparent);
-  background: color-mix(in srgb, var(--surface, #fff) 90%, #f3eee6);
+  border: 1px solid color-mix(in srgb, #ffb454 28%, var(--border-strong, #2a2f36));
+  background: color-mix(in srgb, var(--bg-elevated, #0f140f) 88%, #1a1610);
+  color: var(--text, #e8ffe0);
+}
+.admin-idea-card strong {
+  color: #ffb454;
 }
 .admin-idea-day {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 .admin-proxy-health {
@@ -3759,8 +3765,9 @@ canvas {
   margin: 0 0 14px;
   padding: 12px 14px;
   border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--line, #d8d2c8) 80%, transparent);
-  background: color-mix(in srgb, var(--surface, #fff) 88%, #efe8dc);
+  border: 1px solid var(--border-strong, #2a2f36);
+  background: color-mix(in srgb, var(--bg-elevated, #0f140f) 90%, #121816);
+  color: var(--text, #e8ffe0);
 }
 .admin-proxy-health.is-ok {
   border-color: color-mix(in srgb, #2f7d4a 35%, var(--line, #d8d2c8));
