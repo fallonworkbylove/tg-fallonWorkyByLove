@@ -992,7 +992,8 @@ const KAIF_ONLY_RE =
   /^(?:ну\s+|да\s+|ага\s+|угу\s+)?кайф(?:овой|овая|ики|ово)?(?:\s*[,.!)…]*)?$/i;
 const KAIF_SHORT_RE =
   /^(?:ну\s+|да\s+|ага\s+|угу\s+)?кайф(?:овой|овая|ики|ово)?\b.{0,20}$/i;
-const KAIF_ACK_ALTS = ['норм)', 'прикольно)', 'о как)', 'круто)', 'хех ну да)'];
+// Не класть сюда AUDIT_EXACT_STUBS («круто)» → ensureAck петля).
+const KAIF_ACK_ALTS = ['норм)', 'прикольно)', 'о как)', 'хех ну да)', 'ну бывает)'];
 
 function isKaifHeavy(text) {
   const t = String(text || '').trim();

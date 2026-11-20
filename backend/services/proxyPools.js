@@ -540,7 +540,24 @@ async function warmProbeLoginProxies({
   return { ok: okList.length, fail: failList.length, probed: slice.length };
 }
 
-/** GramJS иногда кидает SocksClientError в unhandledRejection — ловим и помечаем DEAD. */
+/** Rate-limit spam: GramJS сыпет «Not connected» / nonce без контекста в stderr. */
+let _unhandledSpamAt = 0;
+let _unhandledSpamN = 0;
+function noteUnhandledSpam(kind, msg) {
+  const now = Date.now();
+  if (now - _unhandledSpamAt > 45_000) {
+    _unhandledSpamAt = now;
+    _unhandledSpamN = 0;
+  }
+  _unhandledSpamN += 1;
+  if (_unhandledSpamN === 1 || _unhandledSpamN === 8 || _unhandledSpamN % 25 === 0) {
+    console.warn(
+      `[proxy] unhandled ${kind} ×${_unhandledSpamN}/45с: ${String(msg).slice(0, 100)}`,
+    );
+  }
+}
+
+/** GramJS: SocksClient / Not connected / nonce → DEAD + burst, без спама Error: … */
 function installSocksDeadHook() {
   if (global.__loverussianSocksDeadHook) return;
   global.__loverussianSocksDeadHook = true;
@@ -549,11 +566,25 @@ function installSocksDeadHook() {
       const msg = String(
         (reason && (reason.message || reason.errorMessage || reason)) || '',
       );
-      if (!/SocksClient|Proxy connection|timed out|ECONN/i.test(msg)) return;
+      const name = String((reason && (reason.name || reason.constructor?.name)) || '');
+      const isSocks = /SocksClient|Proxy connection|timed out|ECONN/i.test(msg);
+      const isNotConn = /Not connected|Connection closed while receiving/i.test(msg);
+      const isNonce =
+        /invalid new nonce|SecurityError/i.test(msg) || /SecurityError/i.test(name);
+      if (!isSocks && !isNotConn && !isNonce) return;
+
+      if (isNotConn) {
+        noteUnhandledSpam('Not connected', msg);
+        noteNotConnectedBurst(msg);
+      } else if (isNonce) {
+        noteUnhandledSpam('nonce', msg);
+      } else {
+        noteUnhandledSpam('socks', msg);
+      }
+
       const px = reason && reason.options && reason.options.proxy;
       const host = px && px.host;
       const port = px && px.port;
-      // Flap: не 12м — иначе warm-OK пул выгорает на unhandled SocksClient.
       if (host) {
         const found = PROXY_POOL.find(
           (p) => p && p.ip === host && (!port || Number(p.port) === Number(port)),

@@ -222,12 +222,41 @@ function isRevokedSessionError(err) {
   );
 }
 
+/** Параллельный activate одной сессии → «invalid new nonce» / AUTH_KEY_DUPLICATED. */
+const activateLocks = new Map();
+
 /**
  * Поднимает клиент из сохранённой session_string и кладёт в пул.
  * Возвращает true при успехе, false при ошибке, 'revoked' если сессия мертва.
  */
 async function activateAccount(accountId, sessionString) {
   accountId = accountKey(accountId);
+  if (activeClients.has(accountId)) return true;
+
+  const prev = activateLocks.get(accountId);
+  if (prev) {
+    try {
+      await prev;
+    } catch (_) {
+      /* parallel waiter */
+    }
+    if (activeClients.has(accountId)) return true;
+  }
+
+  let release;
+  const gate = new Promise((r) => {
+    release = r;
+  });
+  activateLocks.set(accountId, gate);
+  try {
+    return await activateAccountUnlocked(accountId, sessionString);
+  } finally {
+    release();
+    if (activateLocks.get(accountId) === gate) activateLocks.delete(accountId);
+  }
+}
+
+async function activateAccountUnlocked(accountId, sessionString) {
   if (activeClients.has(accountId)) return true;
 
   // Строго work/DC: медиа (ГС/фото/видео) пойдёт через этот клиент весь день.
@@ -302,11 +331,11 @@ async function activateAccount(accountId, sessionString) {
       );
       await forceCloseClient(client);
       client = null;
-      // AUTH_KEY: не ждём 120с в волне (блокирует bootstrap + overlap).
+      // AUTH_KEY / nonce: не ждём 120с в волне (блокирует bootstrap + overlap).
       // Retry снаружи через sessionBootstrap (5м).
-      if (/AUTH_KEY_DUPLICATED/i.test(errMsg)) {
+      if (/AUTH_KEY_DUPLICATED|invalid new nonce|SecurityError/i.test(errMsg)) {
         console.warn(
-          `Аккаунт ${accountId}: AUTH_KEY_DUPLICATED — пропускаю (retry позже).`,
+          `Аккаунт ${accountId}: ${/nonce|Security/i.test(errMsg) ? 'nonce/Security' : 'AUTH_KEY_DUPLICATED'} — пропускаю (retry позже).`,
         );
         try {
           require('./opsEvents').noteAuthKeyDuplicated(accountId);
@@ -315,9 +344,9 @@ async function activateAccount(accountId, sessionString) {
         }
         return false;
       }
-      // Короткий flap-TTL: 12м DEAD выжигает весь warm-OK пул на 1-м аккаунте.
+      // Flap 3м: 12м DEAD выжигает весь warm-OK пул на 1-м аккаунте; 45с → thrash.
       if (index !== undefined && isProxyTransportError(err)) {
-        markProxyDead(index, err.errorMessage || err.message, 45_000);
+        markProxyDead(index, err.errorMessage || err.message, 180_000);
       }
       if (/Not connected|Connection closed while receiving/i.test(errMsg)) {
         noteNotConnectedBurst(err.message || err.errorMessage);
@@ -382,9 +411,9 @@ async function activateAccount(accountId, sessionString) {
     } catch (err) {
       const errMsg = String(err.errorMessage || err.message || '');
       await forceCloseClient(client);
-      if (/AUTH_KEY_DUPLICATED/i.test(errMsg)) {
+      if (/AUTH_KEY_DUPLICATED|invalid new nonce|SecurityError/i.test(errMsg)) {
         console.warn(
-          `Аккаунт ${accountId}: AUTH_KEY на transport-retry — пропускаю.`,
+          `Аккаунт ${accountId}: ${/nonce|Security/i.test(errMsg) ? 'nonce/Security' : 'AUTH_KEY'} на transport-retry — пропускаю.`,
         );
         try {
           require('./opsEvents').noteAuthKeyDuplicated(accountId);
@@ -394,7 +423,7 @@ async function activateAccount(accountId, sessionString) {
         return false;
       }
       if (index !== undefined && isProxyTransportError(err)) {
-        markProxyDead(index, err.errorMessage || err.message, 45_000);
+        markProxyDead(index, err.errorMessage || err.message, 180_000);
       }
       if (isRevokedSessionError(err)) {
         if (isFreshSessionProtected(accountId, sessionString)) {

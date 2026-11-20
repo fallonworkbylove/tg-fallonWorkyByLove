@@ -210,7 +210,27 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
     const voiceLabel = onceVoice ? 'одноразовое голосовое' : 'Голосовое';
 
     try {
-      const buffer = await client.downloadMedia(message, {});
+      let buffer = null;
+      let lastDlErr = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          buffer = await client.downloadMedia(message, {});
+          lastDlErr = null;
+          break;
+        } catch (dlErr) {
+          lastDlErr = dlErr;
+          const dlMsg = String(dlErr.message || dlErr.errorMessage || '');
+          const retryable = /GetFile|TimedOut|-503|timeout|Not connected|Connection closed/i.test(
+            dlMsg,
+          );
+          if (!retryable || attempt >= 2) throw dlErr;
+          console.warn(
+            `[${accountLabel(accountId)}] ${voiceLabel}: GetFile retry (${dlMsg.slice(0, 80)})`,
+          );
+          await new Promise((r) => setTimeout(r, 1200));
+        }
+      }
+      if (lastDlErr) throw lastDlErr;
       if (buffer && buffer.length) {
         if (onceVoice) {
           await markMessageContentsOpened(client, message);

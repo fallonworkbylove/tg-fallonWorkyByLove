@@ -4,6 +4,10 @@
 
 ---
 
+## 0m4. 20 ноя — activate mutex · Not connected rate-limit · voice GetFile retry · kaif alts
+
+`activateLocks` против parallel connect → nonce. Unhandled Not connected/nonce без stderr-спама + burst. Flap DEAD 3м. Voice download 1 retry. KAIF_ACK без stub «круто)». Лента: (updates.js?v=261).
+
 ## 0m3. 20 ноя — phrase ban short fillers · nu-ok echo break · purge short patterns
 
 `isPhraseBanned` min len 4 (ловят кайф/ок). `stripRepeatPonialaHah` ломает эхо «ну ок». `_purge_short_patterns_0m3.js` чистит bot_patterns. Лента: (updates.js?v=260).
