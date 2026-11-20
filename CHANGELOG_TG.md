@@ -4,6 +4,10 @@
 
 ---
 
+## 0mp. 20 ноя — learning reject vague / soft-yes / age platitude
+
+isHumanStyleReply bans бывает-по-разному, могу попробовать, жизнь только начинается. Лента: (updates.js?v=282).
+
 ## 0mo. 20 ноя — move-spam details time-aware (no night coffee)
 
 moveSpamDayDetails via isCoffeeOkHourMsk; tea/телефон at night. Лента: (updates.js?v=281).

@@ -85,6 +85,15 @@ function isHumanStyleReply(text) {
   }
   // Клише «отвлеклась» не учим — в логах уже эхо.
   if (/отвлеклась/i.test(t) && t.length <= 48) return false;
+  // 0mp: пустые fillers / soft-yes курение не кормим в RAG.
+  if (
+    /бывает\s+по[- ]?разному|мелочи\s+иногда|что-то\s+не\s+так|ну\s+такое\s*\)|ахах+,?\s*ну\s+да|жизнь\s+только\s+начинается|(?:иногда\s+)?могу\s+попробовать/i.test(
+      t,
+    ) &&
+    t.length <= 72
+  ) {
+    return false;
+  }
   const words = t.replace(/[)….!?]+/g, ' ').split(/\s+/).filter(Boolean);
   if (words.length < 3 && !/[?]/.test(t)) return false;
   const clauses = t.split(/[.!?]+/).map((s) => s.trim()).filter(Boolean);
