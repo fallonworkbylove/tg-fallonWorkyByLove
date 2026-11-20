@@ -83,6 +83,8 @@ function isHumanStyleReply(text) {
   if (/^(?:прикольно|норм|о как|ну бывает)\b/i.test(t) && t.length <= 20 && !/[?]/.test(t)) {
     return false;
   }
+  // Клише «отвлеклась» не учим — в логах уже эхо.
+  if (/отвлеклась/i.test(t) && t.length <= 48) return false;
   const words = t.replace(/[)….!?]+/g, ' ').split(/\s+/).filter(Boolean);
   if (words.length < 3 && !/[?]/.test(t)) return false;
   const clauses = t.split(/[.!?]+/).map((s) => s.trim()).filter(Boolean);

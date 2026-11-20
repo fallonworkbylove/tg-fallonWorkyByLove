@@ -4,6 +4,10 @@
 
 ---
 
+## 0mb. 20 ноя — anti-echo «отвлеклась» · silence hint without that cliché
+
+stripRepeatPonialaHah режет повтор «отвлеклась». softHint: извинение без этого слова. learning reject. Лента: (updates.js?v=268).
+
 ## 0ma. 20 ноя — silence-complaint hint · learning reject short acks · ops v bump
 
 softHint на «не ответила/молчишь». isHumanStyleReply режет прикольно/норм. OPS updates?v=267. Лента: (updates.js?v=267).

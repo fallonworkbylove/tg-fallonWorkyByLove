@@ -555,7 +555,7 @@ const PHRASE_ALTS = [
 ];
 
 /** #42/#43/#45/#92 postfilters */
-function stripRepeatPonialaHah(reply, history) {
+function stripRepeatPonialaHah(reply, history, userMessage = '') {
   let out = String(reply || '');
   const recent = (Array.isArray(history) ? history : [])
     .filter((m) => m && m.role === 'assistant')
@@ -584,6 +584,24 @@ function stripRepeatPonialaHah(reply, history) {
   ) {
     const alts = ['ага, ясно)', 'хм ну да)', 'ладно, я тут)', 'хех ок)'];
     out = alts[Math.floor(Math.random() * alts.length)];
+  }
+  // «отвлеклась» — клише из логов: повтор в хвосте ИЛИ ответ на «не ответила».
+  const otvN = recent.filter((c) => /отвлеклась/i.test(c)).length;
+  const silenceComplaint =
+    /(?:не\s+ответил[аи]?|опять\s+(?:ничего|молч)|молч(?:ишь|ала)|так\s+и\s+не\s+ответил)/i.test(
+      String(userMessage || ''),
+    );
+  if ((otvN >= 1 || silenceComplaint) && /отвлеклась/i.test(out)) {
+    out = out
+      .replace(/ой,?\s*просто\s+отвлеклась\)?[.,!]?\s*/gi, 'ой сорри) ')
+      .replace(/сорри,?\s*отвлеклась\)?[.,!]?\s*/gi, 'сорри) ')
+      .replace(/сори,?\s*отвлеклась\)?[.,!]?\s*/gi, 'сори) ')
+      .replace(/просто\s+(?:немного\s+)?отвлеклась\)?[.,!]?\s*/gi, '')
+      .replace(/немного\s+отвлеклась\)?[.,!]?\s*/gi, '')
+      .replace(/отвлеклась(?:\s+немного)?\)?[.,!]?\s*/gi, '')
+      .replace(/^\s*[,.]+\s*/, '')
+      .trim();
+    if (!out || out.length < 3) out = 'ой сорри, была занята)';
   }
   return out;
 }
@@ -804,7 +822,7 @@ function applyHardeningPostfilters(
 ) {
   if (!reply) return reply;
   let out = String(reply);
-  out = stripRepeatPonialaHah(out, history);
+  out = stripRepeatPonialaHah(out, history, userMessage);
   out = stripRepeatSelfIntro(out, history);
   out = stripRepeatFlipPitch(out, history, userMessage);
   try {
