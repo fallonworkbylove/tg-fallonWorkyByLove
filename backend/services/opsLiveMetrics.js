@@ -253,4 +253,4 @@ async function getLiveMetrics() {
   };
 }
 
-module.exports = { bump, getLiveMetrics, counters, noteReply, lastReplyAt };
+module.exports = { bump, getLiveMetrics, counters, noteReply, lastReplyAt, CLICHE_TRACK };

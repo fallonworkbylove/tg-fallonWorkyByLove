@@ -505,6 +505,11 @@ function applyWave0loGates(reply, history, userMessage) {
   return out;
 }
 
+/** 0m1 wave — делегируем в scaleIdeasPack (smoke/registry ожидают export здесь). */
+function applyWave0m1Gates(reply, history, userMessage) {
+  return require('./scaleIdeasPack').applyWave0m1Gates(reply, history, userMessage);
+}
+
 module.exports = {
   normalizeBareUserText,
   isBareGreeting,
@@ -532,6 +537,7 @@ module.exports = {
   fixHeardTailOveruse,
   fixSmokingSoftYes,
   applyWave0loGates,
+  applyWave0m1Gates,
   detectUserLangBlob,
   mskHour,
 };

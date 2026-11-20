@@ -4,6 +4,10 @@
 
 ---
 
+## 0mq. 20 ноя — restore scaleIdeasPack / replyGateRegistry wiring
+
+Re-export applyWave0m1Gates; softLite→applyRegisteredGates; humanRhythm typingMoodMul; CLICHE_TRACK export; mac-ship+gitignore sync. Hard audit P0 fixed. Лента: (updates.js?v=283).
+
 ## 0mp. 20 ноя — learning reject vague / soft-yes / age platitude
 
 isHumanStyleReply bans бывает-по-разному, могу попробовать, жизнь только начинается. Лента: (updates.js?v=282).

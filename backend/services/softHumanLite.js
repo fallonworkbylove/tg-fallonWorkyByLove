@@ -1204,7 +1204,11 @@ function applySoftLite(reply, history, userMessage) {
   out = fixBotAccusationReply(out, userMessage, history);
   out = fixEmptyQuotedTitles(out);
   out = fixVagueFillerReply(out, userMessage);
-  out = applyWave0loGates(out, history, userMessage);
+  try {
+    out = require('./replyGateRegistry').applyRegisteredGates(out, history, userMessage);
+  } catch (_) {
+    out = applyWave0loGates(out, history, userMessage);
+  }
   out = mergeTwoQuestionBubbles(out, userMessage);
   out = fixCirclePlaceMismatch(out, history, userMessage);
   // voprosy-strip + ensureAck — финал в aiResponderPostprocess / replySendPrep.
@@ -1264,7 +1268,16 @@ function applySoftLite(reply, history, userMessage) {
   out = fixBotAccusationReply(out, userMessage, history);
   out = fixEmptyQuotedTitles(out);
   out = fixVagueFillerReply(out, userMessage);
-  out = applyWave0loGates(out, history, userMessage);
+  try {
+    out = require('./replyGateRegistry').applyRegisteredGates(out, history, userMessage);
+  } catch (_) {
+    out = applyWave0loGates(out, history, userMessage);
+  }
+  try {
+    out = require('./replyGateRegistry').fixLiveClicheOveruse(out, history);
+  } catch (_) {
+    /* optional */
+  }
   out = fixWhyHereReply(out, userMessage);
   out = stripNightCoffeeClaim(out);
   return out;
