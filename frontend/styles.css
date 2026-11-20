@@ -3733,6 +3733,54 @@ canvas {
   overflow: auto;
   margin: 0 0 14px;
 }
+/* Консоль логов: длинные строки не раздувают экран */
+.admin-log-console {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  max-height: min(58vh, 420px);
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  overflow-y: auto;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong, #2a2f36);
+  background: color-mix(in srgb, var(--bg, #050605) 88%, #0a1210);
+  color: var(--text, #e8ffe0);
+}
+.admin-log-line {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.admin-log-ts {
+  color: var(--muted, #9a958c);
+  margin-right: 6px;
+  white-space: nowrap;
+}
+#admin-panel-logs,
+#admin-panel-logs .section-card__header,
+#admin-panel-logs .admin-bulk {
+  min-width: 0;
+  max-width: 100%;
+}
+#admin-panel-logs .admin-bulk {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 /* Сравнение акк A/B: не вылезать за экран (2 колонки + кнопка снизу на узком) */
 .options-actions.admin-compare-row {
   display: grid;

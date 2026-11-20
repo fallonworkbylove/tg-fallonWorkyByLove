@@ -2329,6 +2329,99 @@ async function loadAdminIdeaDay() {
   `;
 }
 
+async function copyTextSafe(value) {
+  const text = String(value || '');
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (_) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
+/** В Telegram WebView a.download часто не сохраняет файл — даём копирование + попытку скачать. */
+function openCsvExportModal(csvText) {
+  closeAccountModal();
+  const text = String(csvText || '');
+  const overlay = document.createElement('div');
+  overlay.id = 'account-modal';
+  overlay.className = 'modal-overlay drawer-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card export-modal" role="dialog" aria-modal="true" aria-label="CSV метрик">
+      <div class="modal-card__header">
+        <div>
+          <p class="modal-card__eyebrow">Радар · день</p>
+          <h3 class="modal-card__title">CSV метрик</h3>
+          <p class="modal-card__subphone">В Telegram файл часто не качается — скопируй и вставь в таблицу</p>
+        </div>
+        <button class="modal-close" type="button" aria-label="Закрыть" data-modal-close>×</button>
+      </div>
+      <textarea class="export-modal__text" readonly rows="12">${escapeHtml(text)}</textarea>
+      <div class="modal-actions">
+        <button class="btn btn-primary full" type="button" data-action="copy-csv">Копировать CSV</button>
+        <button class="btn btn-secondary full" type="button" data-action="try-csv-file">Попробовать файл</button>
+        <button class="btn btn-secondary full" type="button" data-modal-close>Закрыть</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.classList.add('modal-open');
+  document.addEventListener('keydown', onModalKeydown);
+  const area = overlay.querySelector('.export-modal__text');
+  overlay.addEventListener('click', async (event) => {
+    if (event.target === overlay || event.target.closest('[data-modal-close]')) {
+      closeAccountModal();
+      return;
+    }
+    if (event.target.closest('[data-action="copy-csv"]')) {
+      event.stopPropagation();
+      const ok = await copyTextSafe(area?.value || text);
+      notify(ok ? 'CSV скопирован' : 'Выдели текст вручную и скопируй');
+      return;
+    }
+    if (event.target.closest('[data-action="try-csv-file"]')) {
+      event.stopPropagation();
+      try {
+        const blob = new Blob([area?.value || text], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'loverussian-metrics-day.csv';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        const tg = getTg();
+        if (tg && typeof tg.openLink === 'function') {
+          // Fallback: открыть blob в браузере вне WebView, если клиент умеет
+          try {
+            tg.openLink(url, { try_instant_view: false });
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        notify('Если файла нет — жми «Копировать CSV»');
+      } catch (_) {
+        notify('Скачать не вышло — скопируй CSV');
+      }
+    }
+  });
+}
+
 async function downloadAdminMetricsCsv() {
   const initData = resolveTelegramInitData() || '';
   const headers = {};
@@ -2340,14 +2433,10 @@ async function downloadAdminMetricsCsv() {
     credentials: 'same-origin',
   });
   if (!res.ok) throw new Error('Не удалось скачать CSV');
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'loverussian-metrics-day.csv';
-  a.click();
-  URL.revokeObjectURL(url);
-  notify('CSV скачан');
+  const csv = await res.text();
+  if (!String(csv || '').trim()) throw new Error('CSV пустой');
+  openCsvExportModal(csv);
+  notify('CSV готов — скопируй или сохрани');
 }
 
 async function loadAdminData({ force = false } = {}) {
