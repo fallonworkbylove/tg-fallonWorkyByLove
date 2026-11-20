@@ -4,6 +4,10 @@
 
 ---
 
+## 0md. 20 ноя — strip «путешествия и кофе» / увлечения hobby dump
+
+COFFEE_SERIES_WALK_RE + travel/coffee/увлечения. Лента: (updates.js?v=270).
+
 ## 0mc. 20 ноя — job ask «кем ты?» · purge отвлеклась patterns
 
 JOB_OCCUPATION + «а кем ты?». `_purge_otvlekla_0mc.js` чистит bot_patterns. Лента: (updates.js?v=269).
