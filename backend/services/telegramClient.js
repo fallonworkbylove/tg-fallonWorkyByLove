@@ -325,13 +325,35 @@ const BOUNDARY_CHECK_MS = 60 * 1000;
  * Проверяет переход через границу рабочих часов и шлёт приветствие.
  * Вызывается по таймеру раз в минуту.
  */
-  function checkWorkBoundary(accountId) {
-    tickNftCampaign(accountId).catch((err) => {
+  const nftTickErrAt = new Map();
+  async function tickNftCampaignSafe(accountId) {
+    try {
+      await tickNftCampaign(accountId);
+      return;
+    } catch (err) {
+      const msg = String(err && err.message || err || '');
+      if (/ECONNREFUSED|PROTOCOL_CONNECTION|Can't add new command/i.test(msg)) {
+        await new Promise((r) => setTimeout(r, 400));
+        try {
+          await tickNftCampaign(accountId);
+          return;
+        } catch (err2) {
+          err = err2;
+        }
+      }
+      const now = Date.now();
+      const prev = nftTickErrAt.get(accountId) || 0;
+      if (now - prev < 5 * 60_000) return;
+      nftTickErrAt.set(accountId, now);
       console.error(
-        `[${accountLabel(accountId)}] Фраза про работу перед голосовым:`,
-        err.message,
+        `[${accountLabel(accountId)}] NFT tick:`,
+        err && err.message,
       );
-    });
+    }
+  }
+
+  function checkWorkBoundary(accountId) {
+    tickNftCampaignSafe(accountId);
     const currentPeriodId = timeStyle.getTimeStyle(getWorkZoneHour()).id;
     const previousPeriodId = workStateByAccount.get(accountId);
     if (previousPeriodId === undefined) {

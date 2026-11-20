@@ -4,6 +4,10 @@
 
 ---
 
+## 0mn. 20 ноя — NFT tick retry · scrub OPENAI_PROXY dead · слышу alt
+
+tickNftCampaignSafe retry+rate-limit; scrub dead from OPENAI_PROXY_LIST; humanIdeas15 без «слышу) а подробнее». Лента: (updates.js?v=280).
+
 ## 0mm. 20 ноя — smoking soft-yes strip · scrub dead proxy
 
 fixSmokingSoftYes; PROXY scrub 192.166.153.231. Лента: (updates.js?v=279).
