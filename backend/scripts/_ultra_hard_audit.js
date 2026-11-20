@@ -105,11 +105,12 @@ function ok(cat, name, pass, sev = 'P1', detail = '') {
   ok('ui', 'escape_updates_render', /escapeHtml\(entry\.title/.test(appJs), 'P1');
   ok('ui', 'styles_present', styles.length > 5000, 'P2', `styles_bytes=${styles.length}`);
   ok('ui', 'no_tech_jargon_feed', !/`require`|isContradictory|SOCKS|pm2|timingSafeEqual/.test(updates), 'P2');
-  // Тема: светлый primary / розовый акцент (не завязаны на старый #e879c8).
+  // Тема: --primary + бренд (acid green 0lc+ или legacy pink).
   ok(
     'ui',
     'theme_tokens',
-    /--primary:\s*#[0-9a-f]{3,8}/i.test(styles) && /#f9a8d4|#e879c8|#d946ef/i.test(styles),
+    /--primary:\s*#[0-9a-f]{3,8}/i.test(styles) &&
+      /#f9a8d4|#e879c8|#d946ef|#b8ff3c|#86e000/i.test(styles),
     'P1',
   );
   ok('ui', 'humanize_texture_on', /humanizeChatTexture/.test(soft), 'P1');

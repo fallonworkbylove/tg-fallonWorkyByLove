@@ -19,6 +19,9 @@ const CALL_ONLY_RE =
 // Мягкий хвост / обвинение в боте — не догоняем и не орём в «ждут».
 const SOFT_CLOSE_RE =
   /^(?:понятно|понял|ок|окей|ладно|угу|ага|ясно|ну\s+ок)[.!?…)\s]*$/i;
+/** Прощания / сон — не догоняем silence-heal (иначе «Сладких снов» → голос). */
+const NIGHT_BYE_RE =
+  /^(?:спокойной(?:\s+ночи)?|сладких\s+снов|доброй\s+ночи|я\s+спать|сплю|до\s+завтра|пока|ппк)[.!?…)\s💕❤️✨]*$/i;
 const BOT_ACCUSE_RE =
   /(?:^|\b)(?:ты\s+(?:бот|ии|нейро)|привет[,.\s]*ии|боты?\s+заеб|это\s+бот)/i;
 
@@ -228,6 +231,7 @@ async function healOneGap(row) {
   if (META_USER_RE.test(lastUserText.trim())) return false;
   if (CALL_ONLY_RE.test(lastUserText.trim())) return false;
   if (SOFT_CLOSE_RE.test(lastUserText.trim())) return false;
+  if (NIGHT_BYE_RE.test(lastUserText.trim())) return false;
   if (BOT_ACCUSE_RE.test(lastUserText)) return false;
   const prev = healedRecently.get(key) || 0;
   const mediaSeedEarly = MEDIA_ASK_RE.test(lastUserText);

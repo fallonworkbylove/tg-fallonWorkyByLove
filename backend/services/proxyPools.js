@@ -224,9 +224,11 @@ function markProxyDead(proxyOrIndex, reason = '', ttlMs = DEFAULT_DEAD_TTL_MS) {
     typeof proxyOrIndex === 'number' ? PROXY_POOL[proxyOrIndex] : proxyOrIndex;
   if (!p || !p.ip) return;
   const key = proxyKey(p);
-  const until = Date.now() + Math.max(30_000, Number(ttlMs) || DEFAULT_DEAD_TTL_MS);
+  const nextUntil = Date.now() + Math.max(30_000, Number(ttlMs) || DEFAULT_DEAD_TTL_MS);
+  // Не укорачиваем уже выставленный TTL (socks-hook 60с не должен сбивать openai 12м).
+  const until = Math.max(deadUntil.get(key) || 0, nextUntil);
   deadUntil.set(key, until);
-  const mins = Math.round((until - Date.now()) / 60000);
+  const mins = Math.max(1, Math.round((until - Date.now()) / 60000));
   console.warn(
     `[proxy] DEAD ${proxyLabel(p)} → skip ~${mins}м${reason ? ` (${String(reason).slice(0, 80)})` : ''}`,
   );
@@ -240,10 +242,23 @@ function markProxyDead(proxyOrIndex, reason = '', ttlMs = DEFAULT_DEAD_TTL_MS) {
 function markProxyDeadByHost(host, port, reason = '', ttlMs = DEFAULT_DEAD_TTL_MS) {
   const h = String(host || '');
   const pNum = Number(port);
+  if (!h) return;
   const found = PROXY_POOL.find(
     (p) => p && p.ip === h && (!pNum || Number(p.port) === pNum),
   );
-  if (found) markProxyDead(found, reason, ttlMs);
+  if (found) {
+    markProxyDead(found, reason, ttlMs);
+    return;
+  }
+  // OpenAI-only host (не в work PROXY_POOL) — всё равно в deadUntil по ip:port.
+  const key = `${h}:${pNum || 0}`;
+  const nextUntil = Date.now() + Math.max(30_000, Number(ttlMs) || DEFAULT_DEAD_TTL_MS);
+  const until = Math.max(deadUntil.get(key) || 0, nextUntil);
+  deadUntil.set(key, until);
+  const mins = Math.max(1, Math.round((until - Date.now()) / 60000));
+  console.warn(
+    `[proxy] DEAD socks5 ${h}:${pNum || '?'} → skip ~${mins}м${reason ? ` (${String(reason).slice(0, 80)})` : ''}`,
+  );
 }
 
 /** Сброс DEAD-карты — между bootstrap-аккаунтами, иначе 1 flap выжигает весь warm-OK. */
@@ -543,7 +558,8 @@ function installSocksDeadHook() {
         const found = PROXY_POOL.find(
           (p) => p && p.ip === host && (!port || Number(p.port) === Number(port)),
         );
-        if (found) markProxyDead(found, msg.slice(0, 80), 60_000);
+        // Не короче DEFAULT (12м): иначе openai 12м сбивается unhandled SocksClient.
+        if (found) markProxyDead(found, msg.slice(0, 80), DEFAULT_DEAD_TTL_MS);
       }
     } catch (_) {}
   });

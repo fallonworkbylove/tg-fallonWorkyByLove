@@ -4,6 +4,10 @@
 
 ---
 
+## 0m1. 20 ноя — offline watch quiet · proxy TTL never-shorten · night-bye heal · bare ack≤8
+
+OFFLINE_WATCH: uptime≥10м, night skip, session_string only, threshold 4/35%. Proxy dead TTL не укорачивается (socks-hook/openai). Silence/waiting skip «сладких снов». ensureAck ultraShort≤8. Ultra theme acid green. Лента: (updates.js?v=258).
+
 ## 0m0. 19 ноя — audit C: exit hang fix · childOk marker-first
 
 Hard `_hard_audit_0ht/0gc` теперь `process.exit(0)` (иначе open handles → ETIMEDOUT и ложный P0). Full audit: OK-marker важнее timeout. Busy smoke/gates учитывают ночной ×1.45 (≤9/26/29м). Proxy burst dead TTL = DEFAULT 12м. Ultra читает `backend/.env`. Лента: (updates.js?v=257).

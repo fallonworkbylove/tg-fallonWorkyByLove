@@ -965,12 +965,13 @@ function ensureAckNotBare(reply, userMessage) {
   const body = String(reply).slice(tag.length).trim();
   if (!body || body.includes('\n')) return reply;
   const exactStub = AUDIT_EXACT_STUBS.has(body.toLowerCase());
-  // Ультра-коротыши 1–5 символов (кроме живых неа/нет) — тоже дожимаем.
-  // «ок)» в audit-stubs — режем; живой «ок» без скобки тоже в списке.
+  // Ультра-коротыши 1–8 символов (кроме живых неа/нет/да) — дожимаем.
+  // «ок)» в audit-stubs — режем; «хм)» «аа» «мм)» тоже не уходят голыми.
   const ultraShort =
-    body.length <= 5 &&
-    !/^(?:неа\)?|нет\)?|да\)?)$/i.test(body) &&
-    !/[❤😁☺️😊🥰🔥👍]/.test(body);
+    body.length <= 8 &&
+    !/^(?:неа\)?|нет\)?|да\)?|ладно\)?)$/i.test(body) &&
+    !/[❤😁☺️😊🥰🔥👍❓?]/.test(body) &&
+    !/\s/.test(body);
   if (!exactStub && !BARE_ACK_RE.test(body) && !ultraShort) return reply;
   if (isBareGreeting(userMessage)) {
     return tag + pickGreetingAck();

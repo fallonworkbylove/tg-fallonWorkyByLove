@@ -108,4 +108,23 @@ assert 'origin: true' not in server and "origin: '*'" not in server and 'origin:
 print('security_static_ok')
 PY
 
+# 7) Soft: CORS_ORIGIN=* in pm2 is ignored by server.js but noisy — warn only
+pm2 jlist > /tmp/pm2j_guard2.json 2>/dev/null || true
+python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('/tmp/pm2j_guard2.json')
+if not p.exists():
+    raise SystemExit(0)
+j = json.loads(p.read_text())
+apps = [x for x in j if x.get('name') == 'tgbot']
+if not apps:
+    raise SystemExit(0)
+cors = str(apps[0].get('pm2_env', {}).get('CORS_ORIGIN') or '')
+if cors.strip() == '*':
+    print('WARN CORS_ORIGIN=* in pm2 (server strips *; set MINIAPP_URL origin in .env)')
+else:
+    print('cors_env_ok', cors[:40] if cors else '(empty)')
+PY
+
 echo DEPLOY_GUARD_OK

@@ -333,7 +333,7 @@ async function runWaitingLeadsWatch() {
        AND t.last_user_text NOT REGEXP '(ты[[:space:]]+(бот|ии|нейро)|привет[,.[:space:]]*ии|боты?[[:space:]]+заеб|это[[:space:]]+бот)'
        AND t.last_user_text NOT REGEXP '^(бери[[:space:]]+трубку|подними[[:space:]]+трубку|возьми[[:space:]]+трубку|позвони|набери|дай[[:space:]]+номер|скинь[[:space:]]+номер)'
        AND t.last_user_text NOT REGEXP '(^|[[:space:][:punct:]]+)(пока|ппк)([.!?…)]|[[:space:]])*$'
-       AND t.last_user_text NOT REGEXP '^(спокойной[[:space:]]+ночи|до[[:space:]]+завтра|я[[:space:]]+спать)([.!?…)]|[[:space:]])*$'`,
+       AND t.last_user_text NOT REGEXP '^(спокойной([[:space:]]+ночи)?|сладких[[:space:]]+снов|доброй[[:space:]]+ночи|до[[:space:]]+завтра|я[[:space:]]+спать)([.!?…)]|[[:space:]💕❤️✨])*$'`,
   );
   const n = Number(rows?.[0]?.c || 0);
   if (n < 3) return;
@@ -497,11 +497,20 @@ async function runOpenAiReadyWatch() {
   }
 }
 
-/** Тихий пуш: AI вкл, но сессия офлайн (после прогрева). */
+/** Тихий пуш: AI вкл + есть session, но живого клиента нет (после прогрева). */
 async function runAccountOfflineWatch() {
-  if (process.uptime && process.uptime() < 180) return;
+  // Волны bootstrap + reconnect — не орём первые 10 минут.
+  if (process.uptime && process.uptime() < 600) return;
+  try {
+    const timing = require('./timing');
+    if (typeof timing.isNightTextQuietHour === 'function' && timing.isNightTextQuietHour()) {
+      return;
+    }
+  } catch (_) {
+    /* optional */
+  }
   const now = Date.now();
-  if (now - lastOfflineAlertAt < 30 * 60 * 1000) return;
+  if (now - lastOfflineAlertAt < 45 * 60 * 1000) return;
   let rows = [];
   try {
     const [list] = await db.execute(
@@ -510,6 +519,8 @@ async function runAccountOfflineWatch() {
        LEFT JOIN users u ON u.id = a.user_id
        WHERE a.is_autoreply_enabled = 1
          AND COALESCE(u.is_blocked, 0) = 0
+         AND a.session_string IS NOT NULL
+         AND CHAR_LENGTH(a.session_string) > 40
        ORDER BY a.id
        LIMIT 200`,
     );
@@ -532,17 +543,20 @@ async function runAccountOfflineWatch() {
       offline.push(r);
     }
   }
-  if (offline.length < 2) return;
+  // Шум: 1–2 отвала — ок; орём от 4+ или ≥35% пула с сессией.
+  const n = offline.length;
+  const total = rows.length || 1;
+  if (n < 4 && n / total < 0.35) return;
   lastOfflineAlertAt = now;
   const sample = offline
     .slice(0, 8)
     .map((r) => `#${r.id}${r.seq != null ? ` (seq ${r.seq})` : ''}`)
     .join(', ');
-  console.warn(`[opsQuality] OFFLINE_WATCH aiOn_offline=${offline.length}`);
+  console.warn(`[opsQuality] OFFLINE_WATCH aiOn_offline=${n}/${total}`);
   try {
     const { sendAdminAlert } = require('./helpRequestNotifier');
     await sendAdminAlert(
-      `<b>Аккаунты офлайн</b>\nAI вкл, сессии нет: <b>${offline.length}</b>\n${sample}`,
+      `<b>Аккаунты офлайн</b>\nAI вкл, сессии нет: <b>${n}</b> из ${total}\n${sample}`,
     );
   } catch (_) {
     /* optional */
