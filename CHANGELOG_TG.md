@@ -4,6 +4,10 @@
 
 ---
 
+## 0mr. 20 ноя — purge vague/age/otv stubs from bot_patterns
+
+_purge_vague_0mr.js on prod DB. Лента: (updates.js?v=284).
+
 ## 0mq. 20 ноя — restore scaleIdeasPack / replyGateRegistry wiring
 
 Re-export applyWave0m1Gates; softLite→applyRegisteredGates; humanRhythm typingMoodMul; CLICHE_TRACK export; mac-ship+gitignore sync. Hard audit P0 fixed. Лента: (updates.js?v=283).
