@@ -4,6 +4,10 @@
 
 ---
 
+## 0mw. 20 ноя — hard audit full includes 0ms–0mv + wave smokes
+
+_hard_audit_full_0ht + sync _hard_audit_0m1/2/3/7. Лента: (updates.js?v=289).
+
 ## 0mv. 20 ноя — reaction-gate status fallback coffee day-only
 
 applyReactionGate empty-text fallback time-aware. Лента: (updates.js?v=288).
