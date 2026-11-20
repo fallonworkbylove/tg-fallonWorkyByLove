@@ -4,6 +4,10 @@
 
 ---
 
+## 0m8. 20 ноя — фиксы ревью: пул/health/фильтр · TZ wrap суточных минут
+
+Карточка аккаунта: `owner` ReferenceError → `ownerLabel`; health без NaN; фильтр владельца всегда `renderAdmin`. `shiftLifeByCityTz` wrap 0…1439 — приветствие не в 00:00 у восточных TZ. Лента: (updates.js?v=265).
+
 ## 0m7. 20 ноя — админ: токены на аккаунте · «ответ» как 1 ч 18 мин
 
 На карточке аккаунта (только админ): токены сегодня / всего (+ $ в title). Возраст ответа: ≥60 мин → «1 ч 10 мин», дни → «1 д 3 ч». `openai_usage_log.account_id` + wiring из aiResponder. Старые записи без id не в per-account. Лента: (updates.js?v=264).

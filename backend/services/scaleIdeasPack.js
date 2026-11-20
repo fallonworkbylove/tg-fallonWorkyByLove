@@ -487,16 +487,25 @@ function cityTzOffsetMin(promptOrCity) {
   return 0;
 }
 
+/** Минуты суток 0…1439 (отрицательные / >суток — через wrap, иначе crossedMinute бьёт в 00:00). */
+function wrapDayMinutes(min) {
+  if (min == null || min === '') return min;
+  const n = Number(min);
+  if (!Number.isFinite(n)) return min;
+  return ((Math.trunc(n) % 1440) + 1440) % 1440;
+}
+
 function shiftLifeByCityTz(life, prompt) {
   if (!life) return life;
   const off = cityTzOffsetMin(prompt);
   if (!off) return { ...life, tzOffsetMin: 0, city: detectCityFromPrompt(prompt) };
   return {
     ...life,
-    wakeMin: life.wakeMin - off,
-    sleepMin: life.sleepMin - off,
-    afternoonMin: life.afternoonMin != null ? life.afternoonMin - off : life.afternoonMin,
-    eveningMin: life.eveningMin != null ? life.eveningMin - off : life.eveningMin,
+    wakeMin: wrapDayMinutes(life.wakeMin - off),
+    sleepMin: wrapDayMinutes(life.sleepMin - off),
+    afternoonMin:
+      life.afternoonMin != null ? wrapDayMinutes(life.afternoonMin - off) : life.afternoonMin,
+    eveningMin: life.eveningMin != null ? wrapDayMinutes(life.eveningMin - off) : life.eveningMin,
     tzOffsetMin: off,
     city: detectCityFromPrompt(prompt),
   };
@@ -768,6 +777,7 @@ module.exports = {
   noteProxyOk,
   detectCityFromPrompt,
   cityTzOffsetMin,
+  wrapDayMinutes,
   shiftLifeByCityTz,
   setAccountPool,
   listAccountPools,

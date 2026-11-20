@@ -2866,7 +2866,8 @@ function setAdminOwnerFilter(ownerKey, label) {
     state.admin.ownerFilter = { key: ownerKey, label: label || ownerKey };
   }
   if (state.admin.sub !== 'accounts') setAdminSub('accounts');
-  else renderAdmin();
+  // После смены подвкладки список всё равно нужно перерисовать с фильтром.
+  renderAdmin();
 }
 
 function clearAdminOwnerFilter() {
@@ -3196,7 +3197,7 @@ function renderAdmin() {
                 </div>
                 <div class="admin-acc__stat">
                   <span class="admin-acc__stat-label">health</span>
-                  <strong>${Number(a.health != null ? a.health : '—')}</strong>
+                  <strong>${a.health != null && Number.isFinite(Number(a.health)) ? Number(a.health) : '—'}</strong>
                 </div>
                 <div class="admin-acc__stat">
                   <span class="admin-acc__stat-label">ответ</span>
@@ -3220,7 +3221,7 @@ function renderAdmin() {
               <div class="admin-acc__flags">
                 <span class="admin-flag ${hasPrompt ? 'is-ok' : 'is-bad'}">${hasPrompt ? 'промпт' : 'нет промпта'}</span>
                 <span class="admin-flag ${hasMedia ? 'is-ok' : 'is-bad'}">${hasMedia ? 'медиа' : 'нет медиа'}</span>
-                <span class="admin-flag is-ok">пул ${escapeHtml(a.pool || owner || '—')}</span>
+                <span class="admin-flag is-ok">пул ${escapeHtml(a.pool || ownerLabel || '—')}</span>
               </div>
               <div class="admin-acc__actions">
                 ${
