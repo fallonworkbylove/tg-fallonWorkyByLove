@@ -1139,7 +1139,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // services/finetuneUsage.js), чтобы можно было смотреть стоимость по
   // модели/дням через scripts/finetune-cost-report.js. Не блокирует ответ
   // бота при сбое логирования.
-  logUsage(usedModel, completion.usage, { fellBack }).catch(() => {});
+  logUsage(usedModel, completion.usage, {
+    fellBack,
+    accountId: options.accountId != null ? options.accountId : null,
+  }).catch(() => {});
 
   const finalize = (rawText) => {
     const cleaned = applyAntiDetectStyle(convertQuestionTags(stripForeignScript(rawText)));
@@ -1301,7 +1304,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
         temperature: retryTemperature,
         model: usedModel,
       });
-      logUsage(usedModel, retry.usage, { fellBack }).catch(() => {});
+      logUsage(usedModel, retry.usage, {
+        fellBack,
+        accountId: options.accountId != null ? options.accountId : null,
+      }).catch(() => {});
       const altRaw = retry.choices[0]?.message?.content?.trim() || '';
       const alt = finalize(altRaw);
       if (alt && !FOREIGN_SCRIPT_RE.test(altRaw) && !isVerbatimRepeat(alt, history)) result = alt;

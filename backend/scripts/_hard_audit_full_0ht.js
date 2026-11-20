@@ -69,6 +69,7 @@ const smokes = [
   '_smoke_wave_0m1.js',
   '_smoke_wave_0m2.js',
   '_smoke_admin_owner_0m3.js',
+  '_smoke_admin_usage_0m7.js',
 ];
 for (const s of smokes) {
   const f = path.join(__dirname, s);
@@ -82,7 +83,7 @@ for (const s of smokes) {
 }
 
 console.log('\n--- hard tags ---');
-for (const h of ['_hard_audit_0ht.js', '_hard_audit_0gc.js', '_hard_audit_0gt.js', '_hard_audit_0lz.js', '_hard_audit_0m1.js', '_hard_audit_0m2.js', '_hard_audit_0m3.js']) {
+for (const h of ['_hard_audit_0ht.js', '_hard_audit_0gc.js', '_hard_audit_0gt.js', '_hard_audit_0lz.js', '_hard_audit_0m1.js', '_hard_audit_0m2.js', '_hard_audit_0m3.js', '_hard_audit_0m7.js']) {
   const f = path.join(__dirname, h);
   if (!fs.existsSync(f)) {
     fail('soft', `hard missing ${h}`);

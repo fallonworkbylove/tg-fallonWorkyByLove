@@ -136,6 +136,14 @@ async function getConsoleSnapshot() {
     lastReplyByAcc = new Map();
   }
 
+  let accountCostById = new Map();
+  try {
+    accountCostById = await require('./finetuneUsage').getAccountCostMap();
+  } catch (e) {
+    console.warn('[adminConsoleStats] accountCost:', e.message);
+    accountCostById = new Map();
+  }
+
   const accounts = accountRows.map((r) => {
     let isOnline = false;
     try {
@@ -155,6 +163,13 @@ async function getConsoleSnapshot() {
     const lastReplyAgeMin = lastReplyByAcc.has(Number(r.id))
       ? lastReplyByAcc.get(Number(r.id))
       : null;
+    const usage = accountCostById.get(Number(r.id)) || {
+      tokensToday: 0,
+      costToday: 0,
+      tokensAll: 0,
+      costAll: 0,
+      callsAll: 0,
+    };
     // #24/#31: health score на карточке (без тяжёлого per-row DB).
     let health = 40;
     if (isOnline) health += 25;
@@ -188,6 +203,11 @@ async function getConsoleSnapshot() {
       sentToday: Number(r.sent_today || 0),
       sentWeek: Number(r.sent_week || 0),
       lastReplyAgeMin,
+      tokensToday: usage.tokensToday,
+      costToday: usage.costToday,
+      tokensAll: usage.tokensAll,
+      costAll: usage.costAll,
+      callsAll: usage.callsAll,
       queueDepth: 0,
       health,
       pool: r.username ? String(r.username) : 'default',

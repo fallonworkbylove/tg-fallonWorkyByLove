@@ -2801,6 +2801,39 @@ function adminAccInitials(name) {
   return one.slice(0, 2).toUpperCase();
 }
 
+/** Возраст последнего ответа для админки: «45 мин», «1 ч 18 мин», «2 д 3 ч». */
+function formatAdminReplyAge(minRaw) {
+  if (minRaw == null || minRaw === '') return '—';
+  const min = Math.max(0, Math.floor(Number(minRaw)));
+  if (!Number.isFinite(min)) return '—';
+  if (min < 60) return `${min} мин`;
+  const days = Math.floor(min / 1440);
+  const hours = Math.floor((min % 1440) / 60);
+  const mins = min % 60;
+  if (days > 0) {
+    if (hours > 0) return `${days} д ${hours} ч`;
+    return `${days} д`;
+  }
+  if (mins > 0) return `${hours} ч ${mins} мин`;
+  return `${hours} ч`;
+}
+
+function formatAdminTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 10_000) return `${Math.round(v / 1000)}k`;
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  return String(Math.round(v));
+}
+
+function formatAdminCostUsd(n) {
+  const v = Number(n) || 0;
+  if (v <= 0) return '$0';
+  if (v < 0.01) return `$${v.toFixed(4)}`;
+  if (v < 1) return `$${v.toFixed(3)}`;
+  return `$${v.toFixed(2)}`;
+}
+
 function findAdminAccount(accountId) {
   const list = state.admin.console?.accounts?.list;
   if (!Array.isArray(list)) return null;
@@ -3007,6 +3040,22 @@ function openAdminAccountInfo(accountId) {
           <span class="modal-meta__label">Диалогов</span>
           <span class="modal-meta__value">${Number(account.peersTotal || 0)}</span>
         </div>
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Последний ответ</span>
+          <span class="modal-meta__value">${escapeHtml(formatAdminReplyAge(account.lastReplyAgeMin))}</span>
+        </div>
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Токены сегодня</span>
+          <span class="modal-meta__value">${escapeHtml(formatAdminTokens(account.tokensToday))} · ${escapeHtml(
+            formatAdminCostUsd(account.costToday),
+          )}</span>
+        </div>
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Токены всего</span>
+          <span class="modal-meta__value">${escapeHtml(formatAdminTokens(account.tokensAll))} · ${escapeHtml(
+            formatAdminCostUsd(account.costAll),
+          )}</span>
+        </div>
       </div>
 
       <div class="modal-actions">
@@ -3046,7 +3095,9 @@ function renderAdmin() {
     const cost = snap.cost?.today || {};
     const ph = snap.proxyHealth || {};
     const costLabel =
-      cost.cost_usd != null ? `$${Number(cost.cost_usd).toFixed(2)}` : '—';
+      cost.cost_usd != null
+        ? `${formatAdminTokens(cost.tokens)} · $${Number(cost.cost_usd).toFixed(2)}`
+        : '—';
     summary.innerHTML = `
       <div class="stat-card"><strong>${Number(acc.total || 0)}</strong><span>Аккаунтов</span></div>
       <div class="stat-card"><strong>${Number(acc.online || 0)}</strong><span>Онлайн</span></div>
@@ -3065,7 +3116,7 @@ function renderAdmin() {
       <div class="stat-card"><strong>${Number(board.campaignArchive?.stuck || board.stuckWorkNoVoice || 0)}</strong><span>Архив: stuck</span></div>
       <div class="stat-card"><strong>${Number(board.campaignArchive?.stale || board.staleDialog || 0)}</strong><span>Архив: тишина</span></div>
       <div class="stat-card"><strong>${Number(ph.work_alive ?? ph.proxy_len ?? '—')}</strong><span>Прокси живые</span></div>
-      <div class="stat-card"><strong>${escapeHtml(costLabel)}</strong><span>Токены сегодня</span></div>
+      <div class="stat-card"><strong>${escapeHtml(costLabel)}</strong><span>Токены / $ сегодня</span></div>
       <div class="stat-card stat-card--accent nft-funnel-actions">
         <button class="btn btn-secondary small" type="button" data-action="admin-nft-expire">Закрыть мёртвые NFT</button>
         <span>Stuck → тишина</span>
@@ -3149,11 +3200,21 @@ function renderAdmin() {
                 </div>
                 <div class="admin-acc__stat">
                   <span class="admin-acc__stat-label">ответ</span>
-                  <strong>${
-                    a.lastReplyAgeMin == null
-                      ? '—'
-                      : `${Number(a.lastReplyAgeMin)}м`
-                  }</strong>
+                  <strong title="${
+                    a.lastReplyAgeMin == null ? '' : `${Number(a.lastReplyAgeMin)} мин назад`
+                  }">${escapeHtml(formatAdminReplyAge(a.lastReplyAgeMin))}</strong>
+                </div>
+                <div class="admin-acc__stat">
+                  <span class="admin-acc__stat-label">токены сегодня</span>
+                  <strong title="${escapeHtml(formatAdminCostUsd(a.costToday))}">${escapeHtml(
+                    formatAdminTokens(a.tokensToday),
+                  )}</strong>
+                </div>
+                <div class="admin-acc__stat">
+                  <span class="admin-acc__stat-label">токены всего</span>
+                  <strong title="${escapeHtml(formatAdminCostUsd(a.costAll))}">${escapeHtml(
+                    formatAdminTokens(a.tokensAll),
+                  )}</strong>
                 </div>
               </div>
               <div class="admin-acc__flags">
