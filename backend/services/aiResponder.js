@@ -127,11 +127,15 @@ function isOpenAiSocksMarkedDead(socks) {
   }
 }
 
+function isOpenAiCircuitOpen() {
+  return Date.now() < openaiCircuitOpenUntil;
+}
+
 async function openaiCreateWithProxyFailover(run) {
   if (!openai) {
     throw new Error('OpenAI client is null (AUDIT_SMOKE?). Не могу ответить.');
   }
-  if (Date.now() < openaiCircuitOpenUntil) {
+  if (isOpenAiCircuitOpen()) {
     const waitSec = Math.ceil((openaiCircuitOpenUntil - Date.now()) / 1000);
     throw new Error(`OpenAI circuit open (~${waitSec}s)`);
   }
@@ -260,6 +264,7 @@ module.exports.isOpenAiClientReady = isOpenAiClientReady;
 module.exports.openAiProxyPoolLen = openAiProxyPoolLen;
 module.exports.openaiCreateWithProxyFailover = openaiCreateWithProxyFailover;
 module.exports.isOpenAiProxyTransportError = isOpenAiProxyTransportError;
+module.exports.isOpenAiCircuitOpen = isOpenAiCircuitOpen;
 
 // Модель для чата (ответы). Задаётся через .env: OPENAI_MODEL=gpt-4o.
 // Значение читается один раз при старте процесса и не меняется во время

@@ -4,6 +4,10 @@
 
 ---
 
+## 0m5. 20 ноя — RAG skip on OpenAI circuit · embed log rate-limit · night-bye ночки
+
+`isOpenAiCircuitOpen` → rag embed не долбит circuit. embed fail ×N/60с. NIGHT_BYE + waiting: ночки / пойду спать / бай. Лента: (updates.js?v=262).
+
 ## 0m4. 20 ноя — activate mutex · Not connected rate-limit · voice GetFile retry · kaif alts
 
 `activateLocks` против parallel connect → nonce. Unhandled Not connected/nonce без stderr-спама + burst. Flap DEAD 3м. Voice download 1 retry. KAIF_ACK без stub «круто)». Лента: (updates.js?v=261).

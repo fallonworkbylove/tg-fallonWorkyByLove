@@ -125,9 +125,31 @@ function parseEmbedding(raw) {
   }
 }
 
+let embedFailAt = 0;
+let embedFailN = 0;
+function noteEmbedFail(msg) {
+  const now = Date.now();
+  if (now - embedFailAt > 60_000) {
+    embedFailAt = now;
+    embedFailN = 0;
+  }
+  embedFailN += 1;
+  if (embedFailN === 1 || embedFailN === 5 || embedFailN % 20 === 0) {
+    console.error(`[ragExamples] embed failed ×${embedFailN}/60с:`, String(msg).slice(0, 120));
+  }
+}
+
 async function embedText(text) {
   const input = String(text || '').trim().slice(0, 4000);
   if (!input) return null;
+  try {
+    const { isOpenAiCircuitOpen } = require('./aiResponder');
+    if (typeof isOpenAiCircuitOpen === 'function' && isOpenAiCircuitOpen()) {
+      return null;
+    }
+  } catch (_) {
+    /* optional */
+  }
   try {
     const res = await openaiCreateWithProxyFailover((client) =>
       client.embeddings.create({
@@ -138,7 +160,7 @@ async function embedText(text) {
     const vec = res?.data?.[0]?.embedding;
     return Array.isArray(vec) ? vec : null;
   } catch (err) {
-    console.error('[ragExamples] embed failed:', err.message);
+    noteEmbedFail(err.message);
     return null;
   }
 }

@@ -333,7 +333,7 @@ async function runWaitingLeadsWatch() {
        AND t.last_user_text NOT REGEXP '(ты[[:space:]]+(бот|ии|нейро)|привет[,.[:space:]]*ии|боты?[[:space:]]+заеб|это[[:space:]]+бот)'
        AND t.last_user_text NOT REGEXP '^(бери[[:space:]]+трубку|подними[[:space:]]+трубку|возьми[[:space:]]+трубку|позвони|набери|дай[[:space:]]+номер|скинь[[:space:]]+номер)'
        AND t.last_user_text NOT REGEXP '(^|[[:space:][:punct:]]+)(пока|ппк)([.!?…)]|[[:space:]])*$'
-       AND t.last_user_text NOT REGEXP '^(спокойной([[:space:]]+ночи)?|сладких[[:space:]]+снов|доброй[[:space:]]+ночи|до[[:space:]]+завтра|я[[:space:]]+спать)([.!?…)]|[[:space:]💕❤️✨])*$'`,
+       AND t.last_user_text NOT REGEXP '^(спокойной([[:space:]]+ноч(и|ки))?|сладких[[:space:]]+снов|доброй[[:space:]]+ноч(и|ки)|до[[:space:]]+завтра|я[[:space:]]+(иду[[:space:]]+)?спать|пойду[[:space:]]+спать|бай|bb)([.!?…)]|[[:space:]💕❤️✨])*$'`,
   );
   const n = Number(rows?.[0]?.c || 0);
   if (n < 3) return;
