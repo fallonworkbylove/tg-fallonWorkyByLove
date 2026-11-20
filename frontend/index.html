@@ -25,7 +25,7 @@
         href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&display=swap"
       />
     </noscript>
-    <link rel="stylesheet" href="styles.css?v=109" />
+    <link rel="stylesheet" href="styles.css?v=110" />
   </head>
   <body>
     <div id="app-splash" class="app-splash" aria-busy="true" aria-live="polite">
@@ -513,7 +513,11 @@
                 <button class="btn btn-secondary small" type="button" data-action="admin-bulk-ai-off">Выкл все</button>
               </div>
             </div>
-            <p class="options-hint">Включение и выключение автоответа, пинг и удаление, как в OPS.</p>
+            <p class="options-hint">Включение и выключение автоответа, пинг и удаление, как в OPS. Нажми на владельца — увидишь все его аккаунты.</p>
+            <div id="admin-owner-filter" class="admin-owner-filter" hidden>
+              <p class="admin-owner-filter__label" id="admin-owner-filter-label"></p>
+              <button class="btn btn-secondary small" type="button" data-action="admin-owner-clear">Все аккаунты</button>
+            </div>
             <div id="admin-accounts-list" class="stack admin-accounts-list"></div>
           </div>
 
@@ -603,12 +607,12 @@
             <pre class="admin-log-console" id="admin-log-console" aria-live="polite"></pre>
           </div>
 
-          <div id="admin-panel-activity" class="section-card card admin-block activity-card" data-admin-panel="activity" hidden>
+          <div id="admin-panel-activity" class="section-card card admin-block activity-card admin-panel--activity" data-admin-panel="activity" hidden>
             <header class="activity-card__head">
               <div class="activity-card__titles">
-                <p class="activity-card__kicker">Админ</p>
-                <h3>Логи событий</h3>
-                <p class="activity-card__lead">Фото / кружок, ГС NFT, лид готов, согласие помочь</p>
+                <p class="activity-card__kicker">Лента · не радар</p>
+                <h3>События по диалогам</h3>
+                <p class="activity-card__lead">Что произошло в чатах: фото / кружок, ГС NFT, лид готов, «помогу»</p>
               </div>
               <div class="activity-card__tools">
                 <button class="btn btn-secondary small" type="button" data-action="admin-activity-refresh">Обновить</button>
@@ -627,15 +631,18 @@
             <div id="admin-activity-list" class="stack activity-list"></div>
           </div>
 
-          <div id="admin-panel-radar" class="section-card card admin-block" data-admin-panel="radar" hidden>
+          <div id="admin-panel-radar" class="section-card card admin-block admin-panel--radar" data-admin-panel="radar" hidden>
             <div class="section-card__header">
-              <h3>Радар админа</h3>
+              <div>
+                <p class="admin-panel-kicker">Сводка · не события</p>
+                <h3>Радар админа</h3>
+              </div>
               <div class="admin-bulk">
                 <button class="btn btn-secondary small" type="button" data-action="admin-radar-refresh">Обновить</button>
                 <button class="btn btn-secondary small" type="button" data-action="admin-metrics-csv">CSV день</button>
               </div>
             </div>
-            <p class="options-hint">Воронка day1–4 за неделю, ошибки reply/proxy, одно голосовое NFT.</p>
+            <p class="options-hint">Цифры воронки day1–4 и свежие ошибки системы (reply/proxy). Это не лента диалогов.</p>
             <div id="admin-dayn" class="admin-dayn stats-grid summary-grid" aria-live="polite"></div>
             <div id="admin-voice-ab" class="stack admin-voice-ab" aria-live="polite"></div>
             <h4 class="admin-radar-title">Живые ошибки</h4>
@@ -654,12 +661,15 @@
             <pre id="admin-compare-out" class="admin-log-console admin-compare-out" hidden></pre>
           </div>
 
-          <div id="admin-panel-ideas" class="section-card card admin-block" data-admin-panel="ideas" hidden>
+          <div id="admin-panel-ideas" class="section-card card admin-block admin-panel--ideas" data-admin-panel="ideas" hidden>
             <div class="section-card__header">
-              <h3>Идея дня</h3>
+              <div>
+                <p class="admin-panel-kicker">Только создатель · не радар</p>
+                <h3>Идея дня</h3>
+              </div>
               <button class="btn btn-secondary small" type="button" data-action="admin-ideas-refresh">Обновить</button>
             </div>
-            <p class="options-hint">Только для создателя — top-3 фикса из live-багов.</p>
+            <p class="options-hint">Подсказки «что чинить сегодня» из live-багов. Не события и не воронка.</p>
             <div id="admin-idea-day" class="stack admin-idea-day" aria-live="polite"></div>
           </div>
         </section>
@@ -679,7 +689,7 @@
     </div>
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="updates.js?v=259"></script>
-    <script src="app.js?v=186"></script>
+    <script src="updates.js?v=260"></script>
+    <script src="app.js?v=187"></script>
     </body>
     </html>

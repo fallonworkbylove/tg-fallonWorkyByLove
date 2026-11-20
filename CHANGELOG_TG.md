@@ -4,6 +4,10 @@
 
 ---
 
+## 0m3. 20 ноя — админ: События≠Радар≠Идеи · клик по владельцу пула
+
+Подвкладки визуально разведены (kickers + цвет рамки), `admin-block[hidden]` больше не «просвечивает». В AI/аккаунты клик по владельцу → модалка со всеми его аккаунтами + фильтр списка. Smoke `_smoke_admin_owner_0m3`. Лента: (updates.js?v=260).
+
 ## 0m2. 20 ноя — harden: gate registry · live cliche · auto mac-ship · SSH key out of git
 
 Реестр волн `replyGateRegistry` + postfilter клише из `CLICHE_TRACK` (кайф/ну ок/ага…). `mac-ship` сам собирает файлы из `_deploy_<tag>.sh`. Private SSH key убран из git. Smoke `_smoke_wave_0m2` + hard `_hard_audit_0m2`. Лента: (updates.js?v=259).

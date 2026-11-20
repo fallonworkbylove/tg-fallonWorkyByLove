@@ -593,6 +593,8 @@ const state = {
     logsTimer: null,
     activityTimer: null,
     loaded: false,
+    /** Фильтр списка аккаунтов по владельцу пула: { key, label } | null */
+    ownerFilter: null,
   },
 
   workerActivity: {
@@ -2716,6 +2718,125 @@ function findAdminAccount(accountId) {
   return list.find((a) => String(a.id) === String(accountId)) || null;
 }
 
+/** Ключ владельца пула: telegram id, иначе @username / имя. */
+function adminOwnerKey(account) {
+  if (!account) return '';
+  if (account.ownerTg) return `tg:${String(account.ownerTg)}`;
+  const label = String(account.owner || account.pool || '').trim();
+  return label ? `name:${label.toLowerCase()}` : '';
+}
+
+function adminOwnerLabel(account) {
+  if (!account) return '—';
+  return account.owner || (account.ownerTg ? `id ${account.ownerTg}` : account.pool) || '—';
+}
+
+function accountsForOwnerKey(ownerKey) {
+  const list = state.admin.console?.accounts?.list;
+  if (!Array.isArray(list) || !ownerKey) return [];
+  return list.filter((a) => adminOwnerKey(a) === ownerKey);
+}
+
+function setAdminOwnerFilter(ownerKey, label) {
+  if (!ownerKey) {
+    state.admin.ownerFilter = null;
+  } else {
+    state.admin.ownerFilter = { key: ownerKey, label: label || ownerKey };
+  }
+  if (state.admin.sub !== 'accounts') setAdminSub('accounts');
+  else renderAdmin();
+}
+
+function clearAdminOwnerFilter() {
+  state.admin.ownerFilter = null;
+  renderAdmin();
+}
+
+/** Модалка: полный список аккаунтов одного владельца пула. */
+function openAdminOwnerPool(ownerKey, labelHint) {
+  const rows = accountsForOwnerKey(ownerKey);
+  if (!rows.length) {
+    notify('У этого владельца аккаунтов не найдено');
+    return;
+  }
+  closeAccountModal();
+  const label = labelHint || adminOwnerLabel(rows[0]);
+  const online = rows.filter((a) => a.online).length;
+  const aiOn = rows.filter((a) => a.ai).length;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'account-modal';
+  overlay.className = 'modal-overlay drawer-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card drawer-card" role="dialog" aria-modal="true" aria-label="Пул владельца">
+      <div class="modal-card__header">
+        <div>
+          <p class="modal-card__eyebrow">Пул владельца</p>
+          <h3 class="modal-card__title">${escapeHtml(label)}</h3>
+          <p class="modal-card__subphone">${rows.length} акк. · онлайн ${online} · AI ${aiOn}</p>
+        </div>
+        <button class="modal-close" type="button" aria-label="Закрыть" data-modal-close>×</button>
+      </div>
+      <div class="admin-owner-list">
+        ${rows
+          .map((a) => {
+            const title = escapeHtml(a.name || a.phone || `#${a.id}`);
+            const phone = escapeHtml(a.phone || '—');
+            return `
+            <div class="admin-owner-row">
+              <span class="admin-acc__avatar ${a.online ? 'is-online' : 'is-offline'}" aria-hidden="true">${escapeHtml(
+                adminAccInitials(a.name || a.phone || String(a.id)),
+              )}</span>
+              <div class="admin-owner-row__meta">
+                <p class="admin-owner-row__title">${title}</p>
+                <p class="admin-owner-row__sub">${phone} · #${escapeHtml(a.id)} · сегодня ${Number(
+                  a.sentToday || 0,
+                )}</p>
+              </div>
+              <span class="admin-owner-row__badge admin-acc__badge ${a.ai ? 'is-on' : 'is-off'}">${
+                a.ai ? 'AI вкл' : 'AI выкл'
+              }</span>
+              <button class="btn btn-secondary small" type="button" data-action="admin-acc-info" data-id="${escapeHtml(
+                a.id,
+              )}" data-modal-close>Инфо</button>
+            </div>`;
+          })
+          .join('')}
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" type="button" data-action="admin-owner-filter" data-owner-key="${escapeHtml(
+          ownerKey,
+        )}" data-owner-label="${escapeHtml(label)}" data-modal-close>Показать в списке</button>
+        <button class="btn btn-secondary" type="button" data-modal-close>Закрыть</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  document.addEventListener('keydown', onModalKeydown);
+  document.body.classList.add('modal-open');
+  setupMobileKeyboardHandling(overlay);
+  overlay.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-action]');
+    if (btn?.dataset.action === 'admin-owner-filter') {
+      event.stopPropagation();
+      setAdminOwnerFilter(btn.dataset.ownerKey, btn.dataset.ownerLabel);
+      closeAccountModal();
+      return;
+    }
+    if (btn?.dataset.action === 'admin-acc-info') {
+      event.stopPropagation();
+      const accId = btn.dataset.id;
+      closeAccountModal();
+      openAdminAccountInfo(accId);
+      return;
+    }
+    if (event.target === overlay || event.target.closest('[data-modal-close]')) {
+      closeAccountModal();
+    }
+  });
+}
+
 function openAdminAccountInfo(accountId) {
   const account = findAdminAccount(accountId);
   if (!account) {
@@ -2863,11 +2984,31 @@ function renderAdmin() {
     `;
   }
 
+  const ownerFilterBar = document.getElementById('admin-owner-filter');
+  const ownerFilterLabel = document.getElementById('admin-owner-filter-label');
+  const ownerFilter = state.admin.ownerFilter;
+  if (ownerFilterBar) {
+    if (ownerFilter?.key) {
+      ownerFilterBar.hidden = false;
+      if (ownerFilterLabel) {
+        const n = accountsForOwnerKey(ownerFilter.key).length;
+        ownerFilterLabel.textContent = `Пул ${ownerFilter.label} · ${n} акк.`;
+      }
+    } else {
+      ownerFilterBar.hidden = true;
+    }
+  }
+
   const list = document.getElementById('admin-accounts-list');
   if (list) {
-    const rows = Array.isArray(acc.list) ? acc.list : [];
+    const allRows = Array.isArray(acc.list) ? acc.list : [];
+    const rows = ownerFilter?.key
+      ? allRows.filter((a) => adminOwnerKey(a) === ownerFilter.key)
+      : allRows;
     if (!rows.length) {
-      list.innerHTML = '<div class="empty-state"><p>Аккаунтов пока нет</p></div>';
+      list.innerHTML = ownerFilter?.key
+        ? '<div class="empty-state"><p>У этого владельца аккаунтов нет</p></div>'
+        : '<div class="empty-state"><p>Аккаунтов пока нет</p></div>';
     } else {
       list.innerHTML = rows
         .map((a) => {
@@ -2875,7 +3016,15 @@ function renderAdmin() {
           const title = escapeHtml(rawName);
           const initials = escapeHtml(adminAccInitials(rawName));
           const phone = a.phone ? escapeHtml(a.phone) : '';
-          const owner = escapeHtml(a.owner || a.ownerTg || '—');
+          const ownerLabel = adminOwnerLabel(a);
+          const ownerKey = adminOwnerKey(a);
+          const ownerHtml = ownerKey
+            ? `<button type="button" class="admin-acc__owner" data-action="admin-owner-open" data-owner-key="${escapeHtml(
+                ownerKey,
+              )}" data-owner-label="${escapeHtml(ownerLabel)}" title="Все аккаунты владельца">${escapeHtml(
+                ownerLabel,
+              )}</button>`
+            : escapeHtml(ownerLabel);
           const hasPrompt = Boolean(String(a.prompt || '').trim());
           const hasMedia = Boolean(String(a.mediaChatLink || a.media_chat_link || '').trim());
           return `
@@ -2888,7 +3037,7 @@ function renderAdmin() {
                   </div>
                   <div class="admin-acc__sub">${phone ? `<span class="admin-acc__phone">${phone}</span>` : ''}${
                     phone ? ' · ' : ''
-                  }владелец ${owner}</div>
+                  }владелец ${ownerHtml}</div>
                 </div>
                 <span class="admin-acc__badge ${a.ai ? 'is-on' : 'is-off'}">${a.ai ? 'AI вкл' : 'AI выкл'}</span>
               </div>
@@ -4392,6 +4541,22 @@ function bindEvents() {
 
     if (action === 'admin-sub') {
       setAdminSub(target.dataset.sub);
+      return;
+    }
+
+    if (action === 'admin-owner-open') {
+      openAdminOwnerPool(target.dataset.ownerKey, target.dataset.ownerLabel);
+      return;
+    }
+
+    if (action === 'admin-owner-filter') {
+      setAdminOwnerFilter(target.dataset.ownerKey, target.dataset.ownerLabel);
+      return;
+    }
+
+    if (action === 'admin-owner-clear') {
+      clearAdminOwnerFilter();
+      notify('Показаны все аккаунты');
       return;
     }
 

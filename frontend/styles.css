@@ -390,6 +390,16 @@ h1 {
   animation: lr-rise var(--motion) var(--ease-soft) both;
 }
 
+/* Скрытые подвкладки админки не должны «просвечивать» из‑за анимаций/display у .card */
+.admin-block[hidden] {
+  display: none;
+  animation: none;
+}
+
+.tab-panel.active.is-anim > .admin-block[hidden] {
+  animation: none;
+}
+
 @keyframes panel-in {
   from {
     opacity: 0;
@@ -3609,6 +3619,105 @@ canvas {
 .persona-vars {
   width: 100%;
   max-width: 100%;
+}
+
+.admin-panel-kicker {
+  margin: 0 0 4px;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #9a958c);
+}
+
+.admin-panel--activity {
+  border-color: color-mix(in srgb, #5ec8ff 35%, var(--border-strong, #2a2f36));
+}
+.admin-panel--radar {
+  border-color: color-mix(in srgb, #b8ff3c 40%, var(--border-strong, #2a2f36));
+}
+.admin-panel--ideas {
+  border-color: color-mix(in srgb, #ffb454 40%, var(--border-strong, #2a2f36));
+}
+
+.admin-acc__owner {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: var(--primary, #b8ff3c);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.admin-acc__owner:hover,
+.admin-acc__owner:focus-visible {
+  color: #e8ffe0;
+}
+
+.admin-owner-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary, #b8ff3c) 35%, transparent);
+  background: color-mix(in srgb, var(--primary, #b8ff3c) 8%, transparent);
+}
+.admin-owner-filter[hidden] {
+  display: none;
+}
+.admin-owner-filter__label {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.admin-owner-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(58vh, 420px);
+  overflow: auto;
+  margin: 0 0 8px;
+}
+.admin-owner-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 6px 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong, #2a2f36);
+  background: color-mix(in srgb, var(--card, #14181e) 92%, #1a222c);
+}
+.admin-owner-row > .btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.admin-owner-row__meta {
+  min-width: 0;
+}
+.admin-owner-row__title {
+  margin: 0;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-owner-row__sub {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  color: var(--muted, #9a958c);
+}
+.admin-owner-row__badge {
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 .admin-radar-title {
