@@ -4,6 +4,10 @@
 
 ---
 
+## 0mm. 20 ноя — smoking soft-yes strip · scrub dead proxy
+
+fixSmokingSoftYes; PROXY scrub 192.166.153.231. Лента: (updates.js?v=279).
+
 ## 0ml. 20 ноя — ahaha@1 · ну такое · age platitude softLite
 
 strip ahaha-ну-да с 1 повтора; VAGUE «ну такое»; stripAgePlatitude в softLite; alts без «ну такое». Лента: (updates.js?v=278).

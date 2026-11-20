@@ -466,6 +466,27 @@ function fixHeardTailOveruse(reply, history) {
   return tag + pickAlt(HEARD_ALTS);
 }
 
+/* ——— 0mm: на «куришь?» нельзя «иногда могу попробовать» ——— */
+const SMOKING_ASK_SOFT_RE =
+  /(куриш[ь]?|курил[аи]?|покуриваешь|курить|сигарет|вейп|\bvape\b|травк|косяч|забиваешь|что[- ]?то\s+кури)/i;
+const SMOKING_SOFT_YES_RE =
+  /(?:иногда\s+)?(?:могу|можно)\s+попробовать|иногда\s+(?:да|пробую)|не\s+против\s+попробовать|бывает\s+пробую|попробую\s+как[- ]?нибудь/i;
+const SMOKING_NO_ALTS = [
+  'не, вообще нет)',
+  'не курю) и не тянет',
+  'нет, не моё)',
+  'не, ничего такого)',
+];
+
+function fixSmokingSoftYes(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (!u || !SMOKING_ASK_SOFT_RE.test(u)) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !SMOKING_SOFT_YES_RE.test(body)) return reply;
+  return tag + pickAlt(SMOKING_NO_ALTS);
+}
+
 /** Пачка гейтов волны 0lo — вызывать из applySoftLite. */
 function applyWave0loGates(reply, history, userMessage) {
   let out = reply;
@@ -480,6 +501,7 @@ function applyWave0loGates(reply, history, userMessage) {
   out = shortenEveningReply(out);
   out = fixRepeatWorkAsk(out, history);
   out = fixHeardTailOveruse(out, history);
+  out = fixSmokingSoftYes(out, userMessage);
   return out;
 }
 
@@ -508,6 +530,7 @@ module.exports = {
   shortenEveningReply,
   fixRepeatWorkAsk,
   fixHeardTailOveruse,
+  fixSmokingSoftYes,
   applyWave0loGates,
   detectUserLangBlob,
   mskHour,
