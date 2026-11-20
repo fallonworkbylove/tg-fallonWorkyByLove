@@ -4,6 +4,10 @@
 
 ---
 
+## 0m6. 20 ноя — media GetFile retry all · short-ack echo break
+
+`downloadMediaWithRetry` для голоса/фото/видео/стикера. `stripRepeatPonialaHah` ломает эхо прикольно/норм. Лента: (updates.js?v=263).
+
 ## 0m5. 20 ноя — RAG skip on OpenAI circuit · embed log rate-limit · night-bye ночки
 
 `isOpenAiCircuitOpen` → rag embed не долбит circuit. embed fail ×N/60с. NIGHT_BYE + waiting: ночки / пойду спать / бай. Лента: (updates.js?v=262).

@@ -575,6 +575,16 @@ function stripRepeatPonialaHah(reply, history) {
     const alts = ['норм)', 'ладно)', 'поняла)', 'ага)'];
     out = alts[Math.floor(Math.random() * alts.length)];
   }
+  const shortAckN = recent.filter((c) =>
+    /^(?:прикольно|норм|ну бывает|о как)\)?[.!]*$/i.test(c.trim()),
+  ).length;
+  if (
+    shortAckN >= 2 &&
+    /^(?:прикольно|норм|ну бывает|о как)\)?/i.test(out.trim())
+  ) {
+    const alts = ['ага, ясно)', 'хм ну да)', 'ладно, я тут)', 'хех ок)'];
+    out = alts[Math.floor(Math.random() * alts.length)];
+  }
   return out;
 }
 

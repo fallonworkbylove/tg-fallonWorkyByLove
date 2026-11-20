@@ -57,6 +57,26 @@ function voiceSendKey(accountId, peerId, fileName) {
   return `${accountId}:${String(peerId)}:${fileName}`;
 }
 
+/** GetFile/-503/timeout — один повтор, общий для голоса/фото/видео/стикера. */
+async function downloadMediaWithRetry(client, message, opts = {}, label = 'media') {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await client.downloadMedia(message, opts);
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err.message || err.errorMessage || '');
+      const retryable = /GetFile|TimedOut|-503|timeout|Not connected|Connection closed/i.test(
+        msg,
+      );
+      if (!retryable || attempt >= 2) throw err;
+      console.warn(`[inbound] ${label}: GetFile retry (${msg.slice(0, 80)})`);
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+  }
+  throw lastErr;
+}
+
 // Буфер склейки сообщений. Если собеседник шлёт несколько сообщений подряд,
 // мы ждём коротку�� паузу и отвечаем ОДИН раз на ��се сразу — иначе бот
 // отвечает на каждое по отдельности и путается в контексте.
@@ -210,27 +230,12 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
     const voiceLabel = onceVoice ? 'одноразовое голосовое' : 'Голосовое';
 
     try {
-      let buffer = null;
-      let lastDlErr = null;
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-          buffer = await client.downloadMedia(message, {});
-          lastDlErr = null;
-          break;
-        } catch (dlErr) {
-          lastDlErr = dlErr;
-          const dlMsg = String(dlErr.message || dlErr.errorMessage || '');
-          const retryable = /GetFile|TimedOut|-503|timeout|Not connected|Connection closed/i.test(
-            dlMsg,
-          );
-          if (!retryable || attempt >= 2) throw dlErr;
-          console.warn(
-            `[${accountLabel(accountId)}] ${voiceLabel}: GetFile retry (${dlMsg.slice(0, 80)})`,
-          );
-          await new Promise((r) => setTimeout(r, 1200));
-        }
-      }
-      if (lastDlErr) throw lastDlErr;
+      const buffer = await downloadMediaWithRetry(
+        client,
+        message,
+        {},
+        `${accountLabel(accountId)} ${voiceLabel}`,
+      );
       if (buffer && buffer.length) {
         if (onceVoice) {
           await markMessageContentsOpened(client, message);
@@ -306,7 +311,12 @@ async function extractIncomingText(accountId, message, peerId, peerUsername) {
     }
 
     try {
-      const buffer = await client.downloadMedia(message, {});
+      const buffer = await downloadMediaWithRetry(
+        client,
+        message,
+        {},
+        `${accountLabel(accountId)} фото`,
+      );
       if (buffer && buffer.length) {
         const visionLang = peerId
           ? await conversationReplyLang(accountId, peerId, rawText)
@@ -565,7 +575,12 @@ async function extractIncomingVideoText(accountId, message, rawText) {
   };
 
   try {
-    const buffer = await client.downloadMedia(message, {});
+    const buffer = await downloadMediaWithRetry(
+      client,
+      message,
+      {},
+      `${accountLabel(accountId)} ${label}`,
+    );
     if (!buffer || !buffer.length) {
       console.log(
         `[${accountLabel(accountId)}] ${label}: пустой downloadMedia`,
@@ -688,7 +703,12 @@ async function extractStickerText(accountId, message, rawText, peerId = null) {
   const client = getActiveClient(accountId);
   if (client) {
     try {
-      const buffer = await client.downloadMedia(message, {});
+      const buffer = await downloadMediaWithRetry(
+        client,
+        message,
+        {},
+        `${accountLabel(accountId)} стикер`,
+      );
       if (buffer && buffer.length) {
         const visionLang = peerId
           ? await conversationReplyLang(accountId, peerId, rawText || emoji)
