@@ -4,6 +4,10 @@
 
 ---
 
+## 0ma. 20 ноя — silence-complaint hint · learning reject short acks · ops v bump
+
+softHint на «не ответила/молчишь». isHumanStyleReply режет прикольно/норм. OPS updates?v=267. Лента: (updates.js?v=267).
+
 ## 0m9. 20 ноя — no busy-defer on direct asks · faster silence heal
 
 Job/why-here/`?` → skip «занята». silenceCatchup cool 8м на directAsk. Лента: (updates.js?v=266).

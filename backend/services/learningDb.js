@@ -76,10 +76,13 @@ function isHumanStyleReply(text) {
   if (AI_ESSAY_REPLY_RE.test(t)) return false;
   if (/(^|\n)\s*[-•*]\s+/m.test(t)) return false;
   // Пустые кивки не учим как «успех» — иначе модель пишет на отъебись.
-  if (/^(?:ну\s+|да\s+)?(?:ага|угу|ок|окей|ладно|поняла|ясно|согласна|ну да|кайф)\s*[).!]?\s*$/i.test(t)) {
+  if (/^(?:ну\s+|да\s+)?(?:ага|угу|ок|окей|ладно|поняла|ясно|согласна|ну да|кайф|прикольно|норм|о как|ну бывает|хех\s*ок)\s*[).!]?\s*$/i.test(t)) {
     return false;
   }
   if (/^кайф\b/i.test(t) && t.length <= 24 && !/[?]/.test(t)) return false;
+  if (/^(?:прикольно|норм|о как|ну бывает)\b/i.test(t) && t.length <= 20 && !/[?]/.test(t)) {
+    return false;
+  }
   const words = t.replace(/[)….!?]+/g, ' ').split(/\s+/).filter(Boolean);
   if (words.length < 3 && !/[?]/.test(t)) return false;
   const clauses = t.split(/[.!?]+/).map((s) => s.trim()).filter(Boolean);
