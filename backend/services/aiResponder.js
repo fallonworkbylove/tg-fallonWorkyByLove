@@ -3505,6 +3505,38 @@ function applyAntiDetectStyle(text) {
   return result;
 }
 
+/** Magic → расширение для Whisper (0mk): video.mp4 на webm/ogg ломает decode. */
+function detectAudioFilename(buffer, hint = 'voice.ogg') {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return hint;
+  if (buffer[0] === 0x4f && buffer[1] === 0x67 && buffer[2] === 0x67 && buffer[3] === 0x53) {
+    return 'voice.ogg';
+  }
+  if (buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3) {
+    return 'voice.webm';
+  }
+  if (
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x41 &&
+    buffer[10] === 0x56 &&
+    buffer[11] === 0x45
+  ) {
+    return 'voice.wav';
+  }
+  if (buffer[4] === 0x66 && buffer[5] === 0x74 && buffer[6] === 0x79 && buffer[7] === 0x70) {
+    return 'voice.mp4';
+  }
+  if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) return 'voice.mp3';
+  if (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) return 'voice.mp3';
+  return hint || 'voice.ogg';
+}
+
+let _transcribeErrAt = 0;
+let _transcribeErrN = 0;
+
 /**
  * Расшифровывает голосовое сообщение в текст через OpenAI Whisper.
  *
@@ -3514,7 +3546,9 @@ function applyAntiDetectStyle(text) {
  */
 async function transcribeAudio(buffer, filename = 'voice.ogg') {
   try {
-    const file = await toFile(buffer, filename);
+    if (!Buffer.isBuffer(buffer) || buffer.length < 200) return '';
+    const name = detectAudioFilename(buffer, filename);
+    const file = await toFile(buffer, name);
     const result = await mediaClient.audio.transcriptions.create({
       file,
       model: 'whisper-1',
@@ -3522,7 +3556,17 @@ async function transcribeAudio(buffer, filename = 'voice.ogg') {
     });
     return (result.text || '').trim();
   } catch (err) {
-    console.error('Ошибка транскрипции голосового:', err.message);
+    _transcribeErrN += 1;
+    const now = Date.now();
+    if (now - _transcribeErrAt > 60_000) {
+      console.error(
+        'Ошибка транскрипции голосового:',
+        err && err.message,
+        _transcribeErrN > 1 ? `(x${_transcribeErrN} /60s)` : '',
+      );
+      _transcribeErrAt = now;
+      _transcribeErrN = 0;
+    }
     return '';
   }
 }
@@ -3760,6 +3804,7 @@ Object.assign(module.exports, {
   classifyOwnMediaLight,
   extractUserQuestions,
   transcribeAudio,
+  detectAudioFilename,
   describeImage,
   samePersonAsProfilePhotos,
   detectReplyLanguage,

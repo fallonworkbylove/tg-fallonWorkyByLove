@@ -4,6 +4,10 @@
 
 ---
 
+## 0mk. 20 ноя — Whisper magic filename · decode err rate-limit
+
+detectAudioFilename (ogg/webm/mp4/mp3); skip tiny; err log /60s; zombie smoke pkill on deploy. Лента: (updates.js?v=277).
+
 ## 0mj. 20 ноя — kill «отвлеклась» at source · vague expand
 
 later_text phrases без отвлеклась; away/distracted hints; always strip; VAGUE «короче да, бывает…» / «что-то не так». Лента: (updates.js?v=276).
