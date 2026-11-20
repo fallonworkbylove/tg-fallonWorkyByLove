@@ -4,6 +4,10 @@
 
 ---
 
+## 0mi. 20 ноя — job ask зарабатываешь / на что живёшь
+
+JOB_OCCUPATION_RE + earn/live. Лента: (updates.js?v=275).
+
 ## 0mh. 20 ноя — strip night «кофе пью»
 
 `stripNightCoffeeClaim` при evening/night МСК. Лента: (updates.js?v=274).
