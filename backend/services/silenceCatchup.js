@@ -235,7 +235,21 @@ async function healOneGap(row) {
   if (BOT_ACCUSE_RE.test(lastUserText)) return false;
   const prev = healedRecently.get(key) || 0;
   const mediaSeedEarly = MEDIA_ASK_RE.test(lastUserText);
-  const coolMs = mediaSeedEarly ? 8 * 60 * 1000 : HEAL_COOLDOWN_MS;
+  // Прямой вопрос (? / работа / зачем сюда) — догон быстрее, как медиа.
+  let directAskEarly = /\?\s*$/.test(lastUserText.trim()) && lastUserText.trim().length >= 12;
+  try {
+    const soft = require('./softHumanLite');
+    const jf = require('./jobFlipAsk');
+    if (
+      (jf.isJobOccupationAsk && jf.isJobOccupationAsk(lastUserText)) ||
+      (soft.isWhyHereAsk && soft.isWhyHereAsk(lastUserText))
+    ) {
+      directAskEarly = true;
+    }
+  } catch (_) {
+    /* optional */
+  }
+  const coolMs = mediaSeedEarly || directAskEarly ? 8 * 60 * 1000 : HEAL_COOLDOWN_MS;
   if (Date.now() - prev < coolMs) return false;
   const failPrev = healFailCooldown.get(key) || 0;
   if (Date.now() - failPrev < HEAL_FAIL_COOLDOWN_MS) return false;

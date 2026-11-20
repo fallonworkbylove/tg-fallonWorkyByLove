@@ -4,6 +4,10 @@
 
 ---
 
+## 0m9. 20 ноя — no busy-defer on direct asks · faster silence heal
+
+Job/why-here/`?` → skip «занята». silenceCatchup cool 8м на directAsk. Лента: (updates.js?v=266).
+
 ## 0m8. 20 ноя — why-here dating answer · transport log rate-limit
 
 `isWhyHereAsk` + `fixWhyHereReply` (hint+postfilter). replyPipeline transport errors ≤1/30с на аккаунт. Лента: (updates.js?v=265).

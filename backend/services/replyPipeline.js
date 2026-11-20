@@ -1992,12 +1992,28 @@ async function processBufferedMessages(
       accountId,
       peerId,
     );
+    // Прямой вопрос (работа / зачем сюда / ? в хвосте) — не уходим в «занята».
+    let directAskSkipBusy = false;
+    try {
+      const soft = require('./softHumanLite');
+      const jf = require('./jobFlipAsk');
+      if (
+        (typeof jf.isJobOccupationAsk === 'function' && jf.isJobOccupationAsk(text)) ||
+        (typeof soft.isWhyHereAsk === 'function' && soft.isWhyHereAsk(text)) ||
+        (/\?\s*$/.test(String(text || '').trim()) && String(text || '').length >= 12)
+      ) {
+        directAskSkipBusy = true;
+      }
+    } catch (_) {
+      /* optional */
+    }
     if (
       forcedDelayMs == null &&
       !explicitMediaRequest &&
       unfulfilledMediaPromiseCount(history) === 0 &&
       !voice &&
       !flipPhotoQuestion &&
+      !directAskSkipBusy &&
       history.length >= DEFER_MIN_HISTORY &&
       Math.random() < DEFER_CHANCE
     ) {
