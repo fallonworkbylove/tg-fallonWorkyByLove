@@ -4,6 +4,10 @@
 
 ---
 
+## 0mf. 20 ноя — typo fixes бувет/можео · strip age platitude
+
+WORD_FIXES + stripAgePlatitude («новый 20» / «жизнь только начинается»). Лента: (updates.js?v=272).
+
 ## 0me. 20 ноя — life-lag prefixes without «отвлеклась»
 
 LIFE_LAG_PREFIXES: сек/была занята/ой тут — без клише. Лента: (updates.js?v=271).

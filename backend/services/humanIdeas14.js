@@ -82,6 +82,11 @@ const WORD_FIXES = [
   [/(?<![а-яё])подожд(?![а-яё])/gi, 'подожди'],
   [/(?<![а-яё])яркш(?![а-яё])/gi, 'ярких'],
   [/ыитоняшк\w*/gi, 'фитоняшка'],
+  // 0mf: live typos
+  [/бувет/gi, 'будет'],
+  [/отншмает/gi, 'отнимает'],
+  [/можео/gi, 'можно'],
+  [/спокойной\s+ноч(?![аи])/gi, 'спокойной ночи'],
 ];
 
 const STUCK_TAIL_RE =
@@ -500,10 +505,35 @@ function buildIdeas14Hints(history, text, opts = {}) {
   return parts.length ? parts.join('\n') : null;
 }
 
+/** «40 — новый 20 / жизнь только начинается» — AI-эссе, не живая. */
+const AGE_PLATITUDE_RE =
+  /(?:\d+\s*[-–—]\s*новый\s*\d+|новый\s*20|жизнь\s+только\s+начинается|возраст\s*[-–—]\s*это\s+просто\s+цифр)/i;
+const AGE_PLATITUDE_ALTS = [
+  'хах ну да)',
+  'ну бывает)',
+  'о как)',
+  'норм)',
+];
+
+function stripAgePlatitude(reply) {
+  const t = String(reply || '');
+  if (!AGE_PLATITUDE_RE.test(t)) return reply;
+  if (t.length <= 60) {
+    return AGE_PLATITUDE_ALTS[Math.floor(Math.random() * AGE_PLATITUDE_ALTS.length)];
+  }
+  return t
+    .replace(/\d+\s*[-–—]\s*новый\s*\d+[).!]?\s*/gi, '')
+    .replace(/жизнь\s+только\s+начинается[).!]?\s*/gi, '')
+    .replace(/возраст\s*[-–—]\s*это\s+просто\s+цифр\w*[).!]?\s*/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim() || AGE_PLATITUDE_ALTS[0];
+}
+
 function applyIdeas14Postfilters(reply, history, userMessage, accountId, peerId) {
   if (!reply) return reply;
   let out = reply;
   out = fixBrokenWords(out);
+  out = stripAgePlatitude(out);
   out = stripCutTails(out);
   out = banClicheMe(out, history, accountId, peerId);
   out = diversifyNoShow(out, history);
@@ -532,6 +562,8 @@ function applyIdeas14Postfilters(reply, history, userMessage, accountId, peerId)
 module.exports = {
   buildIdeas14Hints,
   applyIdeas14Postfilters,
+  stripAgePlatitude,
+  AGE_PLATITUDE_RE,
   fixBrokenWords,
   shouldBlockMediaAfterNoShow,
   shouldSkipUntilMorning,
