@@ -4,6 +4,10 @@
 
 ---
 
+## 0mj. 20 ноя — kill «отвлеклась» at source · vague expand
+
+later_text phrases без отвлеклась; away/distracted hints; always strip; VAGUE «короче да, бывает…» / «что-то не так». Лента: (updates.js?v=276).
+
 ## 0mi. 20 ноя — job ask зарабатываешь / на что живёшь
 
 JOB_OCCUPATION_RE + earn/live. Лента: (updates.js?v=275).

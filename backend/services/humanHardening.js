@@ -351,7 +351,7 @@ function getDistractedHint(history) {
   // rare: only when last assistant was long ago in history markers — soft random
   if (Math.random() > 0.08) return null;
   return (
-    'Иногда можно звучать так, будто отвлеклась: короткое «сорри, отвлеклась)» / «тут)» — без длинных оправданий.'
+    'Иногда можно звучать так, будто была занята: короткое «ой сорри)» / «тут)» / «сек)» — без «отвлеклась» и без длинных оправданий.'
   );
 }
 
@@ -585,13 +585,8 @@ function stripRepeatPonialaHah(reply, history, userMessage = '') {
     const alts = ['ага, ясно)', 'хм ну да)', 'ладно, я тут)', 'хех ок)'];
     out = alts[Math.floor(Math.random() * alts.length)];
   }
-  // «отвлеклась» — клише из логов: повтор в хвосте ИЛИ ответ на «не ответила».
-  const otvN = recent.filter((c) => /отвлеклась/i.test(c)).length;
-  const silenceComplaint =
-    /(?:не\s+ответил[аи]?|опять\s+(?:ничего|молч)|молч(?:ишь|ала)|так\s+и\s+не\s+ответил)/i.test(
-      String(userMessage || ''),
-    );
-  if ((otvN >= 1 || silenceComplaint) && /отвлеклась/i.test(out)) {
+  // «отвлеклась» — всегда режем (0mj): клише из hints + later_text.
+  if (/отвлеклась/i.test(out)) {
     out = out
       .replace(/ой,?\s*просто\s+отвлеклась\)?[.,!]?\s*/gi, 'ой сорри) ')
       .replace(/сорри,?\s*отвлеклась\)?[.,!]?\s*/gi, 'сорри) ')
@@ -756,7 +751,7 @@ function expandBareStubOnQuestion(reply, userMessage) {
     tag +
     pick([
       'хм ну смотря как считать)',
-      'короче да, бывает по-разному)',
+      'короче да) а тебе как?',
       'ну в целом да) а тебе как?',
     ])
   );

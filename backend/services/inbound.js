@@ -942,7 +942,8 @@ async function fireOneLaterTextReturn(accountId, peerId, senderHint, senderNameH
     }
   }
   const senderName = senderNameHint || sender.username || sender.firstName || peerId;
-  const phrases = ['тут)', 'сорри, отвлеклась)', 'я снова)', 'ну что, я тут)'];
+  // Без «отвлеклась» — клише из логов (0mj).
+  const phrases = ['тут)', 'ой сорри)', 'я снова)', 'ну что, я тут)', 'сек, была занята)'];
   const phrase = phrases[Math.floor(Math.random() * phrases.length)];
   if (typeof hooks.tgSendMessage !== 'function') return false;
   await waitBeforeReply(client, sender, 900 + Math.random() * 1200, 800);
