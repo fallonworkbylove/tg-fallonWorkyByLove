@@ -4,6 +4,10 @@
 
 ---
 
+## 0ms. 20 ноя — wiring regression smoke · CORS_ORIGIN fill
+
+_smoke_0ms guards scaleIdeasPack/registry; fill CORS_ORIGIN if empty. Лента: (updates.js?v=285).
+
 ## 0mr. 20 ноя — purge vague/age/otv stubs from bot_patterns
 
 _purge_vague_0mr.js on prod DB. Лента: (updates.js?v=284).
