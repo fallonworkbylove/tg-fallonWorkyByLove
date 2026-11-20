@@ -178,7 +178,7 @@ function stripNearEcho(reply, userMessage) {
   const b = normalizeEcho(u);
   if (!a || !b) return reply;
   if (a === b || (a.length >= 10 && (b.includes(a) || a.includes(b)) && Math.abs(a.length - b.length) <= 6)) {
-    return pick(['хм ну да)', 'ага, поняла)', 'ну такое)', 'хех, ясно)']);
+    return pick(['хм ну да)', 'ага, поняла)', 'хех ок)', 'хех, ясно)']);
   }
   return reply;
 }

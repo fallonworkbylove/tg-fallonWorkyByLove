@@ -1209,7 +1209,9 @@ function applySoftLite(reply, history, userMessage) {
   out = fixCirclePlaceMismatch(out, history, userMessage);
   // voprosy-strip + ensureAck — финал в aiResponderPostprocess / replySendPrep.
   try {
-    out = require('./humanIdeas14').fixBrokenWords(out);
+    const i14 = require('./humanIdeas14');
+    out = i14.fixBrokenWords(out);
+    if (typeof i14.stripAgePlatitude === 'function') out = i14.stripAgePlatitude(out);
   } catch (_) {
     /* optional */
   }
@@ -1241,7 +1243,9 @@ function applySoftLite(reply, history, userMessage) {
   out = humanizeChatTexture(out);
   // 0in H: после texture снова чиним род + нечитаемые обрубки/typo.
   try {
-    out = require('./humanIdeas14').fixBrokenWords(out);
+    const i14 = require('./humanIdeas14');
+    out = i14.fixBrokenWords(out);
+    if (typeof i14.stripAgePlatitude === 'function') out = i14.stripAgePlatitude(out);
   } catch (_) {
     /* optional */
   }

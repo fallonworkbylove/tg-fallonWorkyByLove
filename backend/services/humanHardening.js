@@ -550,7 +550,7 @@ const PHRASE_ALTS = [
   'хм ну да)',
   'ага, поняла)',
   'короче ок)',
-  'ну такое)',
+  'хм ясно)',
   'ладно, я тут)',
 ];
 
@@ -567,8 +567,19 @@ function stripRepeatPonialaHah(reply, history, userMessage = '') {
   if (ponialaN >= 2 && /^поняла/i.test(out.trim())) {
     out = out.replace(/^поняла\s*\)?[.,!]?\s*/i, 'ага, ');
   }
-  if (hahN >= 2 && /^(?:хах|ахах+|ахаха)/i.test(out.trim())) {
+  // 0ml: с 1-го повтора режем префикс; «ахаха, ну да)» целиком меняем.
+  if (
+    hahN >= 1 &&
+    /^(?:ахах+|хах),?\s*(?:ну\s+да|бывает|ладно|ок|поняла)/i.test(out.trim())
+  ) {
+    const alts = ['хех ок)', 'ну да)', 'ага)', 'ладно)'];
+    out = alts[Math.floor(Math.random() * alts.length)];
+  } else if (hahN >= 1 && /^(?:хах|ахах+|ахаха)/i.test(out.trim())) {
     out = out.replace(/^(?:хах|ахах+|ахаха)\s*,?\s*/i, '');
+    if (!out || out.length < 2) {
+      const alts = ['хех)', 'ну да)', 'ага)'];
+      out = alts[Math.floor(Math.random() * alts.length)];
+    }
   }
   const nuOkN = recent.filter((c) => /^(?:ну\s+)?ок\)?[.!]*$/i.test(c.trim())).length;
   if (nuOkN >= 2 && /^(?:ну\s+)?ок\)?/i.test(out.trim())) {

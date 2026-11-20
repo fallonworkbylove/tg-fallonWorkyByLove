@@ -4,6 +4,10 @@
 
 ---
 
+## 0ml. 20 ноя — ahaha@1 · ну такое · age platitude softLite
+
+strip ahaha-ну-да с 1 повтора; VAGUE «ну такое»; stripAgePlatitude в softLite; alts без «ну такое». Лента: (updates.js?v=278).
+
 ## 0mk. 20 ноя — Whisper magic filename · decode err rate-limit
 
 detectAudioFilename (ogg/webm/mp4/mp3); skip tiny; err log /60s; zombie smoke pkill on deploy. Лента: (updates.js?v=277).
