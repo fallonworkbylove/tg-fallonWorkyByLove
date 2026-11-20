@@ -1156,6 +1156,43 @@ function fixCirclePlaceMismatch(reply, history, userMessage) {
   return 'на концерте сейчас, шумно)'.slice(0, 80);
 }
 
+/** Вечер/ночь МСК — не «кофе пью)» (живёт в timeStyle hint, но модель всё равно пишет). */
+const NIGHT_COFFEE_RE =
+  /(?:пью|варил[аи]?|с\s+)?кофе(?:йк\w*)?|кофейк\w*|с\s+кофе/i;
+const NIGHT_COFFEE_ALTS = [
+  'да так, в телефоне сижу)',
+  'сериал фоном)',
+  'чай пью, туплю)',
+  'дома, ничего такого)',
+  'просто тут)',
+];
+
+function stripNightCoffeeClaim(reply) {
+  if (!reply) return reply;
+  try {
+    const { isEveningOrNightMsk } = require('./timeStyle');
+    if (!isEveningOrNightMsk()) return reply;
+  } catch (_) {
+    return reply;
+  }
+  const tag = (String(reply).match(/^\s*<<[^>\n]+>>\s*/) || [''])[0];
+  const body = String(reply).slice(tag.length).trim();
+  if (!body || !NIGHT_COFFEE_RE.test(body)) return reply;
+  // Длинный ответ с кофе мелочью — вырезать кусок; короткий — заменить.
+  if (body.length <= 48 || /ничего\s+особен|обычн\w*\s+день|слуша[йи]/i.test(body)) {
+    return tag + NIGHT_COFFEE_ALTS[Math.floor(Math.random() * NIGHT_COFFEE_ALTS.length)];
+  }
+  const cleaned = body
+    .replace(/[,]?\s*(?:пью\s+)?кофе(?:йк\w*)?[).!]?\s*/gi, ' ')
+    .replace(/кофейк\w*[).!]?\s*/gi, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (!cleaned || cleaned.length < 4) {
+    return tag + NIGHT_COFFEE_ALTS[Math.floor(Math.random() * NIGHT_COFFEE_ALTS.length)];
+  }
+  return tag + (cleaned.endsWith(')') ? cleaned : `${cleaned})`);
+}
+
 function applySoftLite(reply, history, userMessage) {
   if (!reply) return reply;
   let out = softenCoachy(reply);
@@ -1191,6 +1228,7 @@ function applySoftLite(reply, history, userMessage) {
   out = fixAwkwardNuOkPredicate(out);
   out = breakKaifEcho(out, history, userMessage);
   out = fixWhyHereReply(out, userMessage);
+  out = stripNightCoffeeClaim(out);
   try {
     const so = require('./scaleOps');
     out = so.breakShortAckEcho(out, history);
@@ -1224,6 +1262,7 @@ function applySoftLite(reply, history, userMessage) {
   out = fixVagueFillerReply(out, userMessage);
   out = applyWave0loGates(out, history, userMessage);
   out = fixWhyHereReply(out, userMessage);
+  out = stripNightCoffeeClaim(out);
   return out;
 }
 
@@ -1232,6 +1271,7 @@ module.exports = {
   isDatingSiteAsk,
   isWhyHereAsk,
   fixWhyHereReply,
+  stripNightCoffeeClaim,
   softenCoachy,
   softCompleteCut,
   fixAckOnBareGreeting,

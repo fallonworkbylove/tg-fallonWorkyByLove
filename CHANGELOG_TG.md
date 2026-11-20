@@ -4,6 +4,10 @@
 
 ---
 
+## 0mh. 20 ноя — strip night «кофе пью»
+
+`stripNightCoffeeClaim` при evening/night МСК. Лента: (updates.js?v=274).
+
 ## 0mg. 20 ноя — vague filler «мелочи бывают» · audit C 10/10
 
 VAGUE_FILLER_RE + мелочи/бывает по-разному. Full hard audit 10/10. Лента: (updates.js?v=273).
