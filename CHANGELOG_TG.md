@@ -4,6 +4,10 @@
 
 ---
 
+## 0mo. 20 ноя — move-spam details time-aware (no night coffee)
+
+moveSpamDayDetails via isCoffeeOkHourMsk; tea/телефон at night. Лента: (updates.js?v=281).
+
 ## 0mn. 20 ноя — NFT tick retry · scrub OPENAI_PROXY dead · слышу alt
 
 tickNftCampaignSafe retry+rate-limit; scrub dead from OPENAI_PROXY_LIST; humanIdeas15 без «слышу) а подробнее». Лента: (updates.js?v=280).

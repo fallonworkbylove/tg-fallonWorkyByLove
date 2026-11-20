@@ -1583,13 +1583,19 @@ function fixUnpackBeforeArrive(reply, userMessage, history) {
     'сборы, коробки)',
   ][Math.floor(Math.random() * 3)];
 }
-const MOVE_SPAM_FALLBACKS = [
-  'ничего особенного, кофе пью)',
-  'дома сижу, сериал фоном)',
-  'просто отдыхаю)',
-  'устала немного, валяюсь)',
-  'хз, обычный день)',
-];
+function moveSpamDayDetails() {
+  let coffeeOk = true;
+  try {
+    coffeeOk = require('./timeStyle').isCoffeeOkHourMsk();
+  } catch (_) {
+    /* optional */
+  }
+  const base = ['дома сижу)', 'сериал фоном)', 'просто отдыхаю)', 'валяюсь)', 'в телефоне сижу)'];
+  if (coffeeOk) base.push('кофе пью)', 'ничего особенного, кофе пью)');
+  else base.push('чай пью)', 'туплю в телефоне)');
+  return base;
+}
+
 /**
  * Вырезает тему переезда/сборов; короткие «кайф/нормально» дополняет мелочью дня.
  */
@@ -1611,25 +1617,20 @@ function rewriteMoveSpamReply(text) {
     .filter(Boolean)
     .join('\n')
     .trim();
+  const details = moveSpamDayDetails();
   if (cleaned.length >= 3 && !MOVE_SPAM_RE.test(cleaned)) {
     if (
       /^(?:норм|нормально|хорошо|ок|ага|угу|ничего|хз|кайф|круто|классно|опять|ну|да)\s*\)?$/i.test(
         cleaned,
       )
     ) {
-      const detail = [
-        'кофе пью)',
-        'дома сижу)',
-        'сериал фоном)',
-        'просто отдыхаю)',
-        'валяюсь)',
-      ][Math.floor(Math.random() * 5)];
+      const detail = details[Math.floor(Math.random() * details.length)];
       if (/^(?:опять|ну|да)\s*\)?$/i.test(cleaned)) return detail;
       return `${cleaned.replace(/\)?\s*$/, '')}, ${detail}`;
     }
     return cleaned;
   }
-  return MOVE_SPAM_FALLBACKS[Math.floor(Math.random() * MOVE_SPAM_FALLBACKS.length)];
+  return details[Math.floor(Math.random() * details.length)];
 }
 
 /**
