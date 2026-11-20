@@ -524,7 +524,8 @@ function isPhraseBanned(accountId, reply, limit = null) {
   resetDayIfNeeded();
   if (accountId == null || !reply) return false;
   const n = normalizePhrase(reply);
-  if (n.length < 8) return false;
+  // Раньше <8 пропускало «кайф)» / «ну ок)» — эхо копилось без бана.
+  if (n.length < 4) return false;
   const m = phraseCounts.get(accountId);
   if (!m) return false;
   const lim = limit != null ? limit : phraseBanLimitFor(accountId);
@@ -568,6 +569,11 @@ function stripRepeatPonialaHah(reply, history) {
   }
   if (hahN >= 2 && /^(?:хах|ахах+|ахаха)/i.test(out.trim())) {
     out = out.replace(/^(?:хах|ахах+|ахаха)\s*,?\s*/i, '');
+  }
+  const nuOkN = recent.filter((c) => /^(?:ну\s+)?ок\)?[.!]*$/i.test(c.trim())).length;
+  if (nuOkN >= 2 && /^(?:ну\s+)?ок\)?/i.test(out.trim())) {
+    const alts = ['норм)', 'ладно)', 'поняла)', 'ага)'];
+    out = alts[Math.floor(Math.random() * alts.length)];
   }
   return out;
 }

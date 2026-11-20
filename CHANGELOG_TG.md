@@ -4,6 +4,10 @@
 
 ---
 
+## 0m3. 20 ноя — phrase ban short fillers · nu-ok echo break · purge short patterns
+
+`isPhraseBanned` min len 4 (ловят кайф/ок). `stripRepeatPonialaHah` ломает эхо «ну ок». `_purge_short_patterns_0m3.js` чистит bot_patterns. Лента: (updates.js?v=260).
+
 ## 0m2. 20 ноя — transport→heal · learning reject short/kaif · howLong alts · CORS scrub
 
 `noteTransportMiss` после Connection error → silence-heal быстрее. `isHumanStyleReply` режет ≤8 и кайф-кивки. HowLong +2 формулировки. `_scrub_cors_env.py` на VPS. Лента: (updates.js?v=259).

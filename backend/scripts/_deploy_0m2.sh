@@ -15,7 +15,10 @@ cp -f "$SRC/index_ops.html" ops-console/app/index.html
 cp -f "$SRC/updates_fe.js" frontend/updates.js
 cp -f "$SRC/updates_ops.js" ops-console/app/updates.js
 cp -f "$SRC/CHANGELOG_TG.md" CHANGELOG_TG.md
-cp -f "$SRC/_deploy_guard.sh" backend/scripts/_deploy_guard.sh 2>/dev/null || true
+if [[ -f "$SRC/_deploy_guard.sh" ]]; then
+  sed -i 's/\r$//' "$SRC/_deploy_guard.sh" || true
+  cp -f "$SRC/_deploy_guard.sh" backend/scripts/_deploy_guard.sh
+fi
 
 if grep -q 'операторская, вне Telegram' frontend/index.html; then
   echo REFUSE_FRONTEND_IS_OPS
