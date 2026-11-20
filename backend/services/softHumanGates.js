@@ -483,6 +483,15 @@ function applyWave0loGates(reply, history, userMessage) {
   return out;
 }
 
+/** Волна 0m1: loop / soft-meet / toxic / bot-score — scaleIdeasPack. */
+function applyWave0m1Gates(reply, history, userMessage) {
+  try {
+    return require('./scaleIdeasPack').applyWave0m1Gates(reply, history, userMessage);
+  } catch (_) {
+    return reply;
+  }
+}
+
 module.exports = {
   normalizeBareUserText,
   isBareGreeting,
@@ -509,6 +518,7 @@ module.exports = {
   fixRepeatWorkAsk,
   fixHeardTailOveruse,
   applyWave0loGates,
+  applyWave0m1Gates,
   detectUserLangBlob,
   mskHour,
 };

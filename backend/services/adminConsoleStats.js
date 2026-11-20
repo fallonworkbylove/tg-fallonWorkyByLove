@@ -120,6 +120,30 @@ async function getConsoleSnapshot() {
   } catch (_) {}
 
   const aiOn = accountRows.filter((r) => Number(r.ai)).length;
+  let lastReplyByAcc = new Map();
+  try {
+    const [lrRows] = await db.execute(
+      `SELECT account_id,
+              TIMESTAMPDIFF(MINUTE, MAX(created_at), NOW()) AS age_min
+       FROM conversation_messages
+       WHERE role = 'assistant'
+       GROUP BY account_id`,
+    );
+    for (const row of lrRows || []) {
+      lastReplyByAcc.set(Number(row.account_id), Number(row.age_min));
+    }
+  } catch (_) {
+    lastReplyByAcc = new Map();
+  }
+
+  let accountCostById = new Map();
+  try {
+    accountCostById = await require('./finetuneUsage').getAccountCostMap();
+  } catch (e) {
+    console.warn('[adminConsoleStats] accountCost:', e.message);
+    accountCostById = new Map();
+  }
+
   const accounts = accountRows.map((r) => {
     let isOnline = false;
     try {
@@ -136,6 +160,24 @@ async function getConsoleSnapshot() {
     } catch (_) {}
     const unameLabel = tgUsername ? `@${tgUsername}` : null;
     const name = liveName || promptName || unameLabel || null;
+    const lastReplyAgeMin = lastReplyByAcc.has(Number(r.id))
+      ? lastReplyByAcc.get(Number(r.id))
+      : null;
+    const usage = accountCostById.get(Number(r.id)) || {
+      tokensToday: 0,
+      costToday: 0,
+      tokensAll: 0,
+      costAll: 0,
+      callsAll: 0,
+    };
+    // #24/#31: health score на карточке (без тяжёлого per-row DB).
+    let health = 40;
+    if (isOnline) health += 25;
+    if (Number(r.ai)) health += 15;
+    if (lastReplyAgeMin != null && lastReplyAgeMin <= 30) health += 15;
+    else if (lastReplyAgeMin != null && lastReplyAgeMin <= 120) health += 8;
+    else if (lastReplyAgeMin != null && lastReplyAgeMin > 360) health -= 10;
+    health = Math.max(0, Math.min(100, health));
     return {
       id: r.id,
       seq: r.seq,
@@ -160,6 +202,15 @@ async function getConsoleSnapshot() {
       peersTotal: Number(r.peers_total || 0),
       sentToday: Number(r.sent_today || 0),
       sentWeek: Number(r.sent_week || 0),
+      lastReplyAgeMin,
+      tokensToday: usage.tokensToday,
+      costToday: usage.costToday,
+      tokensAll: usage.tokensAll,
+      costAll: usage.costAll,
+      callsAll: usage.callsAll,
+      queueDepth: 0,
+      health,
+      pool: r.username ? String(r.username) : 'default',
     };
   });
 

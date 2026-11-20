@@ -389,6 +389,14 @@ async function runProxyAliveWatch() {
   } catch (_) {
     /* optional */
   }
+  // #40: отдельный push/stamp для Android OPS + админки.
+  if (workLow) {
+    try {
+      await require('./scaleIdeasPack').maybePushProxyLow(poolLen, { min: MIN_PROXY_LEN });
+    } catch (_) {
+      /* optional */
+    }
+  }
   if (workLow) {
     try {
       const { spawn } = require('child_process');

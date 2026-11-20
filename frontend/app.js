@@ -302,6 +302,15 @@ const api = {
     request('/admin/console/learn/bad-reply', { method: 'POST', body }),
   adminExpireNftStale: () =>
     request('/admin/console/nft/expire-stale', { method: 'POST' }),
+  getAdminScaleDayN: () => request('/admin/console/scale/day-n'),
+  getAdminScaleErrors: (limit = 40) =>
+    request(`/admin/console/scale/errors?limit=${encodeURIComponent(limit)}`),
+  getAdminScaleCompare: (a, b) =>
+    request(
+      `/admin/console/scale/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
+    ),
+  getAdminScaleIdeaDay: () => request('/admin/console/scale/idea-day'),
+  getAdminScaleMetricsCsvUrl: () => '/api/admin/console/scale/metrics.csv',
   checkAdminProxies: (pool = 'all') =>
     request('/admin/console/proxies/check', {
       method: 'POST',
@@ -584,6 +593,8 @@ const state = {
     logsTimer: null,
     activityTimer: null,
     loaded: false,
+    /** Фильтр списка аккаунтов по владельцу пула: { key, label } | null */
+    ownerFilter: null,
   },
 
   workerActivity: {
@@ -1061,6 +1072,10 @@ async function loadDashboard() {
       dashboard.isBetaTester ?? dashboard.is_beta_tester,
     ),
     isAdmin: Boolean(dashboard.isAdmin ?? dashboard.is_admin),
+    username: dashboard.username
+      ? String(dashboard.username).replace(/^@+/, '')
+      : null,
+    isCreator: Boolean(dashboard.isCreator ?? dashboard.is_creator),
   };
   syncAdminVisibility();
 }
@@ -2155,6 +2170,10 @@ function syncAdminVisibility() {
   document.querySelectorAll('.admin-only').forEach((el) => {
     el.hidden = !on;
   });
+  const creator = Boolean(state.dashboard?.isCreator);
+  document.querySelectorAll('.creator-only').forEach((el) => {
+    el.hidden = !(on && creator);
+  });
   if (!on && state.activeTab === 'admin') {
     state.activeTab = 'panel';
     localStorage.setItem('currentTab', 'panel');
@@ -2162,7 +2181,16 @@ function syncAdminVisibility() {
   window.requestAnimationFrame(syncNavIndicator);
 }
 
-const ADMIN_SUBS = new Set(['accounts', 'blacklist', 'add', 'proxies', 'logs', 'activity']);
+const ADMIN_SUBS = new Set([
+  'accounts',
+  'blacklist',
+  'add',
+  'proxies',
+  'logs',
+  'activity',
+  'radar',
+  'ideas',
+]);
 
 function stopAdminLiveTimers() {
   if (state.admin.logsTimer) {
@@ -2224,6 +2252,191 @@ function setAdminSub(sub) {
       }
     }, 5000);
   }
+  if (next === 'radar') {
+    loadAdminRadar().catch((err) => handleRequestError(err));
+  }
+  if (next === 'ideas') {
+    loadAdminIdeaDay().catch((err) => handleRequestError(err));
+  }
+}
+
+async function loadAdminRadar() {
+  const dayEl = document.getElementById('admin-dayn');
+  const voiceEl = document.getElementById('admin-voice-ab');
+  const errEl = document.getElementById('admin-error-feed');
+  if (dayEl) dayEl.innerHTML = '<p class="options-hint">Загрузка…</p>';
+  const [dayRes, errRes] = await Promise.all([
+    api.getAdminScaleDayN(),
+    api.getAdminScaleErrors(40),
+  ]);
+  const dayN = dayRes.dayN || {};
+  if (dayEl) {
+    dayEl.innerHTML = `
+      <div class="stat-card"><strong>${Number(dayN.day1 || 0)}</strong><span>Day 1</span></div>
+      <div class="stat-card"><strong>${Number(dayN.day2 || 0)}</strong><span>Day 2</span></div>
+      <div class="stat-card"><strong>${Number(dayN.day3 || 0)}</strong><span>Day 3 · NFT</span></div>
+      <div class="stat-card"><strong>${Number(dayN.day4 || 0)}</strong><span>Day 4</span></div>
+      <div class="stat-card"><strong>${Number(dayN.filtered || 0)}</strong><span>Отсев</span></div>
+    `;
+  }
+  const nftVoice = dayRes.nftVoice || {};
+  if (voiceEl) {
+    const file = escapeHtml(nftVoice.file || 'nft.ogg');
+    const ok = nftVoice.exists ? 'на месте' : 'файла нет на диске';
+    voiceEl.innerHTML = `<p class="options-hint">Голосовое NFT одно: <strong>${file}</strong> · ${ok}. Других вариантов нет.</p>`;
+  }
+  const errors = Array.isArray(errRes.errors) ? errRes.errors : [];
+  if (errEl) {
+    if (!errors.length) {
+      errEl.innerHTML = '<p class="empty">Свежих ошибок нет</p>';
+    } else {
+      errEl.innerHTML = errors
+        .map((e) => {
+          const t = escapeHtml(String(e.ts || '').slice(11, 19));
+          const lvl = escapeHtml(e.level || 'info');
+          return `<div class="admin-log-line admin-log-line--${lvl}"><span class="admin-log-ts">${t}</span> ${escapeHtml(
+            e.text || '',
+          )}</div>`;
+        })
+        .join('');
+    }
+  }
+}
+
+async function loadAdminIdeaDay() {
+  const box = document.getElementById('admin-idea-day');
+  if (!box) return;
+  box.innerHTML = '<p class="options-hint">Загрузка…</p>';
+  const res = await api.getAdminScaleIdeaDay();
+  const idea = res.idea || {};
+  const list = Array.isArray(idea.ideas) ? idea.ideas : [];
+  if (!list.length) {
+    box.innerHTML = '<p class="empty">Идей пока нет</p>';
+    return;
+  }
+  box.innerHTML = `
+    <p class="options-hint">${escapeHtml(idea.date || '')} · @${escapeHtml(
+      idea.for || 'fallonsociapat',
+    )}</p>
+    ${list
+      .map(
+        (it, i) =>
+          `<article class="admin-idea-card"><strong>${i + 1}.</strong> ${escapeHtml(
+            it.text || '',
+          )} <span class="admin-flag is-ok">${escapeHtml(it.source || '')}</span></article>`,
+      )
+      .join('')}
+  `;
+}
+
+async function copyTextSafe(value) {
+  const text = String(value || '');
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (_) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
+/** В Telegram WebView a.download часто не сохраняет файл — даём копирование + попытку скачать. */
+function openCsvExportModal(csvText) {
+  closeAccountModal();
+  const text = String(csvText || '');
+  const overlay = document.createElement('div');
+  overlay.id = 'account-modal';
+  overlay.className = 'modal-overlay drawer-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card export-modal" role="dialog" aria-modal="true" aria-label="CSV метрик">
+      <div class="modal-card__header">
+        <div>
+          <p class="modal-card__eyebrow">Радар · день</p>
+          <h3 class="modal-card__title">CSV метрик</h3>
+          <p class="modal-card__subphone">В Telegram файл часто не качается — скопируй и вставь в таблицу</p>
+        </div>
+        <button class="modal-close" type="button" aria-label="Закрыть" data-modal-close>×</button>
+      </div>
+      <textarea class="export-modal__text" readonly rows="12">${escapeHtml(text)}</textarea>
+      <div class="modal-actions">
+        <button class="btn btn-primary full" type="button" data-action="copy-csv">Копировать CSV</button>
+        <button class="btn btn-secondary full" type="button" data-action="try-csv-file">Попробовать файл</button>
+        <button class="btn btn-secondary full" type="button" data-modal-close>Закрыть</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.classList.add('modal-open');
+  document.addEventListener('keydown', onModalKeydown);
+  const area = overlay.querySelector('.export-modal__text');
+  overlay.addEventListener('click', async (event) => {
+    if (event.target === overlay || event.target.closest('[data-modal-close]')) {
+      closeAccountModal();
+      return;
+    }
+    if (event.target.closest('[data-action="copy-csv"]')) {
+      event.stopPropagation();
+      const ok = await copyTextSafe(area?.value || text);
+      notify(ok ? 'CSV скопирован' : 'Выдели текст вручную и скопируй');
+      return;
+    }
+    if (event.target.closest('[data-action="try-csv-file"]')) {
+      event.stopPropagation();
+      try {
+        const blob = new Blob([area?.value || text], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'loverussian-metrics-day.csv';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        const tg = getTg();
+        if (tg && typeof tg.openLink === 'function') {
+          // Fallback: открыть blob в браузере вне WebView, если клиент умеет
+          try {
+            tg.openLink(url, { try_instant_view: false });
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        notify('Если файла нет — жми «Копировать CSV»');
+      } catch (_) {
+        notify('Скачать не вышло — скопируй CSV');
+      }
+    }
+  });
+}
+
+async function downloadAdminMetricsCsv() {
+  const initData = resolveTelegramInitData() || '';
+  const headers = {};
+  if (initData) headers['X-Telegram-Init-Data'] = initData;
+  const token = localStorage.getItem('adminConsoleToken') || '';
+  if (token) headers['X-Admin-Console-Token'] = token;
+  const res = await fetch('/api/admin/console/scale/metrics.csv', {
+    headers,
+    credentials: 'same-origin',
+  });
+  if (!res.ok) throw new Error('Не удалось скачать CSV');
+  const csv = await res.text();
+  if (!String(csv || '').trim()) throw new Error('CSV пустой');
+  openCsvExportModal(csv);
+  notify('CSV готов — скопируй или сохрани');
 }
 
 async function loadAdminData({ force = false } = {}) {
@@ -2588,10 +2801,162 @@ function adminAccInitials(name) {
   return one.slice(0, 2).toUpperCase();
 }
 
+/** Возраст последнего ответа для админки: «45 мин», «1 ч 18 мин», «2 д 3 ч». */
+function formatAdminReplyAge(minRaw) {
+  if (minRaw == null || minRaw === '') return '—';
+  const min = Math.max(0, Math.floor(Number(minRaw)));
+  if (!Number.isFinite(min)) return '—';
+  if (min < 60) return `${min} мин`;
+  const days = Math.floor(min / 1440);
+  const hours = Math.floor((min % 1440) / 60);
+  const mins = min % 60;
+  if (days > 0) {
+    if (hours > 0) return `${days} д ${hours} ч`;
+    return `${days} д`;
+  }
+  if (mins > 0) return `${hours} ч ${mins} мин`;
+  return `${hours} ч`;
+}
+
+function formatAdminTokens(n) {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 10_000) return `${Math.round(v / 1000)}k`;
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  return String(Math.round(v));
+}
+
+function formatAdminCostUsd(n) {
+  const v = Number(n) || 0;
+  if (v <= 0) return '$0';
+  if (v < 0.01) return `$${v.toFixed(4)}`;
+  if (v < 1) return `$${v.toFixed(3)}`;
+  return `$${v.toFixed(2)}`;
+}
+
 function findAdminAccount(accountId) {
   const list = state.admin.console?.accounts?.list;
   if (!Array.isArray(list)) return null;
   return list.find((a) => String(a.id) === String(accountId)) || null;
+}
+
+/** Ключ владельца пула: telegram id, иначе @username / имя. */
+function adminOwnerKey(account) {
+  if (!account) return '';
+  if (account.ownerTg) return `tg:${String(account.ownerTg)}`;
+  const label = String(account.owner || account.pool || '').trim();
+  return label ? `name:${label.toLowerCase()}` : '';
+}
+
+function adminOwnerLabel(account) {
+  if (!account) return '—';
+  return account.owner || (account.ownerTg ? `id ${account.ownerTg}` : account.pool) || '—';
+}
+
+function accountsForOwnerKey(ownerKey) {
+  const list = state.admin.console?.accounts?.list;
+  if (!Array.isArray(list) || !ownerKey) return [];
+  return list.filter((a) => adminOwnerKey(a) === ownerKey);
+}
+
+function setAdminOwnerFilter(ownerKey, label) {
+  if (!ownerKey) {
+    state.admin.ownerFilter = null;
+  } else {
+    state.admin.ownerFilter = { key: ownerKey, label: label || ownerKey };
+  }
+  if (state.admin.sub !== 'accounts') setAdminSub('accounts');
+  else renderAdmin();
+}
+
+function clearAdminOwnerFilter() {
+  state.admin.ownerFilter = null;
+  renderAdmin();
+}
+
+/** Модалка: полный список аккаунтов одного владельца пула. */
+function openAdminOwnerPool(ownerKey, labelHint) {
+  const rows = accountsForOwnerKey(ownerKey);
+  if (!rows.length) {
+    notify('У этого владельца аккаунтов не найдено');
+    return;
+  }
+  closeAccountModal();
+  const label = labelHint || adminOwnerLabel(rows[0]);
+  const online = rows.filter((a) => a.online).length;
+  const aiOn = rows.filter((a) => a.ai).length;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'account-modal';
+  overlay.className = 'modal-overlay drawer-overlay';
+  overlay.innerHTML = `
+    <div class="modal-card drawer-card" role="dialog" aria-modal="true" aria-label="Пул владельца">
+      <div class="modal-card__header">
+        <div>
+          <p class="modal-card__eyebrow">Пул владельца</p>
+          <h3 class="modal-card__title">${escapeHtml(label)}</h3>
+          <p class="modal-card__subphone">${rows.length} акк. · онлайн ${online} · AI ${aiOn}</p>
+        </div>
+        <button class="modal-close" type="button" aria-label="Закрыть" data-modal-close>×</button>
+      </div>
+      <div class="admin-owner-list">
+        ${rows
+          .map((a) => {
+            const title = escapeHtml(a.name || a.phone || `#${a.id}`);
+            const phone = escapeHtml(a.phone || '—');
+            return `
+            <div class="admin-owner-row">
+              <span class="admin-acc__avatar ${a.online ? 'is-online' : 'is-offline'}" aria-hidden="true">${escapeHtml(
+                adminAccInitials(a.name || a.phone || String(a.id)),
+              )}</span>
+              <div class="admin-owner-row__meta">
+                <p class="admin-owner-row__title">${title}</p>
+                <p class="admin-owner-row__sub">${phone} · #${escapeHtml(a.id)} · сегодня ${Number(
+                  a.sentToday || 0,
+                )}</p>
+              </div>
+              <span class="admin-owner-row__badge admin-acc__badge ${a.ai ? 'is-on' : 'is-off'}">${
+                a.ai ? 'AI вкл' : 'AI выкл'
+              }</span>
+              <button class="btn btn-secondary small" type="button" data-action="admin-acc-info" data-id="${escapeHtml(
+                a.id,
+              )}" data-modal-close>Инфо</button>
+            </div>`;
+          })
+          .join('')}
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" type="button" data-action="admin-owner-filter" data-owner-key="${escapeHtml(
+          ownerKey,
+        )}" data-owner-label="${escapeHtml(label)}" data-modal-close>Показать в списке</button>
+        <button class="btn btn-secondary" type="button" data-modal-close>Закрыть</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  document.addEventListener('keydown', onModalKeydown);
+  document.body.classList.add('modal-open');
+  setupMobileKeyboardHandling(overlay);
+  overlay.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-action]');
+    if (btn?.dataset.action === 'admin-owner-filter') {
+      event.stopPropagation();
+      setAdminOwnerFilter(btn.dataset.ownerKey, btn.dataset.ownerLabel);
+      closeAccountModal();
+      return;
+    }
+    if (btn?.dataset.action === 'admin-acc-info') {
+      event.stopPropagation();
+      const accId = btn.dataset.id;
+      closeAccountModal();
+      openAdminAccountInfo(accId);
+      return;
+    }
+    if (event.target === overlay || event.target.closest('[data-modal-close]')) {
+      closeAccountModal();
+    }
+  });
 }
 
 function openAdminAccountInfo(accountId) {
@@ -2675,6 +3040,22 @@ function openAdminAccountInfo(accountId) {
           <span class="modal-meta__label">Диалогов</span>
           <span class="modal-meta__value">${Number(account.peersTotal || 0)}</span>
         </div>
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Последний ответ</span>
+          <span class="modal-meta__value">${escapeHtml(formatAdminReplyAge(account.lastReplyAgeMin))}</span>
+        </div>
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Токены сегодня</span>
+          <span class="modal-meta__value">${escapeHtml(formatAdminTokens(account.tokensToday))} · ${escapeHtml(
+            formatAdminCostUsd(account.costToday),
+          )}</span>
+        </div>
+        <div class="modal-meta__item">
+          <span class="modal-meta__label">Токены всего</span>
+          <span class="modal-meta__value">${escapeHtml(formatAdminTokens(account.tokensAll))} · ${escapeHtml(
+            formatAdminCostUsd(account.costAll),
+          )}</span>
+        </div>
       </div>
 
       <div class="modal-actions">
@@ -2714,7 +3095,9 @@ function renderAdmin() {
     const cost = snap.cost?.today || {};
     const ph = snap.proxyHealth || {};
     const costLabel =
-      cost.cost_usd != null ? `$${Number(cost.cost_usd).toFixed(2)}` : '—';
+      cost.cost_usd != null
+        ? `${formatAdminTokens(cost.tokens)} · $${Number(cost.cost_usd).toFixed(2)}`
+        : '—';
     summary.innerHTML = `
       <div class="stat-card"><strong>${Number(acc.total || 0)}</strong><span>Аккаунтов</span></div>
       <div class="stat-card"><strong>${Number(acc.online || 0)}</strong><span>Онлайн</span></div>
@@ -2733,7 +3116,7 @@ function renderAdmin() {
       <div class="stat-card"><strong>${Number(board.campaignArchive?.stuck || board.stuckWorkNoVoice || 0)}</strong><span>Архив: stuck</span></div>
       <div class="stat-card"><strong>${Number(board.campaignArchive?.stale || board.staleDialog || 0)}</strong><span>Архив: тишина</span></div>
       <div class="stat-card"><strong>${Number(ph.work_alive ?? ph.proxy_len ?? '—')}</strong><span>Прокси живые</span></div>
-      <div class="stat-card"><strong>${escapeHtml(costLabel)}</strong><span>Токены сегодня</span></div>
+      <div class="stat-card"><strong>${escapeHtml(costLabel)}</strong><span>Токены / $ сегодня</span></div>
       <div class="stat-card stat-card--accent nft-funnel-actions">
         <button class="btn btn-secondary small" type="button" data-action="admin-nft-expire">Закрыть мёртвые NFT</button>
         <span>Stuck → тишина</span>
@@ -2741,11 +3124,31 @@ function renderAdmin() {
     `;
   }
 
+  const ownerFilterBar = document.getElementById('admin-owner-filter');
+  const ownerFilterLabel = document.getElementById('admin-owner-filter-label');
+  const ownerFilter = state.admin.ownerFilter;
+  if (ownerFilterBar) {
+    if (ownerFilter?.key) {
+      ownerFilterBar.hidden = false;
+      if (ownerFilterLabel) {
+        const n = accountsForOwnerKey(ownerFilter.key).length;
+        ownerFilterLabel.textContent = `Пул ${ownerFilter.label} · ${n} акк.`;
+      }
+    } else {
+      ownerFilterBar.hidden = true;
+    }
+  }
+
   const list = document.getElementById('admin-accounts-list');
   if (list) {
-    const rows = Array.isArray(acc.list) ? acc.list : [];
+    const allRows = Array.isArray(acc.list) ? acc.list : [];
+    const rows = ownerFilter?.key
+      ? allRows.filter((a) => adminOwnerKey(a) === ownerFilter.key)
+      : allRows;
     if (!rows.length) {
-      list.innerHTML = '<div class="empty-state"><p>Аккаунтов пока нет</p></div>';
+      list.innerHTML = ownerFilter?.key
+        ? '<div class="empty-state"><p>У этого владельца аккаунтов нет</p></div>'
+        : '<div class="empty-state"><p>Аккаунтов пока нет</p></div>';
     } else {
       list.innerHTML = rows
         .map((a) => {
@@ -2753,7 +3156,15 @@ function renderAdmin() {
           const title = escapeHtml(rawName);
           const initials = escapeHtml(adminAccInitials(rawName));
           const phone = a.phone ? escapeHtml(a.phone) : '';
-          const owner = escapeHtml(a.owner || a.ownerTg || '—');
+          const ownerLabel = adminOwnerLabel(a);
+          const ownerKey = adminOwnerKey(a);
+          const ownerHtml = ownerKey
+            ? `<button type="button" class="admin-acc__owner" data-action="admin-owner-open" data-owner-key="${escapeHtml(
+                ownerKey,
+              )}" data-owner-label="${escapeHtml(ownerLabel)}" title="Все аккаунты владельца">${escapeHtml(
+                ownerLabel,
+              )}</button>`
+            : escapeHtml(ownerLabel);
           const hasPrompt = Boolean(String(a.prompt || '').trim());
           const hasMedia = Boolean(String(a.mediaChatLink || a.media_chat_link || '').trim());
           return `
@@ -2766,7 +3177,7 @@ function renderAdmin() {
                   </div>
                   <div class="admin-acc__sub">${phone ? `<span class="admin-acc__phone">${phone}</span>` : ''}${
                     phone ? ' · ' : ''
-                  }владелец ${owner}</div>
+                  }владелец ${ownerHtml}</div>
                 </div>
                 <span class="admin-acc__badge ${a.ai ? 'is-on' : 'is-off'}">${a.ai ? 'AI вкл' : 'AI выкл'}</span>
               </div>
@@ -2783,10 +3194,33 @@ function renderAdmin() {
                   <span class="admin-acc__stat-label">неделя</span>
                   <strong>${Number(a.sentWeek || 0)}</strong>
                 </div>
+                <div class="admin-acc__stat">
+                  <span class="admin-acc__stat-label">health</span>
+                  <strong>${Number(a.health != null ? a.health : '—')}</strong>
+                </div>
+                <div class="admin-acc__stat">
+                  <span class="admin-acc__stat-label">ответ</span>
+                  <strong title="${
+                    a.lastReplyAgeMin == null ? '' : `${Number(a.lastReplyAgeMin)} мин назад`
+                  }">${escapeHtml(formatAdminReplyAge(a.lastReplyAgeMin))}</strong>
+                </div>
+                <div class="admin-acc__stat">
+                  <span class="admin-acc__stat-label">токены сегодня</span>
+                  <strong title="${escapeHtml(formatAdminCostUsd(a.costToday))}">${escapeHtml(
+                    formatAdminTokens(a.tokensToday),
+                  )}</strong>
+                </div>
+                <div class="admin-acc__stat">
+                  <span class="admin-acc__stat-label">токены всего</span>
+                  <strong title="${escapeHtml(formatAdminCostUsd(a.costAll))}">${escapeHtml(
+                    formatAdminTokens(a.tokensAll),
+                  )}</strong>
+                </div>
               </div>
               <div class="admin-acc__flags">
                 <span class="admin-flag ${hasPrompt ? 'is-ok' : 'is-bad'}">${hasPrompt ? 'промпт' : 'нет промпта'}</span>
                 <span class="admin-flag ${hasMedia ? 'is-ok' : 'is-bad'}">${hasMedia ? 'медиа' : 'нет медиа'}</span>
+                <span class="admin-flag is-ok">пул ${escapeHtml(a.pool || owner || '—')}</span>
               </div>
               <div class="admin-acc__actions">
                 ${
@@ -4260,6 +4694,22 @@ function bindEvents() {
       return;
     }
 
+    if (action === 'admin-owner-open') {
+      openAdminOwnerPool(target.dataset.ownerKey, target.dataset.ownerLabel);
+      return;
+    }
+
+    if (action === 'admin-owner-filter') {
+      setAdminOwnerFilter(target.dataset.ownerKey, target.dataset.ownerLabel);
+      return;
+    }
+
+    if (action === 'admin-owner-clear') {
+      clearAdminOwnerFilter();
+      notify('Показаны все аккаунты');
+      return;
+    }
+
     if (action === 'admin-akind') {
       state.admin.activityKind = target.dataset.akind || 'all';
       renderAdminActivity();
@@ -4340,6 +4790,45 @@ function bindEvents() {
           return loadAdminData({ force: true });
         })
         .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-radar-refresh') {
+      loadAdminRadar()
+        .then(() => notify('Радар обновлён'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-ideas-refresh') {
+      loadAdminIdeaDay()
+        .then(() => notify('Идеи обновлены'))
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-compare') {
+      const a = String(document.getElementById('admin-cmp-a')?.value || '').trim();
+      const b = String(document.getElementById('admin-cmp-b')?.value || '').trim();
+      if (!a || !b) {
+        notify('Укажи два id аккаунтов');
+        return;
+      }
+      api
+        .getAdminScaleCompare(a, b)
+        .then((r) => {
+          const out = document.getElementById('admin-compare-out');
+          if (out) {
+            out.hidden = false;
+            out.textContent = JSON.stringify(r.compare || r, null, 2);
+          }
+        })
+        .catch((err) => handleRequestError(err));
+      return;
+    }
+
+    if (action === 'admin-metrics-csv') {
+      downloadAdminMetricsCsv().catch((err) => handleRequestError(err));
       return;
     }
 

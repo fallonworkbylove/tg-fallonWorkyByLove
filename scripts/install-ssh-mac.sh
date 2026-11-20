@@ -6,7 +6,9 @@ KEY_SRC="$ROOT/secrets/ssh/id_ed25519"
 PUB_SRC="$ROOT/secrets/ssh/id_ed25519.pub"
 
 if [[ ! -f "$KEY_SRC" ]]; then
-  echo "Missing $KEY_SRC — git pull first on branch with secrets/ssh"
+  echo "Missing $KEY_SRC — private key is NOT in git."
+  echo "Put your local id_ed25519 into secrets/ssh/ (untracked) or copy into ~/.ssh/ manually."
+  echo "See secrets/ssh/README.md"
   exit 1
 fi
 

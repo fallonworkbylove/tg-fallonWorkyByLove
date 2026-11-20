@@ -47,9 +47,20 @@ function reshapeDelayPair({
   outText,
   incomingText = '',
   accountId = null,
+  moodMul = null,
 } = {}) {
   const pace = accountId != null ? humanExtra.getAccountPace(accountId) : null;
-  const mul = pace?.typingMul || 1;
+  let mul = pace?.typingMul || 1;
+  // #6: typing/think чуть следует тону входящего (scaleIdeasPack mood echo).
+  try {
+    const extra =
+      moodMul != null
+        ? Number(moodMul)
+        : require('./scaleIdeasPack').typingMoodMul(incomingText);
+    if (Number.isFinite(extra) && extra > 0) mul *= extra;
+  } catch (_) {
+    /* optional */
+  }
   const outLen = plainLen(outText);
   const inLen = plainLen(incomingText);
 

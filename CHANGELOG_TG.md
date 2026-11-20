@@ -4,6 +4,34 @@
 
 ---
 
+## 0m7. 20 ноя — админ: токены на аккаунте · «ответ» как 1 ч 18 мин
+
+На карточке аккаунта (только админ): токены сегодня / всего (+ $ в title). Возраст ответа: ≥60 мин → «1 ч 10 мин», дни → «1 д 3 ч». `openai_usage_log.account_id` + wiring из aiResponder. Старые записи без id не в per-account. Лента: (updates.js?v=264).
+
+## 0m6. 20 ноя — логи влезают · CSV через копирование в Telegram
+
+Консоль логов: wrap + overflow, без вылезания за экран. CSV дня: в Mini App `a.download` не работает — модалка с «Копировать CSV». Лента: (updates.js?v=263).
+
+## 0m5. 20 ноя — радар: сравнение A/B не вылезает за экран
+
+Сетка «акк A / акк B / Сравнить» на узком экране: 2 поля в ряд, кнопка снизу на всю ширину; `minmax(0,1fr)` + wrap JSON. Лента: (updates.js?v=262).
+
+## 0m4. 20 ноя — админ Идеи: тёмный фон карточек (текст читается)
+
+Карточки «Идея дня» были светлые (`--surface` → белый) на тёмной теме — светлый текст пропадал. Фон/рамка под `--bg-elevated` / `--text`. Лента: (updates.js?v=261).
+
+## 0m3. 20 ноя — админ: События≠Радар≠Идеи · клик по владельцу пула
+
+Подвкладки визуально разведены (kickers + цвет рамки), `admin-block[hidden]` больше не «просвечивает». В AI/аккаунты клик по владельцу → модалка со всеми его аккаунтами + фильтр списка. Smoke `_smoke_admin_owner_0m3`. Лента: (updates.js?v=260).
+
+## 0m2. 20 ноя — harden: gate registry · live cliche · auto mac-ship · SSH key out of git
+
+Реестр волн `replyGateRegistry` + postfilter клише из `CLICHE_TRACK` (кайф/ну ок/ага…). `mac-ship` сам собирает файлы из `_deploy_<tag>.sh`. Private SSH key убран из git. Smoke `_smoke_wave_0m2` + hard `_hard_audit_0m2`. Лента: (updates.js?v=259).
+
+## 0m1. 20 ноя — scale pack: reply gates · admin radar · single NFT voice
+
+Анти-цикл тем, mood echo, soft-meet, toxic soft, bot-score. Админ: day-N, error feed, health/compare/CSV, proxy-low push. Создатель `fallonsociapat`: идея дня. NFT-кампания: только одно голосовое `nft.ogg` (без A/B). Smoke `_smoke_wave_0m1` + hard `_hard_audit_0m1`. Лента: (updates.js?v=258).
+
 ## 0m0. 19 ноя — audit C: exit hang fix · childOk marker-first
 
 Hard `_hard_audit_0ht/0gc` теперь `process.exit(0)` (иначе open handles → ETIMEDOUT и ложный P0). Full audit: OK-marker важнее timeout. Busy smoke/gates учитывают ночной ×1.45 (≤9/26/29м). Proxy burst dead TTL = DEFAULT 12м. Ultra читает `backend/.env`. Лента: (updates.js?v=257).

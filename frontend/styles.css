@@ -390,6 +390,16 @@ h1 {
   animation: lr-rise var(--motion) var(--ease-soft) both;
 }
 
+/* Скрытые подвкладки админки не должны «просвечивать» из‑за анимаций/display у .card */
+.admin-block[hidden] {
+  display: none;
+  animation: none;
+}
+
+.tab-panel.active.is-anim > .admin-block[hidden] {
+  animation: none;
+}
+
 @keyframes panel-in {
   from {
     opacity: 0;
@@ -3154,7 +3164,7 @@ label.account-card,
 
 .admin-acc__stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
   margin: 0 14px;
   padding: 0;
@@ -3166,6 +3176,11 @@ label.account-card,
   border: 1px solid rgba(184, 255, 60, 0.1);
   overflow: hidden;
   align-items: stretch;
+}
+@media (min-width: 560px) {
+  .admin-acc__stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 .admin-acc__stat {
@@ -3611,6 +3626,223 @@ canvas {
   max-width: 100%;
 }
 
+.admin-panel-kicker {
+  margin: 0 0 4px;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #9a958c);
+}
+
+.admin-panel--activity {
+  border-color: color-mix(in srgb, #5ec8ff 35%, var(--border-strong, #2a2f36));
+}
+.admin-panel--radar {
+  border-color: color-mix(in srgb, #b8ff3c 40%, var(--border-strong, #2a2f36));
+}
+.admin-panel--ideas {
+  border-color: color-mix(in srgb, #ffb454 40%, var(--border-strong, #2a2f36));
+}
+
+.admin-acc__owner {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: var(--primary, #b8ff3c);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.admin-acc__owner:hover,
+.admin-acc__owner:focus-visible {
+  color: #e8ffe0;
+}
+
+.admin-owner-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary, #b8ff3c) 35%, transparent);
+  background: color-mix(in srgb, var(--primary, #b8ff3c) 8%, transparent);
+}
+.admin-owner-filter[hidden] {
+  display: none;
+}
+.admin-owner-filter__label {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.admin-owner-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(58vh, 420px);
+  overflow: auto;
+  margin: 0 0 8px;
+}
+.admin-owner-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 6px 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong, #2a2f36);
+  background: color-mix(in srgb, var(--card, #14181e) 92%, #1a222c);
+}
+.admin-owner-row > .btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.admin-owner-row__meta {
+  min-width: 0;
+}
+.admin-owner-row__title {
+  margin: 0;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-owner-row__sub {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  color: var(--muted, #9a958c);
+}
+.admin-owner-row__badge {
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.admin-radar-title {
+  margin: 18px 0 8px;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+.admin-dayn {
+  margin: 0 0 12px;
+}
+.admin-error-feed {
+  max-height: 280px;
+  overflow: auto;
+  margin: 0 0 14px;
+}
+/* Консоль логов: длинные строки не раздувают экран */
+.admin-log-console {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  max-height: min(58vh, 420px);
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  overflow-y: auto;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong, #2a2f36);
+  background: color-mix(in srgb, var(--bg, #050605) 88%, #0a1210);
+  color: var(--text, #e8ffe0);
+}
+.admin-log-line {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.admin-log-ts {
+  color: var(--muted, #9a958c);
+  margin-right: 6px;
+  white-space: nowrap;
+}
+#admin-panel-logs,
+#admin-panel-logs .section-card__header,
+#admin-panel-logs .admin-bulk {
+  min-width: 0;
+  max-width: 100%;
+}
+#admin-panel-logs .admin-bulk {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Сравнение акк A/B: не вылезать за экран (2 колонки + кнопка снизу на узком) */
+.options-actions.admin-compare-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.options-actions.admin-compare-row > .options-field {
+  min-width: 0;
+  width: 100%;
+}
+.options-actions.admin-compare-row > .options-field input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.options-actions.admin-compare-row > .btn {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+@media (min-width: 560px) {
+  .options-actions.admin-compare-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+  .options-actions.admin-compare-row > .btn {
+    grid-column: auto;
+    width: auto;
+    min-width: 7.5rem;
+  }
+}
+.admin-compare-out {
+  margin-top: 10px;
+  max-height: 220px;
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.admin-idea-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, #ffb454 28%, var(--border-strong, #2a2f36));
+  background: color-mix(in srgb, var(--bg-elevated, #0f140f) 88%, #1a1610);
+  color: var(--text, #e8ffe0);
+}
+.admin-idea-card strong {
+  color: #ffb454;
+}
+.admin-idea-day {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .admin-proxy-health {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3618,8 +3850,9 @@ canvas {
   margin: 0 0 14px;
   padding: 12px 14px;
   border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--line, #d8d2c8) 80%, transparent);
-  background: color-mix(in srgb, var(--surface, #fff) 88%, #efe8dc);
+  border: 1px solid var(--border-strong, #2a2f36);
+  background: color-mix(in srgb, var(--bg-elevated, #0f140f) 90%, #121816);
+  color: var(--text, #e8ffe0);
 }
 .admin-proxy-health.is-ok {
   border-color: color-mix(in srgb, #2f7d4a 35%, var(--line, #d8d2c8));
