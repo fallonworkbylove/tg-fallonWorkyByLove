@@ -4,6 +4,10 @@
 
 ---
 
+## 0mg. 20 ноя — vague filler «мелочи бывают» · audit C 10/10
+
+VAGUE_FILLER_RE + мелочи/бывает по-разному. Full hard audit 10/10. Лента: (updates.js?v=273).
+
 ## 0mf. 20 ноя — typo fixes бувет/можео · strip age platitude
 
 WORD_FIXES + stripAgePlatitude («новый 20» / «жизнь только начинается»). Лента: (updates.js?v=272).
