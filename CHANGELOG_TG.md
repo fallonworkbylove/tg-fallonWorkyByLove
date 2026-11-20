@@ -4,6 +4,10 @@
 
 ---
 
+## 0mc. 20 ноя — job ask «кем ты?» · purge отвлеклась patterns
+
+JOB_OCCUPATION + «а кем ты?». `_purge_otvlekla_0mc.js` чистит bot_patterns. Лента: (updates.js?v=269).
+
 ## 0mb. 20 ноя — anti-echo «отвлеклась» · silence hint without that cliché
 
 stripRepeatPonialaHah режет повтор «отвлеклась». softHint: извинение без этого слова. learning reject. Лента: (updates.js?v=268).
