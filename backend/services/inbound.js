@@ -1330,6 +1330,7 @@ module.exports = {
   // keys / helpers
   bufferKey,
   voiceSendKey,
+  downloadMediaWithRetry,
   messageHasSpoiler,
   extractPlainIncomingText,
   quotedTextOf,

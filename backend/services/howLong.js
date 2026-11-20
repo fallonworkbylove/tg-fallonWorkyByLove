@@ -2,17 +2,23 @@
  * How-long helpers: «сколько дней на дв» question / parse / archive threshold.
  */
 const db = require('../db');
-const { bufferKey } = require('./inbound');
 
 const howLongInFlight = new Set();
+
+function bufferKey(accountId, peerId) {
+  return require('./inbound').bufferKey(accountId, peerId);
+}
 
 // Все варианты содержат «на дв?» — по этой подстроке ищем вопрос в истории.
 const HOWLONG_QUESTIONS = [
   'слушай, а ты скок дней уже сидишь на дв?',
   'кстати, а сколько дней ты уже на дв?',
   'а скок ты уже дней на дв?',
-  'а ты давно на дв или недавно?',
-  'интересно скок ты уже дней на дв крутишься?',
+  // Маркер «на дв?» обязателен — иначе wasHowLongAsked / отсев не видят вопрос.
+  'а ты давно на дв? или только зашёл?',
+  'интересно скок ты уже дней на дв?',
+  'хех а скок примерно уже дней на дв?',
+  'ну и скок ты уже тут дней на дв?',
 ];
 const HOWLONG_MARKER = 'на дв?';
 const HOWLONG_LEGACY_MARKER = 'давно тут сидишь';
@@ -36,6 +42,16 @@ function isHowLongQuestion(content) {
   const c = String(content || '');
   return c.includes(HOWLONG_MARKER) || c.includes(HOWLONG_LEGACY_MARKER);
 }
+
+/** Все шаблоны обязаны нести маркер — иначе отсев/архив слепнут. */
+function assertHowLongMarkers() {
+  for (const q of HOWLONG_QUESTIONS) {
+    if (!isHowLongQuestion(q)) {
+      throw new Error(`howLong template missing marker: ${q}`);
+    }
+  }
+}
+assertHowLongMarkers();
 
 async function wasHowLongAsked(accountId, peerId) {
   const [rows] = await db.execute(

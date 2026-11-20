@@ -22,6 +22,7 @@ const { isFloodError } = require('./peers');
 const {
   extractVideoFrameBuffers,
   MAX_INCOMING_VIDEO_BYTES,
+  downloadMediaWithRetry,
 } = require('./inbound');
 const {
   describeOwnMedia,
@@ -1032,7 +1033,12 @@ async function loadOwnMediaFrames(client, item, mediaType) {
   if (!item.msg) return [];
   let frames = [];
   // Whisper на беззвучных кружках галлюцинирует («спасибо за просмотр») — звук не берём.
-  const buf = await client.downloadMedia(item.msg, {});
+  let buf = null;
+  try {
+    buf = await downloadMediaWithRetry(client, item.msg, {}, 'own-media');
+  } catch (e) {
+    console.warn('[mediaSend] own-media download:', String(e.message || e).slice(0, 100));
+  }
   if (mediaType === 'photo') {
     if (buf && buf.length) frames = [buf];
   } else if (buf && buf.length && buf.length <= MAX_INCOMING_VIDEO_BYTES) {
@@ -1040,7 +1046,7 @@ async function loadOwnMediaFrames(client, item, mediaType) {
   }
   if (!frames.length && mediaType !== 'photo') {
     try {
-      const thumb = await client.downloadMedia(item.msg, { thumb: 0 });
+      const thumb = await downloadMediaWithRetry(client, item.msg, { thumb: 0 }, 'own-thumb');
       if (thumb && thumb.length) frames = [thumb];
     } catch (_) {}
   }

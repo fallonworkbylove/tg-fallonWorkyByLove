@@ -4,6 +4,10 @@
 
 ---
 
+## 0m7. 20 ноя — howLong marker fix · own-media GetFile retry · +alts
+
+Шаблон без «на дв?» ломал wasHowLongAsked/отсев — исправлен + assert. +2 alts. mediaSend own frames через downloadMediaWithRetry. Лента: (updates.js?v=264).
+
 ## 0m6. 20 ноя — media GetFile retry all · short-ack echo break
 
 `downloadMediaWithRetry` для голоса/фото/видео/стикера. `stripRepeatPonialaHah` ломает эхо прикольно/норм. Лента: (updates.js?v=263).
