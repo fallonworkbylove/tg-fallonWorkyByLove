@@ -132,7 +132,7 @@ function isOpenAiCircuitOpen() {
 }
 
 async function openaiCreateWithProxyFailover(run) {
-  if (!openai) {
+  if (!ensureOpenAiClient()) {
     throw new Error('OpenAI client is null (AUDIT_SMOKE?). Не могу ответить.');
   }
   if (isOpenAiCircuitOpen()) {
@@ -244,8 +244,21 @@ const underPm2 =
 const skipOpenAiBoot = process.env.AUDIT_SMOKE === '1' && !underPm2;
 let openai = skipOpenAiBoot ? null : new OpenAI(buildOpenAIOptions());
 
+/** 0pl: если client=null (залипший AUDIT_SMOKE / гонка boot) — один soft recreate. */
+function ensureOpenAiClient() {
+  if (openai) return openai;
+  if (process.env.AUDIT_SMOKE === '1' && !underPm2) return null;
+  try {
+    openai = new OpenAI(buildOpenAIOptions());
+    console.warn('[openai] client recreated after null');
+  } catch (err) {
+    console.error('[openai] recreate fail:', err && err.message ? err.message : err);
+  }
+  return openai;
+}
+
 function isOpenAiClientReady() {
-  return Boolean(openai);
+  return Boolean(ensureOpenAiClient());
 }
 
 function openAiProxyPoolLen() {
@@ -261,6 +274,8 @@ function openAiProxyPoolLen() {
 // в бан по IP (403 Country, region, or territory not supported).
 module.exports.buildOpenAIOptions = buildOpenAIOptions;
 module.exports.isOpenAiClientReady = isOpenAiClientReady;
+module.exports.ensureOpenAiClient = ensureOpenAiClient;
+module.exports.getMediaClient = getMediaClient;
 module.exports.openAiProxyPoolLen = openAiProxyPoolLen;
 module.exports.openaiCreateWithProxyFailover = openaiCreateWithProxyFailover;
 module.exports.isOpenAiProxyTransportError = isOpenAiProxyTransportError;
@@ -286,8 +301,10 @@ const FALLBACK_MODEL = process.env.OPENAI_MODEL_FALLBACK || 'gpt-4o-mini';
 // настоящего OpenAI) — голос/фото идут через него, а чат через freemodel.
 // Если ключ не задан — используется основной клиент (голос/фото могут не
 // работать на freemodel, но бот продолжит отвечать текстом).
-function buildMediaClient() {
-  if (!process.env.OPENAI_FALLBACK_KEY) return openai;
+let mediaClientDedicated = null;
+let mediaClientLogged = false;
+
+function buildMediaClientDedicated() {
   const opts = { apiKey: process.env.OPENAI_FALLBACK_KEY };
   const socks = firstSocks5FromEnv();
   if (socks) {
@@ -298,11 +315,21 @@ function buildMediaClient() {
       // без прокси — как получится
     }
   }
-  console.log('[openai] Голос/фото идут через отдельный ключ OpenAI (fallback).');
+  if (!mediaClientLogged) {
+    mediaClientLogged = true;
+    console.log('[openai] Голос/фото идут через отдельный ключ OpenAI (fallback).');
+  }
   return new OpenAI(opts);
 }
 
-const mediaClient = buildMediaClient();
+/** 0pl: lazy media client — не залипает на null с boot. */
+function getMediaClient() {
+  if (process.env.OPENAI_FALLBACK_KEY) {
+    if (!mediaClientDedicated) mediaClientDedicated = buildMediaClientDedicated();
+    return mediaClientDedicated;
+  }
+  return ensureOpenAiClient();
+}
 
 // Запасной промпт, если у аккаунта не задан свой.
 const DEFAULT_PROMPT =
@@ -676,32 +703,12 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   // переспрашивает то же самое (например «что делаешь?») спустя пару
   // сообщений, потому что не сверяет новый ответ с историей выше. Явно
   // просим её сначала проверить историю диалога.
+  // Сжато: детали уточнений/смысла — в messageAnalysis у user turn (не простыня).
   const noRepeatReminder =
-    'ВАЖНО: перед тем как ответить, посмотри на историю диалога выше и восстанови последние события строго по порядку. ' +
-    'Учитывай, кто именно сказал каждую фразу: сообщения с role user написал собеседник, role assistant — ты. ' +
-    'Не задавай вопрос, на который собеседник уже ответил, и не спрашивай заново то, что уже известно из истории. ' +
-    'Если собеседник отвечает коротко («27», «нет», «понятно»), связывай ответ с непосредственно предыдущим вопросом, ' +
-    'а не придумывай новый контекст. Не ссылайся на факт, которого нет в истории. ' +
-    'Если собеседник пишет очень коротко («чем», «почему», «а что», «в смысле», «как», «это», «откуда», «кто») — ' +
-    'это почти всегда уточнение к ТВОЕЙ предыдущей фразе (role assistant), а не новая тема. ' +
-    'Свяжи ответ с последним своим сообщением. Не пиши «не поняла» / «о чём речь», пока в истории есть к чему привязать его слова. ' +
-    '«Откуда?» после твоей фразы про выписку/больничный = «откуда выпишут?», НЕ «в каком городе ты» — город не называй. ' +
-    'Если во входящем есть пометка [уточнение к твоей фразе «...»] или [ответ на его сообщение «...»], отвечай именно про эту фразу/цитату. ' +
-    'ФАКТЫ О СЕБЕ: города, сроки «как давно», куда едешь, мама/семья — только из промпта и из того, что УЖЕ сказала в этом диалоге. Не выдумывай. ' +
-    'Не путай «сейчас живу» и «переезжаю». Пока не приехала — сборы/коробки, не распаковка. ' +
-    'Переезд насовсем (не «ненадолго»). К маме — мама уже в городе переезда. ' +
-    'Причина переезда — из промпта/легенды; не «нашла работу в городе» (работа онлайн). ' +
-    'На «как дела / что делаешь / как день» НЕ пиши про переезд, сборы, коробки, «собираюсь» — ' +
-    'это заезженно. Ответь мелочью дня (кофе, сериал, чай, устала, дома). ' +
-    'Переезд — только если он сам спросил про город/когда приедешь/сборы. ' +
-    'На «из какого города / где ты / как давно» — короткий ответ по фактам, без зеркала «а ты там?». ' +
-    'Если есть [геоконтекст ...] — согласуй с ним. ' +
-    'Продолжай последнюю тему естественно; новую тему начинай только если текущая завершена. ' +
-    'Если последнее сообщение относится к недавно присланному фото, изображению или медиа, это имеет приоритет над старыми темами. ' +
-    'Отвечай именно на вопрос о последнем изображении и не возвращайся к спорту, хобби или другой прежней теме, если собеседник её не поднял. ' +
-    'Если во входящем есть пометка [ответ на «...»] / [ответ на его сообщение «...»], человек отвечает именно на эту цитату, ' +
-    'какой бы ни была его реплика: короткое «да», «нет», «!», одно слово, вопрос или целое предложение. ' +
-    'Связывай весь текст после пометки с цитатой в кавычках и отвечай на него в этом контексте, а не придумывай другую тему.';
+    'Смотри историю: user — он, assistant — ты. Не переспрашивай то, что уже известно. ' +
+    'Короткие «чем/почему/откуда/в смысле» — уточнение к ТВОЕЙ прошлой фразе, не новая тема. ' +
+    'Факты о себе (город/переезд/мама) — только из промпта и того, что уже сказала. ' +
+    'На «как дела/что делаешь» — мелочь дня, не переезд. Медиа/цитата во входящем — приоритет.';
 
   // Определение настроения: перед ответом модель сама (без отдельного
   // запроса к API) считывает эмоциональный тон последнего сообщения
@@ -711,59 +718,35 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     'Для голосового o sebe.ogg подходят только вопросы о жизненных увлечениях, хобби и занятиях в целом. ' +
     'Вопросы «что делаешь сейчас?» и «чем занята прямо сейчас?» не считай вопросами о себе — на них отвечай текстом. ';
 
-  const moodReminder =
-    'Подстрой тон под настроение собеседника, но НЕ проговаривай анализ («вижу ты грустишь»). ' +
-    'Грустит — мягче. Злится всерьёз — спокойно. Дразнит / шутит / пишет «ты бот» игриво — ' +
-    'лёгкий сарказм или «хах» в одно короткое предложение, БЕЗ утешений «не переживай». ' +
-    'Хорошее настроение — легко и коротко, без эссе.';
+  // Короткий вайб; полный «ход девушки» — один раз в messageAnalysis у user turn.
+  let moodReminder =
+    'Подстрой тон под настроение собеседника, но НЕ проговаривай анализ вслух. Коротко.';
+  try {
+    const mo = require('./messageAnalysis').buildMoodOverride(contextualUserMessage, history);
+    if (mo) moodReminder = mo;
+  } catch (_) {
+    /* optional */
+  }
 
   // Жёсткое напоминание про длину. Ставим его ОТДЕЛЬНО от roleReminder и
   // ближе к концу списка сообщений (сразу перед новым сообщением
   // пользователя), потому что gpt-4o-mini заметно лучше следует инструкциям,
   // которые находятся ближе к концу контекста — на длинной истории (20-30
   // сообщений) правило длины, сказанное только в самом начале, размывается.
-  const loveReminder =
-    'Тон: залюбленный и тёплый — как девушка, которой он симпатичен: мягко, с лёгкой нежностью в формулировках ' +
-    '(«мне приятно)», «ну ты милый)», «рада что написал)», интерес к нему), без сухости «по делу». ' +
-    'Дружелюбие и интерес должны чувствоваться почти всегда, когда он не грубит. ' +
-    'НЕ прилипай: без «я тебя люблю», «дорожу тобой», «ты мне так важен» в каждом ответе и без нытья. ' +
-    'Лёгкая ласка/нежность — чаще, когда диалог уже тёплый или он сам флиртует; если холоден/грубит — тепла меньше. ' +
-    'Смайлики-эмодзи РЕДКО: максимум один мягкий в конце (☺️ 😊 🥰 💕 🙂), не чаще чем раз в несколько реплик; чаще достаточно скобки «)». ' +
-    'Без россыпи эмодзи и без «!!!».';
+  // Один сжатый блок живого общения (не три простыни love/style/laugh).
+  const aliveStyleReminder =
+    'Общение: любвеобильная девушка в личке — коротко, тепло, с нежностью и интересом к нему. ' +
+    'Чаще мягкая ласка в формулировках: «мне приятно)», «ну ты милый)», «рада что написал)», «с тобой хорошо)». ' +
+    'Если он тёплый/флиртует — отвечай теплее и взаимно; если холоден — мягче, но не сухо. ' +
+    'Без тяжёлого «я тебя люблю» в каждом сообщении и без нытья. Эмодзи редко, чаще «)». ' +
+    'Если реально смешно — «ахаха» или <<LAUGH>>/<<REACT:😂>>. Цепляйся к его словам. На вопрос — сначала ответ. Женский род.';
 
-  const laughReminder =
-    'Если последнее сообщение собеседника тебе реально смешное — шутка, прикол, неожиданная смешная фраза — ' +
-    'можно либо токен <<LAUGH>> (отдельное «ахаха»), либо только реакцию <<REACT:😂>> без текста. ' +
-    'Не ставь токен на обычный «хах», смайл, сарказм или просто весёлое настроение. Не на каждое сообщение.';
-
-  // Сжатый стиль (thin): без простыни запретов — детали в humanThinLayer.buildThinHumanHint.
-  const humanStyleReminder =
-    'Стиль (этап знакомства, до любой «работы»): как живая в личке — очень коротко, тепло, иногда лень/вредность. ' +
-    'Одна мысль на ответ; можно «кайф», «о как», «ахаха» отдельно если смешно. Цепляйся к его словам. ' +
-    'На медиа — реакция на содержимое, не «покажи ещё». На вопрос — сначала короткий ответ. ' +
-    'Мелочь дня (зал/подруги/дома) — фразой, не анкетой. На зов встретиться — мягко «как буду на месте», без сухого нет. ' +
-    '«Спасибо» только на комплимент/подарок. Без лести, морали, NFT и «чем могу помочь». ' +
-    'Женский род. ДВ = Дайвинчик. Чаще «)», редко один смайл. Реакции TG: 👍 ❤️ 🔥 😂 🥰 👏 😁 🤔 😢 🎉 🙏 😍 😭 😘 😮 👀.';
-
-  const answerFirstReminder =
-    'Сначала по делу на то, что он СЕЙЧАС написал — коротко. ' +
-    'Несколько вопросов — ответь на каждый. Имя — сразу из промпта. ' +
-    'Фото/голос — на содержимое. Без эссе, морали и впаривания NFT.';
-
-  // Встречи: мягко «да» на будущее (как буду в городе), без «завтра в 6 у метро».
-  const noMeetReminder =
-    'ВСТРЕЧИ: если зовут погулять / увидеться — НЕ сухое «нет» и НЕ «не до встреч / только переписка / коробки». ' +
-    'Мягко соглашайся на будущее: «можно как буду на месте)», «погуляем когда приеду)». ' +
-    'НЕ назначай точное место/время («завтра в 6», «у метро»). ' +
-    'НЕ пиши «скоро увидимся» как факт на сегодня. ' +
-    'НЕ пиши мета «а, про если)». Контакты (номер/инст) по-прежнему не раздавай.';
-
-  const lengthReminder =
-    'ДЛИНА: чаще 1 короткая фраза (примерно 3–15 слов), максимум 2. Голое «ок/ага» — только если он сам так. ' +
-    'Если он сказал мысль/факт — ответь ПО СУТИ (1 деталь), не отпиской «ну да)». ' +
-    'Несколько вопросов от него — 2 короткие строки. Без списков и эссе. Дефис «-», не тире «—». ' +
-    'ВОПРОС К НЕМУ: нормально короткий «как дела?/как день?/а ты чем?», если давно не спрашивала. ' +
-    'Не допрос и не каждое сообщение. Сказала про себя — не зеркаль «а ты откуда?». Факт из истории не переспрашивай.';
+  // Длина + сначала ответ + встречи — один блок вместо трёх простыней.
+  const craftReminder =
+    'Форма: 1 короткая фраза (макс 2), сначала по делу на то, что он СЕЙЧАС написал. ' +
+    'Несколько вопросов — коротко на каждый. Фото/голос — на содержимое. Без эссе и NFT. ' +
+    'Встреча: мягко на будущее («как буду на месте)»), без точного места/времени и без контактов. ' +
+    'Иногда один вопрос ему («как день?»), не допрос и не зеркало «а ты откуда?» после своего города.';
 
   const contextGuard = buildContextGuard(history, contextualUserMessage);
 
@@ -774,9 +757,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     { role: 'system', content: roleReminder },
     { role: 'system', content: voiceIntentReminder },
     { role: 'system', content: moodReminder },
-    { role: 'system', content: loveReminder },
-    { role: 'system', content: humanStyleReminder },
-    { role: 'system', content: laughReminder },
+    { role: 'system', content: aliveStyleReminder },
   ];
 
   if (characterGeoReminder) {
@@ -832,11 +813,21 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
         'НИКОГДА не пиши в ответ служебные строки вида [медиа:#123] или {кружок: …} — только <<PHOTO>>/<<VIDEO>>/<<CIRCLE>> и обычный текст.',
     });
   } else if (options.contextualCircle) {
+    let circleMoment =
+      'дома, в машине, на кухне, с чаем / телефоном, после тренировки';
+    try {
+      if (require('./timeStyle').isCoffeeOkHourMsk()) {
+        circleMoment =
+          'дома, в машине, на кухне, с кофе, после тренировки';
+      }
+    } catch (_) {
+      /* optional */
+    }
     messages.push({
       role: 'system',
       content:
         'Можешь РЕДКО сама прислать кружок (видеосообщение), если это живо подходит по смыслу разговора — ' +
-        'как будто реально записываешь момент: дома, в машине, на кухне, с кофе, после тренировки, ' +
+        `как будто реально записываешь момент: ${circleMoment}, ` +
         'собираешься, гуляешь и т.п. Тогда добавь в ответ токен <<CIRCLE>>. ' +
         'НЕ шли кружок просто так, на каждый ответ, на приветствие, на «как дела» без темы, ' +
         'и НЕ шли фото/видео токены <<PHOTO>>/<<VIDEO>> без прямой просьбы. ' +
@@ -944,11 +935,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   if (quoteSenseReminder) {
     messages.push({ role: 'system', content: quoteSenseReminder });
   }
-  messages.push({ role: 'system', content: noMeetReminder });
-  messages.push({ role: 'system', content: lengthReminder });
+  messages.push({ role: 'system', content: craftReminder });
   messages.push({ role: 'system', content: languageReminder });
-  // Ближе к концу — лучше держит правило «сначала ответь».
-  messages.push({ role: 'system', content: answerFirstReminder });
   if (replyLang === 'ru') {
     messages.push({
       role: 'system',
@@ -1061,6 +1049,18 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
     content = sanitizeForModel(content);
     if (!content.trim()) continue;
     messages.push({ role, content });
+  }
+  // 0sv: разбор его реплики — максимально близко к текущему сообщению.
+  try {
+    const analysisHint = require('./messageAnalysis').buildAnalysisHint(
+      contextualUserMessage,
+      history,
+    );
+    if (analysisHint) {
+      messages.push({ role: 'system', content: sanitizeForModel(analysisHint, 2500) });
+    }
+  } catch (_) {
+    /* optional */
   }
   messages.push({ role: 'user', content: sanitizeForModel(contextualUserMessage) });
 
@@ -1590,9 +1590,17 @@ function moveSpamDayDetails() {
   } catch (_) {
     /* optional */
   }
-  const base = ['дома сижу)', 'сериал фоном)', 'просто отдыхаю)', 'валяюсь)', 'в телефоне сижу)'];
-  if (coffeeOk) base.push('кофе пью)', 'ничего особенного, кофе пью)');
-  else base.push('чай пью)', 'туплю в телефоне)');
+  const base = [
+    'дома сижу)',
+    'сериал фоном)',
+    'просто отдыхаю)',
+    'валяюсь)',
+    'в телефоне сижу)',
+    'дела мелкие)',
+    'музыку слушаю)',
+  ];
+  if (coffeeOk) base.push('кофе пью)', 'с кофейком туплю)');
+  else base.push('чай пью)', 'туплю в телефоне)', 'ничего такого)');
   return base;
 }
 
@@ -2417,6 +2425,17 @@ const MODEL_TYPO_FIXES = [
   [/\bce+pi?ous+ly\b/gi, 'серьёзно'],
   [/\bs[ei]rious+ly\b/gi, 'серьёзно'],
   [/\blol\s*u\s*serious\??\b/gi, 'серьёзно?'],
+  // 0nj: live — «заниманшься»
+  [/заниманшься/gi, 'занимаешься'],
+  [/занимаешся/gi, 'занимаешься'],
+  [/занимаешсья/gi, 'занимаешься'],
+  // 0nk: live — «бкдет»
+  [/бкдет/gi, 'будет'],
+  // 0nz: live stumps
+  [/(?<![а-яё])тогд(?=[)\s]*[).!?]|$)/gi, 'тогда'],
+  [/(?<![а-яё])прият(?=[)\s]*[).!?]|$)/gi, 'приятно'],
+  [/(?<![а-яё])спасиб(?=[)\s]*[).!?]|$)/gi, 'спасибо'],
+  [/(?<![а-яё])интерес(?=[)\s]*[).!?]|$)/gi, 'интересно'],
 ];
 
 function fixModelTypos(reply) {
@@ -3548,9 +3567,11 @@ let _transcribeErrN = 0;
 async function transcribeAudio(buffer, filename = 'voice.ogg') {
   try {
     if (!Buffer.isBuffer(buffer) || buffer.length < 200) return '';
+    const client = getMediaClient();
+    if (!client) return '';
     const name = detectAudioFilename(buffer, filename);
     const file = await toFile(buffer, name);
-    const result = await mediaClient.audio.transcriptions.create({
+    const result = await client.audio.transcriptions.create({
       file,
       model: 'whisper-1',
       // Без language — Whisper сам определяет ru/en.
@@ -3611,11 +3632,12 @@ async function describeImage(buffer, caption = '') {
     }
     const base64 = buffer.toString('base64');
 
-    if (!mediaClient) {
+    const client = getMediaClient();
+    if (!client) {
       console.error('Ошибка распознавания фото: OpenAI mediaClient is null');
       return caption ? `стикер ${caption}`.trim() : '';
     }
-    const completion = await mediaClient.chat.completions.create({
+    const completion = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       max_tokens: 200,
       messages: [
@@ -3681,7 +3703,9 @@ async function samePersonAsProfilePhotos(incomingBuffer, profileBuffers = []) {
     });
   }
   try {
-    const completion = await mediaClient.chat.completions.create({
+    const client = getMediaClient();
+    if (!client) return false;
+    const completion = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       max_tokens: 8,
       messages: [{ role: 'user', content }],
@@ -3704,7 +3728,9 @@ async function describeOwnMedia(frames, kindLabel, transcript = '') {
   const images = (frames || []).filter((f) => f && f.length).slice(0, 2);
   if (!images.length) return '';
   try {
-    const completion = await mediaClient.chat.completions.create({
+    const client = getMediaClient();
+    if (!client) return '';
+    const completion = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       max_tokens: 70,
       messages: [
@@ -3747,7 +3773,9 @@ async function classifyOwnMediaLight(frames) {
   const images = (frames || []).filter((f) => f && f.length).slice(0, 1);
   if (!images.length) return '';
   try {
-    const completion = await mediaClient.chat.completions.create({
+    const client = getMediaClient();
+    if (!client) return '';
+    const completion = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       max_tokens: 5,
       messages: [

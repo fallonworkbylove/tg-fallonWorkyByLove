@@ -1,8 +1,888 @@
-﻿сможе Changelog для тгк — 24–26 октября 2026
+Changelog LoveRussian — лента тегов для TG.
 
-Готовые посты, можно копировать по одному. Нумерация подряд: … → 0df → 0dg → …
+Готовые посты, можно копировать по одному. Нумерация подряд.
 
 ---
+
+## 0t0. 21 ноя — меньше шума в промпте: сжаты noRepeat + craft
+
+noRepeat эссе → короткий блок; length/answerFirst/meet → craftReminder. Мозг (messageAnalysis) остаётся главным. Чтобы не тупела от простыней. Лента: (updates.js?v=509).
+
+## 0sz. 21 ноя — любвеобильнее: тон / мозг / стиль
+
+aliveStyle + messageAnalysis talkAlive/herMove + soft/thin: больше нежности («приятно / милый / рада / с тобой хорошо»), без тяжёлого «люблю» в каждом. Лента: (updates.js?v=508).
+
+## 0sy. 21 ноя — акцент на мозг: живое общение + чистый промпт
+
+messageAnalysis: talkAlive («как говорить») в блоке мозга. Сжаты love/style/laugh → aliveStyle; softHint/thin base без простыней. Меньше шума — живее ответы. Лента: (updates.js?v=507).
+
+## 0sx. 21 ноя — чтение как девушка + без засорения точечными хинтами
+
+messageAnalysis: vibe/subtext/herMove — один короткий блок у user turn. Вычищены дубли softHint «ВАЖНО СЕЙЧАС» и thin/mood повторы. Лента: (updates.js?v=506).
+
+## 0sw. 21 ноя — смысл реплики первым: «он имеет в виду / чего ждёт»
+
+messageAnalysis: interpretMeaning + expect + referent + focus → hint «ОН ИМЕЕТ В ВИДУ / ЧЕГО ЖДЁТ / ПРИВЯЗКА» до user turn. Не каталог запретов — понимание сообщения. Лента: (updates.js?v=505).
+
+## 0sv. 21 ноя — глобальный разбор реплики + настроение до генерации
+
+messageAnalysis: speechAct/emotion/topics/herMood → buildAnalysisHint перед user turn, moodOverride в system, softHint/thinLayer. Меньше «мимо темы» на корне — анализ, не точечный gate. Лента: (updates.js?v=504).
+
+## 0su. 21 ноя — скрины сегодня: широкие постфильтры girl-quality
+
+isColdAckBlob (ладно+ахах); broaden where/forget/age/job/photo/roots/dry/zvuchit/geo BY; fixColdAckOnHisQuestion; fixNuLadnoDeadEnd; fixBareKlassVotTak; fixGarbledNonsenseReply; fixPokaTekstomCold; softHint anti-dry. Лента: (updates.js?v=503).
+
+## 0st. 21 ноя — пенсия-шутка / именно / имеешь в виду / что думаешь / стикер echo
+
+gates: fixPensionV28Joke; fixDaImennoBare; fixImeyeshVVidu; fixChtoDumaeshCoach; diversifyKlassnyyStickerEcho. Лента: (updates.js?v=502).
+
+## 0ss. 21 ноя — обрывы / видение / это хорошо / коуч-эссе / overlong
+
+gates: fixOgoChtoObryv; fixSvoeVidenie; fixEtoHoroshoBare; fixSlozhnayaZadacha; fixSlozhnoNoInteresno; fixOsnovaDlyaVsego; fixMoshchnyyOhotnik; fixOverlongSingleBubble. Лента: (updates.js?v=501).
+
+## 0sr. 21 ноя — короче ну ок / грубость / устал-забота / поняла-эссе
+
+gates: fixKorocheNuOk; fixInsultColdAck; fixColdAckOnTiredShare; fixPonjalaNarvernoEssay; fixMmOkOnSubstance. softHints устал/грубит. Лента: (updates.js?v=500).
+
+## 0sq. 21 ноя — human-girl: сухие поняла / звучит / канцелярит / гео Гомель
+
+gates: fixDryPonjalaVariants; fixHekhZvuchit; fixStarayusBytNaUrovne; fixCityViewPlatitude; fixIshcheshOsobennoe; fixBareATebe; fixKlassnyyVozrast; fixRussiaGomelLeak; fixProstoYaTakaya; fixKakieTrebovaniya. enrichBareAck без «хех звучит». softHint anti-канцелярит. Лента: (updates.js?v=499).
+
+## 0sp. 21 ноя — приветствую → привет, не «а дальше?)»
+
+BARE_GREETING_RE: приветствую / здравствуйте / доброго дня. fixAckOnBareGreeting: на голое приветствие только greeting ack. softHint. Лента: (updates.js?v=498).
+
+## 0so. 21 ноя — triage: where-live / false forget / age nu / job probe / grammar
+
+gates: fixWhereLiveOfftopic; fixFalseForgetRemind; fixBareNuOnAgeAsk; fixHmPonimayuOnJobProbe; fixPonjalaOnPhotoPraise; fixTruncatedNounForms; fixSleepingThenWrite; fixColdAckOnRootsAsk. softHints город/возраст. notice UI. styles v=201. Лента: (updates.js?v=497).
+
+## 0sn. 21 ноя — блог / не веду·просто сторис echo / blog rate / toast UI
+
+gates: fixColdAckOnBlogAsk; diversifyNeVeduEcho; diversifyProstoStorisEcho; softHint блог. blog GET rate. toast polish. styles v=200. Лента: (updates.js?v=496).
+
+## 0sm. 21 ноя — пирсинг / нет пирсинга·только уши echo / piercing rate / nav-press UI
+
+gates: fixColdAckOnPiercingAsk; diversifyNetPirsngaEcho; diversifyTolkoUshiEcho; softHint пирсинг. piercing GET rate. nav-btn press polish. styles v=199. Лента: (updates.js?v=495).
+
+## 0sl. 21 ноя — тату / нет тату·пока без echo / tattoo rate / nav-label UI
+
+gates: fixColdAckOnTattooAsk; diversifyNetTatuEcho; diversifyPokaBezEcho; softHint тату. tattoo GET rate. nav-btn label polish. styles v=198. Лента: (updates.js?v=494).
+
+## 0sk. 21 ноя — подкасты / по дороге·в наушниках echo / podcast rate / nav-indicator UI
+
+gates: fixColdAckOnPodcastAsk; diversifyPoDorogeEcho; diversifyVNaushnikahEcho; softHint подкасты. podcast GET rate. nav-indicator polish. styles v=197. Лента: (updates.js?v=493).
+
+## 0sj. 21 ноя — концерты / редко бываю·на концерты нет echo / concert rate / nav-btn UI
+
+gates: fixColdAckOnConcertAsk; diversifyRedkoByvayuEcho; diversifyNaKontsertyNetEcho; softHint концерты. concert GET rate. nav-btn polish. styles v=196. Лента: (updates.js?v=492).
+
+## 0si. 21 ноя — музей·театр / раз ходила·редко хожу echo / museum rate / bottom-nav UI
+
+gates: fixColdAckOnMuseumAsk; diversifyRazHodilaEcho; diversifyRedkoHozhuEcho; softHint музей. museum GET rate. bottom-nav gap polish. styles v=195. Лента: (updates.js?v=491).
+
+## 0sh. 21 ноя — настолки / с подругами·по настроению echo / board rate / online-dot UI
+
+gates: fixColdAckOnBoardAsk; diversifySPodrugamiEcho; diversifyPoNastroeniyuEcho; softHint настолки. board GET rate. online-dot polish. styles v=194. Лента: (updates.js?v=490).
+
+## 0sg. 21 ноя — огород / нет огорода·нет сада echo / garden rate / account-head UI
+
+gates: fixColdAckOnGardenAsk; diversifyNetOgorodaEcho; diversifyNetSadaEcho; softHint сад. garden GET rate. account-head gap polish. styles v=193. Лента: (updates.js?v=489).
+
+## 0sf. 21 ноя — вяжешь / не вяжу·вяжу редко echo / knit rate / list-item UI
+
+gates: fixColdAckOnKnitAsk; diversifyNeVyazhuEcho; diversifyVyazhuRedkoEcho; softHint вязание. knit GET rate. list-item polish. styles v=192. Лента: (updates.js?v=488).
+
+## 0se. 21 ноя — шахматы / слабо·хех чуть echo / chess rate / stack UI
+
+gates: fixColdAckOnChessAsk; diversifySlaboEcho; diversifyHexChutEcho; softHint шахматы. chess GET rate. stack gap polish. styles v=191. Лента: (updates.js?v=487).
+
+## 0sd. 21 ноя — коньки / плохо·хех слабо echo / skate rate / stat-label UI
+
+gates: fixColdAckOnSkateAsk; diversifyPlohoEcho; diversifyHexSlaboEcho; softHint коньки. skate GET rate. stat-card label polish. styles v=190. Лента: (updates.js?v=486).
+
+## 0sc. 21 ноя — лыжи / не катаюсь·раз было echo / ski rate / stat-card UI
+
+gates: fixColdAckOnSkiAsk; diversifyNeKatayusEcho; diversifyRazByloEcho; softHint лыжи. ski GET rate. stat-card polish. styles v=189. Лента: (updates.js?v=485).
+
+## 0sb. 21 ноя — походы / не ходила·в горы нет echo / hike rate / bulk-bar UI
+
+gates: fixColdAckOnHikeAsk; diversifyNeHodilaEcho; diversifyVGoryNetEcho; softHint походы. hike GET rate. accounts-bulk-bar polish. styles v=188. Лента: (updates.js?v=484).
+
+## 0sa. 21 ноя — рыбалка / не была·раз была echo / fish rate / summary-grid UI
+
+gates: fixColdAckOnFishAsk; diversifyNeBylaEcho; diversifyRazBylaEcho; softHint рыбалка. fish GET rate. summary-grid polish. styles v=187. Лента: (updates.js?v=483).
+
+## 0s9. 21 ноя — бегаешь / ну нет·не бегаю echo / run rate / toast UI
+
+gates: fixColdAckOnRunAsk; diversifyNuNetEcho; diversifyNeBegayuEcho; softHint бег. run GET rate. toast polish. styles v=186. Лента: (updates.js?v=482).
+
+## 0s8. 21 ноя — йога / пробовала·хех раз echo / yoga rate / notice UI
+
+gates: fixColdAckOnYogaAsk; diversifyProbovalaEcho; diversifyHexRazEcho; softHint йога. yoga GET rate. notice polish. styles v=185. Лента: (updates.js?v=481).
+
+## 0s7. 21 ноя — велосипед / хех да·мм да echo / bike rate / empty-btn UI
+
+gates: fixColdAckOnBikeAsk; diversifyHexDaEcho; diversifyMmDaEcho; softHint велосипед. bike GET rate. empty-state btn polish. styles v=184. Лента: (updates.js?v=480).
+
+## 0s6. 21 ноя — плаваешь / да чуть-чуть·умею echo / swim rate / empty-state UI
+
+gates: fixColdAckOnSwimAsk; diversifyDaChutChutEcho; diversifyUmeiuEcho; softHint плавание. swim GET rate. empty-state polish. styles v=183. Лента: (updates.js?v=479).
+
+## 0s5. 21 ноя — гитара / нет а ты·не умею echo / instruments rate / action-row UI
+
+gates: fixColdAckOnGuitarAsk; diversifyNetATyEcho; diversifyNeUmeiuEcho; softHint гитара. instruments GET rate. account action-row polish. styles v=182. Лента: (updates.js?v=478).
+
+## 0s4. 21 ноя — поёшь / хех нет·мм нет echo / karaoke rate / account-sub UI
+
+gates: fixColdAckOnSingAsk; diversifyHexNetEcho; diversifyMmNetEcho; softHint пение. karaoke GET rate. account-item sub polish. styles v=181. Лента: (updates.js?v=477).
+
+## 0s3. 21 ноя — водишь / не вожу·редко а ты echo / vehicles rate / account-head UI
+
+gates: fixColdAckOnDriveAsk; diversifyNeVozhuEcho; diversifyRedkoATyEcho; softHint машина. vehicles GET rate. account-item head polish. styles v=180. Лента: (updates.js?v=476).
+
+## 0s2. 21 ноя — фото хобби / иногда да·простое а ты echo / camera rate / lesson-head UI
+
+gates: fixColdAckOnPhotoHobbyAsk; diversifyInogdaDaEcho; diversifyProstoeATyEcho; softHint фото. camera GET rate. lesson-item head polish. styles v=179. Лента: (updates.js?v=475).
+
+## 0s1. 21 ноя — рисуешь / ну простое·ну редко echo / art rate / section-header UI
+
+gates: fixColdAckOnDrawAsk; diversifyNuProstoeEcho; diversifyNuRedkoEcho; softHint рисование. art GET rate. section-card header polish. styles v=178. Лента: (updates.js?v=474).
+
+## 0s0. 21 ноя — танцы / простое·чуть-чуть echo / dance rate / badge-row UI
+
+gates: fixColdAckOnDanceAsk; diversifyProstoeEcho; diversifyHexChutChutEcho; softHint танцы. dance GET rate. badge-row polish. styles v=177. Лента: (updates.js?v=473).
+
+## 0rz. 21 ноя — готовишь / мало·пока мало echo / recipes rate / badge-hot UI
+
+gates: fixColdAckOnCookAsk; diversifyMaloBareEcho; diversifyPokaMaloEcho; softHint готовка. recipes GET rate. badge-hot polish. styles v=176. Лента: (updates.js?v=472).
+
+## 0ry. 21 ноя — путешествия / ну иногда·хех иногда echo / travel rate / badge-warn UI
+
+gates: fixColdAckOnTravelAsk; diversifyNuInogdaEcho; diversifyHexInogdaEcho; softHint поездки. travel GET rate. badge.warn polish. styles v=175. Лента: (updates.js?v=471).
+
+## 0rx. 21 ноя — что читаешь / когда как·хех редко echo / books rate / badge-ok UI
+
+gates: fixColdAckOnBookAsk; diversifyKogdaKakEcho; diversifyHexRedkoEcho; softHint книги. books GET rate. badge.success polish. styles v=174. Лента: (updates.js?v=470).
+
+## 0rw. 21 ноя — спорт / почти нет·мм редко echo / sport rate / badge-soft UI
+
+gates: fixColdAckOnSportAsk; diversifyPochtiNetEcho; diversifyMmRedkoEcho; softHint спорт. sport GET rate. badge-soft polish. styles v=173. Лента: (updates.js?v=469).
+
+## 0rv. 21 ноя — во что играешь / ничего·настроению echo / games rate / badge UI
+
+gates: fixColdAckOnGameAsk; diversifySeychasNichegoEcho; diversifyHexPoNastroeniyuEcho; softHint игры. games GET rate. badge polish. styles v=172. Лента: (updates.js?v=468).
+
+## 0ru. 21 ноя — что смотришь / пока нет·не держу echo / catalog rate / label UI
+
+gates: fixColdAckOnWatchAsk; diversifyPokaNetEcho; diversifyNeDerzhuEcho; softHint кино. catalog GET rate. persona label polish. styles v=171. Лента: (updates.js?v=467).
+
+## 0rt. 21 ноя — питомец / чай·редко echo / contacts rate / input UI
+
+gates: fixColdAckOnPetAsk; diversifyChaiBolsheEcho; diversifyRedkoEcho; softHint питомец. contacts GET rate. persona input polish. styles v=170. Лента: (updates.js?v=466).
+
+## 0rs. 21 ноя — кофе / посмотрим·пока дома echo / map rate / persona UI
+
+gates: fixColdAckOnCoffeeAsk; diversifyHexPosmotrimEcho; diversifyPokaDomaEcho; softHint кофе. map/places GET rate. persona-vars polish. styles v=169. Лента: (updates.js?v=465).
+
+## 0rr. 21 ноя — какие планы / обычная·так себе echo / geo rate / hint UI
+
+gates: fixColdAckOnPlansAsk; diversifyHexObychnayaEcho; diversifyTakSebeEcho; softHint планы. geo/weather GET rate. field-hint polish. styles v=168. Лента: (updates.js?v=464).
+
+## 0rq. 21 ноя — как погода / особого·всегда echo / suggest rate / field UI
+
+gates: fixColdAckOnWeatherAsk; diversifyNichegoOsobogoEcho; diversifyKakVsegdaEcho; softHint погода. suggest GET rate. field-select polish. styles v=167. Лента: (updates.js?v=463).
+
+## 0rp. 21 ноя — как выходные / попало·мелочи echo / files rate / modal UI
+
+gates: fixColdAckOnWeekendAsk; diversifyChtoPopaloEcho; diversifyMelochiEcho; softHint выходные. files/backup GET rate. modal-card polish. styles v=166. Лента: (updates.js?v=462).
+
+## 0ro. 21 ноя — что слушаешь / текстом·фон echo / music rate / toast UI
+
+gates: fixColdAckOnMusicAsk; diversifyPokaTekstomEcho; diversifyProstoFonEcho; softHint музыка. music GET rate. toast-stack polish. styles v=165. Лента: (updates.js?v=461).
+
+## 0rn. 21 ноя — созвон / пока хз·не решала echo / voice rate / options UI
+
+gates: fixColdAckOnCallAsk; diversifyPokaHzEcho; diversifyEscheNeReshalaEcho; softHint созвон. voice GET rate. options-actions polish. styles v=164. Лента: (updates.js?v=460).
+
+## 0rm. 21 ноя — хорошо выглядишь / пока не знаю·смотря как echo / sticker rate / nav UI
+
+gates: fixColdAckOnLookGood; diversifyPokaNeZnayuEcho; diversifySmotryaKakEcho; softHint внешность. sticker GET rate. nav-indicator polish. styles v=163. Лента: (updates.js?v=459).
+
+## 0rl. 21 ноя — свободна завтра / не особо·потом скажу echo / avatar rate / list UI
+
+gates: fixColdAckOnFreeAsk; diversifyNeOsoboEcho; diversifyPotomSkazhuEcho; softHint свободна. avatar GET rate. list-panel polish. styles v=162. Лента: (updates.js?v=458).
+
+## 0rk. 21 ноя — голодная·поела / зависит·пока норм echo / push rate / chip UI
+
+gates: fixColdAckOnHungryAsk; diversifyZavisitATyEcho; diversifyPokaNormEcho; softHint ела ли. push GET rate. chip polish. styles v=161. Лента: (updates.js?v=457).
+
+## 0rj. 21 ноя — скучно / по-разному·много чего echo / version rate / bottom-nav UI
+
+gates: fixColdAckOnSkuchno; diversifyPoRaznomuEcho; diversifyMnogoChegoEcho; softHint скучно. version GET rate. bottom-nav polish. styles v=160. Лента: (updates.js?v=456).
+
+## 0ri. 21 ноя — чем увлекаешься / дома да·разное echo / locale rate / empty UI
+
+gates: fixColdAckOnHobbyAsk; diversifyDomaDaEcho; diversifyRaznoeATyEcho; softHint увлечения. locale GET rate. empty-state polish. styles v=159. Лента: (updates.js?v=455).
+
+## 0rh. 21 ноя — ты дома / хорошо·да дома echo / theme rate / toast UI
+
+gates: fixColdAckOnTyDoma; diversifyHoroshoBareEcho; diversifyDaDomaEcho; softHint дома. theme GET rate. toast polish. styles v=158. Лента: (updates.js?v=454).
+
+## 0rg. 21 ноя — напиши когда / напишу·буду echo / feature rate / primary UI
+
+gates: fixColdAckOnWriteWhenFree; diversifyNapishuEcho; diversifyBuduEcho; softHint напиши когда. feature GET rate. btn-primary polish. styles v=157. Лента: (updates.js?v=453).
+
+## 0rf. 21 ноя — ты милая / я тут echo / device rate / activity UI
+
+gates: fixColdAckOnTyMilaya; diversifyYaTutEcho; diversifyMmSpasiboBareEcho; softHint милая. device GET rate. activity-item polish. styles v=156. Лента: (updates.js?v=452).
+
+## 0re. 21 ноя — скучаю по тебе / хорошего echo / profile rate / card UI
+
+gates: fixColdAckOnSkuchayu; diversifyHoroshegoEcho; diversifyVzaimnoChutBareEcho; softHint скучаю. profile GET rate. card polish. styles v=155. Лента: (updates.js?v=451).
+
+## 0rd. 21 ноя — увидимся·хорошего дня / и тебе echo / inbox rate / cards UI
+
+gates: fixColdAckOnSeeYouSoon; diversifyITebeBareEcho; diversifyDoSvyaziEcho; softHint прощание. inbox GET rate. account-card polish. styles v=154. Лента: (updates.js?v=450).
+
+## 0rc. 21 ноя — хороший собеседник / давай·хех ок echo / presence rate / bulk UI
+
+gates: fixColdAckOnGoodTalker; diversifyDavaiEcho; diversifyHexOkEcho; softHint собеседник. presence GET rate. accounts-bulk-bar polish. styles v=153. Лента: (updates.js?v=449).
+
+## 0rb. 21 ноя — давай дружить / мне тоже echo / digest rate / summary UI
+
+gates: fixColdAckOnLetsFriends; diversifyBareMneTozheEcho; diversifyPochemuNetEcho; softHint дружить. digest GET rate. summary-grid polish. styles v=152. Лента: (updates.js?v=448).
+
+## 0ra. 21 ноя — приятно познакомиться / ещё не знаю echo / news rate / btn UI
+
+gates: fixColdAckOnNiceMeet; diversifyEscheNeZnayuEcho; diversifyPotomKakNibudEcho; softHint познакомиться. news GET rate. btn-secondary polish. styles v=151. Лента: (updates.js?v=447).
+
+## 0r9. 21 ноя — когда увидимся / можно·пиши echo / remind rate / nav UI
+
+gates: fixColdAckOnWhenMeet; diversifyMozhnoEcho; diversifyPishiEcho; softHint когда увидимся. remind GET rate. nav-btn polish. styles v=150. Лента: (updates.js?v=446).
+
+## 0r8. 21 ноя — можно писать / typo пданирую / notes rate / notice UI
+
+gates: fixColdAckOnCanWrite; diversifyNemnogoDaEcho; diversifyHexByvaetEcho; softHint можно писать; typo пданирую. notes GET rate. notice polish. styles v=149. Лента: (updates.js?v=445).
+
+## 0r7. 21 ноя — скучаешь / быстро=бот / tags rate / chip UI
+
+gates: fixColdAckOnSkuchaesh; diversifyNormATyEcho; diversifyHexNormEcho; softHint скучаешь; BOT_ACCUSATION быстро/ИИ. tags GET rate. chip-btn polish. styles v=148. Лента: (updates.js?v=444).
+
+## 0r6. 21 ноя — ты как / мне тоже приятно echo / options rate / list UI
+
+gates: fixColdAckOnTyKak; diversifyMneTozhePriyatnoEcho; diversifyHexVzaimnoEcho; softHint ты как. options GET rate. list-panel/options polish. styles v=147. Лента: (updates.js?v=443).
+
+## 0r5. 21 ноя — рад тебя слышать / ровно·обычно echo / templates rate / online-dot UI
+
+gates: fixColdAckOnGladHear; diversifyRovnoAUtebyaEcho; diversifyObychnoATyEcho; softHint рад слышать. templates GET rate. online-dot polish. styles v=146. Лента: (updates.js?v=442).
+
+## 0r4. 21 ноя — что нового / настроение / да тут echo / waves rate / list UI
+
+gates: fixColdAckOnWhatsNew; fixColdAckOnHowMood; diversifyDaTutEcho; diversifyTihoATyEcho; softHint новости/настроение. waves/busy GET rate. lesson/option cards polish. GATE_CATALOG refresh. styles v=145. Лента: (updates.js?v=441).
+
+## 0r3. 21 ноя — ты онлайн / сладких echo / ops rate / lead actions UI
+
+gates: fixColdAckOnOnlineAsk; diversifyBareSladkihEcho; diversifyOnlineEcho; softHint онлайн. ops/scale GET rate. lead-actions polish. styles v=144. Лента: (updates.js?v=440).
+
+## 0r2. 21 ноя — спокойной ночи / ничего такого echo / audit rate / strip text UI
+
+gates: fixColdAckOnSleepWell; diversifyNichegoTakogoATyEcho; diversifySpokoynoAUtebyaEcho; softHint спокойной. audit/smoke GET rate. panel-strip text polish. styles v=143. Лента: (updates.js?v=439).
+
+## 0r1. 21 ноя — чем занята / норм а у тебя echo / cache rate / actions UI
+
+gates: fixColdAckOnChemZanyata; diversifyNormAUtebyaEcho; diversifyProstoSizhuEcho; softHint чем занята. cache/purge POST rate. action-row polish. styles v=142. Лента: (updates.js?v=438).
+
+## 0r0. 21 ноя — как день / пиши когда echo / quota rate / strip UI
+
+gates: fixColdAckOnHowWasDay; diversifyPishiKogdaHocheshEcho; diversifyYaRyadomEcho; softHint день. quota/billing GET rate. panel-strip polish. styles v=141. Лента: (updates.js?v=437).
+
+## 0qz. 21 ноя — рад что написала / рядом echo / invite rate / section UI
+
+gates: fixColdAckOnGladWrote; diversifyHexYaRyadomEcho; diversifySamaRadaEcho; softHint рад что. invite/referral GET rate. panel-section-label polish. styles v=140. Лента: (updates.js?v=436).
+
+## 0qy. 21 ноя — скучно без тебя / нет ещё echo / broadcast rate / tools UI
+
+gates: fixColdAckOnBoredWithoutYou; diversifyNetEscheEcho; diversifyEscheTutEcho; softHint скучно без. broadcast/mass POST rate. panel-tools polish. styles v=139. Лента: (updates.js?v=435).
+
+## 0qx. 21 ноя — ты спишь / нет могу echo / report rate / nav UI
+
+gates: fixColdAckOnSleepAsk; diversifyNetMoguEcho; diversifySvobodneeEcho; softHint спишь. report/feedback POST rate. nav-btn polish. styles v=138. Лента: (updates.js?v=434).
+
+## 0qw. 21 ноя — ты занята / тут да echo / upload rate / hint UI / catalog
+
+gates: fixColdAckOnBusyAsk; diversifyTutDaEcho; diversifyDaPishiEcho; softHint занята. upload POST rate. field-hint polish. GATE_CATALOG refresh. styles v=137. Лента: (updates.js?v=433).
+
+## 0qv. 21 ноя — ты где / хех приятно echo / search rate / persona UI
+
+gates: fixColdAckOnWhereAreYou; diversifyHexPriyatnoEcho; diversifyNedalekoEcho; softHint где; dedupe NuLadno export. search GET rate. persona-vars polish. styles v=136. Лента: (updates.js?v=432).
+
+## 0qu. 21 ноя — думаю о тебе / взаимно чуть echo / webhook rate / prompt UI
+
+gates: fixColdAckOnThinkingOfYou; diversifyVzaimnoChutEcho; diversifyMmVzaimnoEcho; softHint думаю. webhook POST rate. prompt-field polish. styles v=135. Лента: (updates.js?v=431).
+
+## 0qt. 21 ноя — целую тепло / мм спасибо·и я echo / worker rate / summary UI
+
+gates: fixColdAckOnKissEmoji; diversifyMmSpasiboEcho; diversifyBareIYaEcho; softHint целую. worker/tasks GET rate. summary-grid polish. styles v=134. Лента: (updates.js?v=430).
+
+## 0qs. 21 ноя — милая тепло / обнимаю echo / debug rate / nav UI
+
+gates: fixColdAckOnSweetCompliment; diversifyObnimayuTozheEcho; diversifyHexSpasiboEcho. debug GET rate. bottom-nav polish. styles v=133. Лента: (updates.js?v=429).
+
+## 0qr. 21 ноя — обнимаю тепло / спасибо echo / session rate / bulk UI
+
+gates: fixColdAckOnHug; diversifyBareSpasiboEcho; diversifyRadaSlyshatEcho; softHint обнимаю. sessions/proxy GET rate. bulk-bar polish. styles v=132. Лента: (updates.js?v=428).
+
+## 0qq. 21 ноя — нравишься тепло / приятно·хех echo / export rate / toast UI
+
+gates: fixColdAckOnLikeYou; diversifyPriyatnoEcho; diversifyBareHexEcho; smoke miss flake fix. export/logs GET rate. toast polish. styles v=131. Лента: (updates.js?v=427).
+
+## 0qp. 21 ноя — скучаю тепло / мне тоже echo / stats rate / cards UI
+
+gates: fixColdAckOnMissYou; diversifyMneTozheEcho; diversifyITebeEcho; dedupe diversifyNuLadnoEcho; softHint скучаю. stats GET rate. account-card polish. styles v=130. Лента: (updates.js?v=426).
+
+## 0qo. 21 ноя — приятно поболтать / взаимно echo / persona rate / empty UI
+
+gates: fixColdAckOnNiceChat; diversifyVzaimnoEcho; diversifyRadaEcho; softHint приятно. persona GET rate. empty-state polish. styles v=129. Лента: (updates.js?v=425).
+
+## 0qn. 21 ноя — удачи взаимно / ясно echo / settings rate / hero UI
+
+gates: fixColdAckOnGoodLuck; diversifyBareYasnoEcho; diversifyHexNuDaEcho; softHint удачи. settings GET rate. panel-hero polish. styles v=128. Лента: (updates.js?v=424).
+
+## 0qm. 21 ноя — спасибо тепло / мм ок echo / help rate / meta UI
+
+gates: fixColdAckOnThanks; diversifyMmOkEcho; diversifyTutEcho; softHint спасибо. help POST rate. modal-meta polish. styles v=127. Лента: (updates.js?v=423).
+
+## 0ql. 21 ноя — скучно рядом / слушай echo / modal / peers rate
+
+gates: fixColdAckOnBoredLonely; diversifySlushayuEcho; diversifyNuByvaetEcho; softHint скучно. peers GET rate. modal-card polish. styles v=126. Лента: (updates.js?v=422).
+
+## 0qk. 21 ноя — утро / мама тепло / на связи echo / badges
+
+gates: fixColdAckOnMorningUser; fixColdAckOnFamilyWarm; diversifyNaSvyaziEcho; softHint утро/семья. badge UI polish. styles v=125. Лента: (updates.js?v=421).
+
+## 0qj. 21 ноя — поняла echo / хм ну да / смех / accounts list rate
+
+gates: diversifyBarePonjalaEcho; diversifyHmNuDaEcho; diversifyPonjalaTebyaEcho; fixColdAckOnLaughUser. accounts GET rate. limits-grid polish. styles v=124. Лента: (updates.js?v=420).
+
+## 0qi. 21 ноя — ну такое / поняла echo / короче ок / комплимент
+
+gates: diversifyNuTakoeEcho; diversifyAgaPonjalaEcho; diversifyKorocheOk; fixDoubleLadnoDalshe; ensureNePokazhuParen; softHint комплимент. media GET rate. prompt-field label. styles v=123. Лента: (updates.js?v=419).
+
+## 0qh. 21 ноя — анти-эхо ну ладно / ясно / я тут / забота
+
+gates: diversifyNuLadnoEcho; diversifyAgaYasnoEcho; diversifyOkYaTut; fixEsliChestnoPoDrugomu; fixColdAckOnTiredUser. SAFE_ACK без засилья. learn GET rate. btn-secondary focus. styles v=122. Лента: (updates.js?v=418).
+
+## 0qg. 21 ноя — тепло на тёплое / поняла тему / okak echo
+
+gates: fixColdAckOnWarmUser; fixPonjalaTemu; diversifyOkakEcho; softHint взаимность. debugUser prod early. updates-feed polish. styles v=121. Лента: (updates.js?v=417).
+
+## 0qf. 21 ноя — living short / no travel praise / night keep
+
+ensureAckNotBare: whitelist жесть/о как/ого/вау; praise pivots без «куда катаешься»; night не переписывает готовое «спокойной ночи)». bottom-nav polish. styles v=120. Лента: (updates.js?v=416).
+
+## 0qe. 21 ноя — finalize на live / ну ты даёшь / интересно echo
+
+live replyPipeline: finalizeOutgoingReply перед send (как reengage). gates: fixNuTyDaesh; fixBareInteresno echo. summary-grid gap. styles v=119. Лента: (updates.js?v=415).
+
+## 0qd. 21 ноя — анкета «чем занимаешься» / пока-пока / warmth / dash rate
+
+gates: fixOkChemZanimaesh; fixPokaPoka; fixKogdaPriduCityHang; fixAaStutterOpener; broaden short-fact ); softHint лёгкое тепло; dash GET rate. account-card polish. styles v=118. Лента: (updates.js?v=414).
+
+## 0qc. 21 ноя — ну не факт / short-fact ) / final gates / accounts write
+
+gates: fixNuNeFakt; ensureSoftShortFactParen; finalizeOutgoingReply second applyRegisteredGates; rateLimit accounts write (без connect/qr). toast overflow polish. styles v=117. Лента: (updates.js?v=413).
+
+## 0qb. 21 ноя — да правильно / ну вот / empty-state
+
+gates: да правильно/верно; ага всё верно; ну вот; softHint забота; empty-state polish. styles v=116. Лента: (updates.js?v=412).
+
+## 0qa. 21 ноя — не такая как все / обожаю / initData 90m
+
+gates: не такая как все + интересные люди; я тоже обожаю; чуть позже alts; initData TTL 90m; content scrollbar polish. styles v=115. Лента: (updates.js?v=411).
+
+## 0q9. 21 ноя — запомнилось / это значит / nav touch
+
+gates: больше всего запомнилось; это значит что; по-моему не всегда); security smoke write_bucket; nav-btn 44px + focus. styles v=114. Лента: (updates.js?v=410).
+
+## 0q8. 21 ноя — любопытно / немного / респект / night / 429
+
+gates: lyubopytno rasskazyvay; сейчас немного; респект→круто; спокойной ночи; ну ты даёшь); notifier 429 min 20s. btn-primary focus. styles v=113. Лента: (updates.js?v=409).
+
+## 0q7. 21 ноя — написала / у м) / city comma / rate write
+
+gates: class что написала; delai kak udobno; у м) + city comma; rateLimit write examples/learn/photo-exceptions; account-card focus. styles v=112. Лента: (updates.js?v=408).
+
+## 0q6. 21 ноя — live smells + mild warmth + updates UI
+
+gates: interesno дальше broaden; double ахах; dangling prep «с»; всё работает; удпчи/собирпюсь; пунктуальная на встречу; softHint лёгкое тепло; typoRate↓. Лента updates в бренд-зелёном. styles.css?v=111. Лента: (updates.js?v=407).
+
+## 0q5. 21 ноя — agent velocity (smell map + scaffold)
+
+docs/agent SMELL_INDEX + GATE_CATALOG; `_gen_smell_catalog.js`, `_scaffold_gate.js`, `_ship_tag.py`; skills triage/fix-loop/deploy. Runtime replies unchanged. Лента: (updates.js?v=406).
+
+## 0q4. 20 ноя — бот / развод / чем занимаешься
+
+gates: ощущение что бот + слабое «ну ты серьёзно»; развод≠интересно; люди общаются норм; поняла на чем занимаешься; уважаю дело. Лента: (updates.js?v=405).
+
+## 0q3. 20 ноя — ого расскажи / всм / ясно
+
+gates: ого расскажи на Ну вот; мм поняла на Всм; ясно интересно; paren day/праздник; orphan привет. Лента: (updates.js?v=404).
+
+## 0q2. 20 ноя — дальше / в действии / ахах
+
+gates: интересно) дальше; в действии; ахах ахах; расскажи ещё→alts. Лента: (updates.js?v=403).
+
+## 0q1. 20 ноя — сегодн / с радостью
+
+gates: сегодн? / с радостью, / не буду на встречу / интересных людей+партнёрство. Лента: (updates.js?v=402).
+
+## 0q0. 20 ноя — обрубки / класс написала
+
+gates: на выхо / у м) / хвост,; класс что написала; новости или события→alts. Лента: (updates.js?v=401).
+
+## 0pz. 20 ноя — склейка / классно написал
+
+gates: )увлекаешься glue; классно что написал; планируете→ты. Лента: (updates.js?v=400).
+
+## 0py. 20 ноя — канцелярит / липкое пока
+
+gates: под контролем / вес золота / жду снова / пока только / купленный?→alts. Лента: (updates.js?v=399).
+
+## 0px. 20 ноя — без «расскажи о себе»
+
+gates: coach tell-about-self / увлечения / темы → soft ask; работа забирает время без «всё». Лента: (updates.js?v=398).
+
+## 0pw. 20 ноя — приезжай / без даты
+
+gates: Приезжай+чуть позже → soft meetup; без даты, только→alts; meetup RE +приезжай. Лента: (updates.js?v=397).
+
+## 0pv. 20 ноя — встреча ≠ «не покажу»
+
+gates: meetup/when-in-city → не photo refuse; потом как буду / а я щас → soft defer; mozhnoKakBudu без обрубка. Лента: (updates.js?v=396).
+
+## 0pu. 20 ноя — Класс / От так → вопрос
+
+gates: bare praise Класс + От так не → о как)/бывает; softLite pickSafeAck on praise. Лента: (updates.js?v=395).
+
+## 0pt. 20 ноя — да, ) harden + воспоминания
+
+gates: empty comma NBSP + да alts; вернулась к воспоминаниям; double-pass empty comma. Лента: (updates.js?v=394).
+
+## 0ps. 20 ноя — голое о / кружок записать
+
+gates: голое о) / кружок) записать→alts. Лента: (updates.js?v=393).
+
+## 0pr. 20 ноя — admin rate 60/min
+
+httpRateLimit: admin console 90→60; security smoke admin_bucket. Лента: (updates.js?v=392).
+
+## 0pq. 20 ноя — хм поняла / день закончится paren
+
+gates: хм поняла / жду день закончится / смотрю в телефон →). Лента: (updates.js?v=391).
+
+## 0pp. 20 ноя — будет легче / разминайся
+
+gates: потом будет легче / просто разминайся→alts. Лента: (updates.js?v=390).
+
+## 0po. 20 ноя — поаробую / получиться / обидно
+
+ideas14: поаробую→попробую; gates: точно должно получиться / обидно paren. Лента: (updates.js?v=389).
+
+## 0pn. 20 ноя — неа даже просто / о как и
+
+gates: неа даже просто / о как, и?→alts. Лента: (updates.js?v=388).
+
+## 0pm. 20 ноя — что-то не так / чем занят?
+
+gates: что-то не так→alts; чем занят)→чем занят?). Лента: (updates.js?v=387).
+
+## 0pl. 20 ноя — OpenAI null recreate + lazy media
+
+aiResponder: ensureOpenAiClient / getMediaClient; vision/whisper null-safe. Лента: (updates.js?v=386).
+
+## 0pk. 20 ноя — так не бывает / так удобнее
+
+gates: просто так не бывает / так удобнее→alts. Лента: (updates.js?v=385).
+
+## 0pj. 20 ноя — можно как буду + Cache-Control
+
+gates: можно, как буду на месте (с запятой/хвостом); Cache-Control no-store + security smoke. Лента: (updates.js?v=384).
+
+## 0pi. 20 ноя — находка / держи / хм ясно paren
+
+gates: небольшая находка / голое держи / хм ясно + не покажу paren; security referrer. Лента: (updates.js?v=383).
+
+## 0ph. 20 ноя — держаться / жизнь такая / security smoke+
+
+gates: стараюсь держаться / жизнь такая / записать интересное; security json_limit + x-powered-by. Лента: (updates.js?v=382).
+
+## 0pg. 20 ноя — interview ban + semicolon + busy floor
+
+gates: конкретно интересует / рада понравилось / ;→); busy evening floor 90с + hard_audit. Лента: (updates.js?v=381).
+
+## 0pf. 20 ноя — trailing всё / пальцы / disconnect throttle
+
+gates: точно) всё) / мета пальцы / согласна с тобой / общение не зашло; ideas14 зашиваюсь; pipeline disconnect throttle. Лента: (updates.js?v=380).
+
+## 0pe. 20 ноя — relationship platitude ban
+
+gates: доверия/понимания в отношениях / чего-то настоящего→alts. Лента: (updates.js?v=379).
+
+## 0pd. 20 ноя — подробнее ban + connect 12
+
+gates: расскажу подробнее→alts; soft paren; security smoke connect=12. Лента: (updates.js?v=378).
+
+## 0pc. 20 ноя — скобки / коуч / забираюсь
+
+gates: ) ) / ага, ) / узнаем друг друга / герой; coachy усилия; ideas14 забираюсь. Лента: (updates.js?v=377).
+
+## 0pb. 20 ноя — эхо отказа фото
+
+gates: повтор не не покажу/отправлю→alts. Лента: (updates.js?v=376).
+
+## 0pa. 20 ноя — ну ну хз / не судьба
+
+gates: ну ну хз / не судьба / ты тоже→alts. Лента: (updates.js?v=375).
+
+## 0p9. 20 ноя — лрвелас typo
+
+ideas14: лрвелас→ловелас. Лента: (updates.js?v=374).
+
+## 0p8. 20 ноя — smoke media rate = 3
+
+smoke_0n2: ANY_MEDIA_RATE_MAX=3 (как 0oo). Лента: (updates.js?v=373).
+
+## 0p7. 20 ноя — футбол -) + ну ладно echo
+
+gates: тема -)→alts; повтор ну ладно→alts. Лента: (updates.js?v=372).
+
+## 0p6. 20 ноя — эхо сижу
+
+gates: повтор …сижу→alts. Лента: (updates.js?v=371).
+
+## 0p5. 20 ноя — жесть согласна ban
+
+gates: жесть согласна→alts; wave smoke. Лента: (updates.js?v=370).
+
+## 0p4. 20 ноя — ждать с нетерпением
+
+gates: ждать с нетерпением→жду. Лента: (updates.js?v=369).
+
+## 0p3. 20 ноя — ложное полдня
+
+gates: уже полдня не утром/вечером→утро/день/вечер. Лента: (updates.js?v=368).
+
+## 0p2. 20 ноя — это классно / утро после 12
+
+gates: это классно→alts; после 12 МСК как утро→как день. Лента: (updates.js?v=367).
+
+## 0p1. 20 ноя — без ну покажи + login log rate
+
+gates: если будут покажи→alts; loginAuth cooldown log 60с. Лента: (updates.js?v=366).
+
+## 0p0. 20 ноя — без лишнего возраста
+
+gates: мне N а тебе без вопроса→alts. Лента: (updates.js?v=365).
+
+## 0oz. 20 ноя — хобби-интервью ban
+
+gates: как насчёт хобби / забирает всё время→alts; да утро→доброе. Лента: (updates.js?v=364).
+
+## 0oy. 20 ноя — коуч работа + GetFile×3
+
+gates: требует внимания / поищу интересное→alts; inbound GetFile 3 retry. Лента: (updates.js?v=363).
+
+## 0ox. 20 ноя — цифровые карточки / ждём тогда
+
+gates: карточки→токены; ждём тогда→alts; ,)→). Лента: (updates.js?v=362).
+
+## 0ow. 20 ноя — странности + reconnect archive
+
+gates: не без странностей→alts; peers: soft reconnect + warn rate. Лента: (updates.js?v=361).
+
+## 0ov. 20 ноя — soft paren у кивков
+
+gates: ага ясно / ну ладно / угу дома → со ). Лента: (updates.js?v=360).
+
+## 0ou. 20 ноя — голое ну ты
+
+gates: ну ты→ну ты чего/а ты. Лента: (updates.js?v=359).
+
+## 0ot. 20 ноя — можно как буду на месте
+
+gates: можно как буду на месте→чуть позже. Лента: (updates.js?v=358).
+
+## 0os. 20 ноя — short ack paren
+
+gates: о как/угу без ) → со скобкой. Лента: (updates.js?v=357).
+
+## 0or. 20 ноя — полное счастье ban
+
+gates: что нужно для полного счастья→живые alts. Лента: (updates.js?v=356).
+
+## 0oq. 20 ноя — рада слышать ban
+
+gates: рада слышать→alts. Лента: (updates.js?v=355).
+
+## 0op. 20 ноя — ща найду diversify
+
+gates: повтор ща найду / голое ща → сек/гляну. Лента: (updates.js?v=354).
+
+## 0oo. 20 ноя — media rate tighter
+
+mediaSend: ANY_MEDIA 3/60м; contextual circle cooldown 4ч. Лента: (updates.js?v=353).
+
+## 0on. 20 ноя — dictionary def ban
+
+gates: «X — это когда…» → alts. Лента: (updates.js?v=352).
+
+## 0om. 20 ноя — только проснулась diversify + wire
+
+gates: повтор только проснулась→alts; overnight gates wiring smoke. Лента: (updates.js?v=351).
+
+## 0ol. 20 ноя — исправлюсь apology
+
+gates: исправлюсь→ой сорри. Лента: (updates.js?v=350).
+
+## 0ok. 20 ноя — fake errand схожу
+
+gates: щас за X схожу → alts. Лента: (updates.js?v=349).
+
+## 0oj. 20 ноя — не грусти + проспала/споки
+
+gates: не грусти→alts; проспала+спокойной → одно. Лента: (updates.js?v=348).
+
+## 0oi. 20 ноя — archive deferred + добоое
+
+inbound: later_text/deferred_media cancel if archived; ideas14 добоое; coachy суперкомбо. Лента: (updates.js?v=347).
+
+## 0oh. 20 ноя — как спалось + спорно alts
+
+gates: как спалось по часу; registry ну спорно. Лента: (updates.js?v=346).
+
+## 0og. 20 ноя — glued okak + tipa + uvidimsya
+
+gates: зеленый о как; типа/😊); orphan увидимся. Лента: (updates.js?v=345).
+
+## 0of. 20 ноя — coachy tail + lower after )
+
+gates: это сила→alts; postprocess lower после ). Лента: (updates.js?v=344).
+
+## 0oe. 20 ноя — tebe tozhe + false morning
+
+gates: тебе тоже только на farewell; ночью не «уже утро». Лента: (updates.js?v=343).
+
+## 0od. 20 ноя — clingy romance + доброй
+
+gates: буду думать о тебе→споки; голое доброй)→привет. Лента: (updates.js?v=342).
+
+## 0oc. 20 ноя — smoking soft-yes hist
+
+fixSmokingSoftYes смотрит 5 user-реплик; vague filler чуть шире. Лента: (updates.js?v=341).
+
+## 0ob. 20 ноя — ok tell + slyshu probe
+
+gates: о как расскажи / слышу подробнее → alts; coffee stamp flex. Лента: (updates.js?v=340).
+
+## 0oa. 20 ноя — day-pass + night emoji + rag cool
+
+gates: привет/как день проходит; спокойной без 😊; hardening age belt; rag embed cooldown 45с. Лента: (updates.js?v=339).
+
+## 0o9. 20 ноя — поняла/ну ок + stump откуд
+
+humanHardening/ideas14/registry: повтор поняла→alts; слушай ну ок→ладно; откуд/людьм. Лента: (updates.js?v=338).
+
+## 0o8. 20 ноя — KAIF_ACK_ALTS wider
+
+softHumanLite: хех/мм да/ага ясно. Лента: (updates.js?v=337).
+
+## 0o7. 20 ноя — softLite ahaha strip
+
+applySoftLite → stripRepeatPonialaHah. Лента: (updates.js?v=336).
+
+## 0o6. 20 ноя — keep спокойной on live farewell
+
+fixStaleNightTalk: не режем reciprocal спокойной если он прощается. Лента: (updates.js?v=335).
+
+## 0o5. 20 ноя — kaif pivots wider + fresh
+
+softHumanLite breakKaifEcho: +3 pivots, avoid recent, кайф что…. Лента: (updates.js?v=334).
+
+## 0o4. 20 ноя — BARE_MEDIA_FILLER new alts
+
+mediaSend: дома сижу / в телефоне. Лента: (updates.js?v=333).
+
+## 0o3. 20 ноя — short-ack cliche track
+
+replyGateRegistry: о как / ага ясно / ну ладно. Лента: (updates.js?v=332).
+
+## 0o2. 20 ноя — vague «что-то интересное»
+
+softHumanGates VAGUE_FILLER_RE. Лента: (updates.js?v=331).
+
+## 0o1. 20 ноя — peelLaugh wider + changelog header
+
+replyPipeline peelLaugh: хех/хаха/лол; CHANGELOG без BOM, свежий заголовок. Лента: (updates.js?v=330).
+
+## 0o0. 20 ноя — LAUGH_LINES diversify + laughedRecently
+
+replyPipeline: хех/лол/хаха; laughedRecently шире. Лента: (updates.js?v=329).
+
+## 0nz. 20 ноя — stump тогд/прият/спасиб/интерес
+
+humanIdeas14 + aiResponder fixModelTypos. Лента: (updates.js?v=328).
+
+## 0ny. 20 ноя — слушай ну ок bridge + typo archive mid
+
+softHumanLite fixAwkwardNuOkPredicate bridge; replyPipeline isPeerArchived before typo typing. Лента: (updates.js?v=327).
+
+## 0nx. 20 ноя — media fillers diversify + ahaha prefix strip
+
+replyPipeline fillers без «ничего особенного»; humanHardening strip «ахаха, …» prefix. Лента: (updates.js?v=326).
+
+## 0nw. 20 ноя — day-opener pivots + bare ахаха
+
+humanIdeas11 stripOpenerRepeat pivots; humanHardening bare ахаха; CLICHE_TRACK day/ахаха. Лента: (updates.js?v=325).
+
+## 0nv. 20 ноя — voice after pause skip if archived
+
+replyPipeline: voiceOnly + голос после текста — isPeerArchived после sleep. Лента: (updates.js?v=324).
+
+## 0nu. 20 ноя — disagree pool + bare nichego + short-ack track
+
+humanIdeas18 softDisagree fresh alts; diversifyCoffeeFiller bare «ничего особенного»; CLICHE_TRACK короче ок / ладно я тут / споры. Лента: (updates.js?v=323).
+
+## 0nt. 20 ноя — live cliche track +alts
+
+replyGateRegistry: бывает по-разному / что-то не так / ничего особенного. Лента: (updates.js?v=322).
+
+## 0ns. 20 ноя — coffee stamp with эм/слушай prefix
+
+diversifyCoffeeFiller prefixes. Лента: (updates.js?v=321).
+
+## 0nr. 20 ноя — vague «слушай, к этому?»
+
+softHumanGates.fixVagueFillerReply VAGUE_K_ETOMO_RE. Лента: (updates.js?v=320).
+
+## 0nq. 20 ноя — multi-bubble / typo-fix skip if archived mid-gap
+
+sendHumanText: isPeerArchived between bubbles + before typo fix. Лента: (updates.js?v=319).
+
+## 0np. 20 ноя — stump «хорош/мне нормаль»
+
+humanIdeas14 WORD_FIXES. Лента: (updates.js?v=318).
+
+## 0no. 20 ноя — diversify «ничего особенного, кофе пью»
+
+moveSpamDayDetails bank + diversifyCoffeeFiller. Лента: (updates.js?v=317).
+
+## 0nn. 20 ноя — admin compare cards UI
+
+formatAdminCompare grid + delta; app.js?v=187 styles?v=110. Лента: (updates.js?v=316).
+
+## 0nm. 20 ноя — night coffee if «не сплю» + stump ;ое)
+
+stripNightCoffeeClaim: forceNightContext + trailing 1–2 letter stump. Лента: (updates.js?v=315).
+
+## 0nl. 20 ноя — kaif cliche openers (это здорово / рада слышать)
+
+breakKaifEcho: cliche openers → pivot. Лента: (updates.js?v=314).
+
+## 0nk. 20 ноя — deferred media archive + бкдет
+
+inbound.fireOneDeferredMedia isPeerArchived×2; typo бкдет. Лента: (updates.js?v=313).
+
+## 0nj. 20 ноя — typo заниманшься → занимаешься
+
+fixModelTypos + humanIdeas14. Лента: (updates.js?v=312).
+
+## 0ni. 20 ноя — reengage archive after pause/react
+
+fireReengage: cancelReplyIfDialogGone before reaction + after lateText. Лента: (updates.js?v=311).
+
+## 0nh. 20 ноя — stump «для отдых» / «нормаль»
+
+humanIdeas14 WORD_FIXES + STUMP_HEAL. Лента: (updates.js?v=310).
+
+## 0ng. 20 ноя — «о, это ладно» → о как
+
+fixAwkwardLadnoPredicate: leading о, это ладно. Лента: (updates.js?v=309).
+
+## 0nf. 20 ноя — kaif opener loop harden
+
+breakKaifEcho: ага/типа opener, hist length≤120, pivot on opensKaif+hits. Лента: (updates.js?v=308).
+
+## 0ne. 20 ноя — greetings/nft schedule skip if archived mid-pause
+
+dailyLife idle+greeting+morning; nftCampaign work+scheduled voice after sleep. Лента: (updates.js?v=307).
+
+## 0nd. 20 ноя — howLong skip if archived mid-pause
+
+both howLong paths: isPeerArchived after sleep×2. Лента: (updates.js?v=306).
+
+## 0nc. 20 ноя — NFT voice skip if archived mid-record
+
+both NFT voice paths: isPeerArchived after sleep. Лента: (updates.js?v=305).
+
+## 0nb. 20 ноя — trySendMedia skip if archived
+
+mediaSend.trySendMedia: reason=archived. Лента: (updates.js?v=304).
+
+## 0na. 20 ноя — work-aside skip if archived
+
+maybeSendWorkAside: isPeerArchived + release claim. Лента: (updates.js?v=303).
+
+## 0n9. 20 ноя — sexual pressure влажность false-positive
+
+SEXUAL_PRESSURE: влажн только с киск/будет. Лента: (updates.js?v=302).
+
+## 0n8. 20 ноя — laugh bubble skip if archived
+
+sendLaughBubble: isPeerArchived. Лента: (updates.js?v=301).
+
+## 0n7. 20 ноя — afterthought skip if archived
+
+scheduleAfterthought: isPeerArchived до/после typing. Лента: (updates.js?v=300).
+
+## 0n6. 20 ноя — later_text skip if archived
+
+fireOneLaterTextReturn: isPeerArchived до/после паузы. Лента: (updates.js?v=299).
+
+## 0n5. 20 ноя — admin account stats grid 5-col
+
+балл/ответ в единой сетке; hard_audit_full +0n4. Лента: (updates.js?v=298).
+
+## 0n4. 20 ноя — sexual pressure regex + soft agree cut
+
+SEXUAL_PRESSURE_RE + softenSexualPressureReply on agree. Лента: (updates.js?v=297).
+
+## 0n3. 20 ноя — admin radar CSS polish
+
+styles: admin-dayn / idea-card / compare-row. Лента: (updates.js?v=296).
+
+## 0n2. 20 ноя — any-media rate limit 4/60m
+
+mediaSend.anyMediaRateLimited; no fake deflect on media_rate. Лента: (updates.js?v=295).
+
+## 0n1. 20 ноя — cancelReplyIfDialogGone also archive
+
+peers.cancelReplyIfDialogGone: isPeerArchived mid-flight. Лента: (updates.js?v=294).
+
+## 0n0. 20 ноя — admin radar compare handler
+
+FE admin-compare → getAdminScaleCompare. Лента: (updates.js?v=293).
+
+## 0mz. 20 ноя — contextualCircle coffee day-only
+
+aiResponder circle moment: кофе только isCoffeeOkHourMsk. Лента: (updates.js?v=292).
+
+## 0my. 20 ноя — wire softHint into buildThinHumanHint
+
+softHint был мёртвый export — thin hint теперь тянет dating/why-here/silence/mixup/scale. Лента: (updates.js?v=291).
+
+## 0mx. 20 ноя — restore scale admin + softHint buildScaleHints
+
+Радар/ideas/health в админке; softHint←buildScaleHints; voiceAb dormant stubs; hard audits sync. Лента: (updates.js?v=290).
 
 ## 0mw. 20 ноя — hard audit full includes 0ms–0mv + wave smokes
 
