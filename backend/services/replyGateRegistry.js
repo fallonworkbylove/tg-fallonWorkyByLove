@@ -50,6 +50,7 @@ function listWaves() {
     { id: '0lo', apply: 'applyWave0loGates', src: 'softHumanGates' },
     { id: '0m1', apply: 'applyWave0m1Gates', src: 'scaleIdeasPack' },
     { id: '0m2', apply: 'fixLiveClicheOveruse', src: 'replyGateRegistry' },
+    { id: '0m9', apply: 'applyWave0m9Gates', src: 'softHumanGates' },
   ];
 }
 
@@ -92,6 +93,9 @@ function applyRegisteredGates(reply, history, userMessage) {
     out = pack.applyWave0m1Gates(out, history, userMessage);
   }
   out = fixLiveClicheOveruse(out, history);
+  if (typeof gates.applyWave0m9Gates === 'function') {
+    out = gates.applyWave0m9Gates(out, history, userMessage);
+  }
   return out;
 }
 

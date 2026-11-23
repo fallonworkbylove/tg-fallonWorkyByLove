@@ -466,6 +466,117 @@ function fixHeardTailOveruse(reply, history) {
   return tag + pickAlt(HEARD_ALTS);
 }
 
+/* ——— 0m9: не отшивать лида / анти-😔 / фрагмент-эхо / тся→ться ——— */
+const LEAD_SHUT_RE =
+  /(?:^|[\s.])(?:мы\s+не\s+сможем|не\s+сможем\s*(?:\)|:\)|\.|$)|не\s+получится\s+(?:общ|поговор|продолжа)|никак\s*(?:\)|:\)|\.|!)?\s*$|лучше\s+не\s+будем\s+общ|давай\s+не\s+будем\s+общ)/i;
+const BARE_SORRY_RE = /^(?:извини|прости)(?:\s*[:)(]+)?\s*$/i;
+const LEAD_WARM_RE =
+  /интересн|нравишься|общий\s+язык|общат|надеюсь|продолж|хочу\s+с\s+тобой|мне\s+просто\s+интерес|давай\s+поговор|вс[её]\s+ок|жаль\)|но\s+вс[её]\s+равно/i;
+const LEAD_OPEN_ALTS = [
+  'ну почему сразу нет) давай попробуем)',
+  'хах ну мне как раз интересно с тобой)',
+  'давай всё равно) расскажи че-нить)',
+  'о как) ну я за общение)',
+];
+const SAD_BARE_RE = /^(?:😔|<<\s*REACT\s*:\s*😔\s*>>)(?:\s*[👈👉]*)?\s*$/u;
+const SAD_SOFT_ALTS = ['ну бывает)', 'ладно)', 'хм ок)', 'давай дальше)'];
+
+function fixLeadShutDown(reply, history, userMessage) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body) return reply;
+  const u = String(userMessage || '');
+  const recentUser = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'user')
+    .slice(-3)
+    .map((h) => String(h.content || ''))
+    .join(' ');
+  const warm = LEAD_WARM_RE.test(u) || LEAD_WARM_RE.test(recentUser);
+  const hardShut = LEAD_SHUT_RE.test(body) || /^никак\s*[).!]{0,3}$/i.test(body.trim());
+  const bareSorry = BARE_SORRY_RE.test(body.trim());
+  if (!hardShut && !(bareSorry && warm)) return reply;
+  // Жёсткий отшив общения — всегда переписываем (продукт = держать диалог).
+  if (hardShut || (bareSorry && warm)) {
+    return tag + pickAlt(LEAD_OPEN_ALTS);
+  }
+  return reply;
+}
+
+function fixSadEmojiSpam(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body) return reply;
+  const recentSad = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-5)
+    .filter((h) => /😔/.test(String(h.content || ''))).length;
+  if (SAD_BARE_RE.test(body.trim()) || /^😔/.test(body.trim())) {
+    if (recentSad >= 1 || SAD_BARE_RE.test(body.trim())) {
+      return tag + pickAlt(SAD_SOFT_ALTS);
+    }
+  }
+  // «Ладненько / Тогда связь» + 😔 — убрать грусть, оставить мягкий ack
+  if (/😔/.test(body) && recentSad >= 1) {
+    const cleaned = body
+      .replace(/😔[👈👉]*/gu, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (!cleaned || cleaned.length < 3) return tag + pickAlt(SAD_SOFT_ALTS);
+    return tag + cleaned;
+  }
+  return reply;
+}
+
+/** Фрагменты его фразы отдельными пузырями («Из архивов» / «Скрытых»). */
+function fixFragmentEcho(reply, userMessage) {
+  if (!reply) return reply;
+  const u = String(userMessage || '').toLowerCase();
+  if (u.length < 12) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body) return reply;
+  const lines = body
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const norm = (s) =>
+    String(s || '')
+      .toLowerCase()
+      .replace(/[)(.!?,«»"']/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const isEchoLine = (line) => {
+    const n = norm(line);
+    if (!n || n.length > 28) return false;
+    if (n.split(/\s+/).length > 4) return false;
+    return u.includes(n);
+  };
+  if (lines.length >= 2 && lines.filter(isEchoLine).length >= 2) {
+    return tag + pickAlt(['о) ну давай, кидай что есть)', 'интересно) и что там?)', 'ага) доставай)']);
+  }
+  if (lines.length === 1 && isEchoLine(lines[0]) && body.length < 36) {
+    return tag + pickAlt(['о как) и что дальше?)', 'хм) расскажи)', 'ага) ну давай)']);
+  }
+  return reply;
+}
+
+/** «будем знакомится» → «знакомиться» (инфинитив после будем/хочу/надо…). */
+function fixTsyaInfinitive(reply) {
+  if (!reply) return reply;
+  return String(reply).replace(
+    /((?:^|[^\p{L}])(?:будем|буду|будет|хочу|хочешь|хочет|надо|нужно|можно|пора|стоит|должен|должна|давай)\s+[а-яё]{3,}?)тся(?!\p{L})/giu,
+    '$1ться',
+  );
+}
+
+function applyWave0m9Gates(reply, history, userMessage) {
+  let out = reply;
+  out = fixLeadShutDown(out, history, userMessage);
+  out = fixSadEmojiSpam(out, history);
+  out = fixFragmentEcho(out, userMessage);
+  out = fixTsyaInfinitive(out);
+  return out;
+}
+
 /** Пачка гейтов волны 0lo — вызывать из applySoftLite. */
 function applyWave0loGates(reply, history, userMessage) {
   let out = reply;
@@ -480,6 +591,7 @@ function applyWave0loGates(reply, history, userMessage) {
   out = shortenEveningReply(out);
   out = fixRepeatWorkAsk(out, history);
   out = fixHeardTailOveruse(out, history);
+  out = applyWave0m9Gates(out, history, userMessage);
   return out;
 }
 
@@ -517,6 +629,11 @@ module.exports = {
   shortenEveningReply,
   fixRepeatWorkAsk,
   fixHeardTailOveruse,
+  fixLeadShutDown,
+  fixSadEmojiSpam,
+  fixFragmentEcho,
+  fixTsyaInfinitive,
+  applyWave0m9Gates,
   applyWave0loGates,
   applyWave0m1Gates,
   detectUserLangBlob,
