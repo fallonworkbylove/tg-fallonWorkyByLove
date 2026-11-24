@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t1. 24 ноя — OpenRouter: Luna + Qwen 3.7 Flash
+
+Чат через OpenRouter: по умолчанию `qwen/qwen3.7-flash`; Luna только на конфликте / длинной реплике / развёрнутом вопросе (глубина истории больше не триггерит). Анализ → Luna. Голос/фото — `OPENAI_FALLBACK_KEY` на `api.openai.com`.
+
 ## 0t0. 21 ноя — меньше шума в промпте: сжаты noRepeat + craft
 
 noRepeat эссе → короткий блок; length/answerFirst/meet → craftReminder. Мозг (messageAnalysis) остаётся главным. Чтобы не тупела от простыней. Лента: (updates.js?v=509).

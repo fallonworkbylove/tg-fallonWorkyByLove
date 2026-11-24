@@ -6,7 +6,7 @@
 
 const db = require('../db');
 const OpenAI = require('openai');
-const { buildOpenAIOptions } = require('./aiResponder');
+const { buildOpenAIOptions, getAnalysisModel } = require('./aiResponder');
 
 const PEER_PROFILE_EVERY = 8;
 const MAX_HISTORY_TURNS = 12;
@@ -132,7 +132,7 @@ async function maybeUpdate(accountId, peerId, history, userMessage) {
     if (!transcript) return;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: getAnalysisModel(),
       max_tokens: MAX_OUT_TOKENS,
       temperature: 0.3,
       response_format: { type: 'json_object' },

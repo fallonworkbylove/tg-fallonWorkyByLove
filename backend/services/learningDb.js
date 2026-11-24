@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const db = require('../db');
-const { openaiCreateWithProxyFailover } = require('./aiResponder');
+const { openaiCreateWithProxyFailover, getAnalysisModel } = require('./aiResponder');
 
 // ---------------------------------------------------------------------------
 // ОБУЧЕНИЕ БЕЗ FINE-TUNING.
@@ -263,7 +263,7 @@ async function scoreReaction(botReply, reactionMsgs) {
     const reactionText = reactionMsgs.filter(Boolean).join('\n');
     const completion = await openaiCreateWithProxyFailover((client) =>
       client.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: getAnalysisModel(),
         max_tokens: 5,
         temperature: 0,
         messages: [

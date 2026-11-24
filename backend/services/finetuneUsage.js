@@ -19,8 +19,18 @@ const MODEL_PRICING = {
   // Базовая gpt-4o-mini
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
   'gpt-4o-mini-2024-07-18': { input: 0.15, output: 0.6 },
+  'openai/gpt-4o-mini': { input: 0.15, output: 0.6 },
   // Базовая gpt-4o (на случай если OPENAI_MODEL=gpt-4o)
   'gpt-4o': { input: 2.5, output: 10.0 },
+  'openai/gpt-4o': { input: 2.5, output: 10.0 },
+  // GPT-5.6 Luna / Sol (OpenRouter или прямой OpenAI)
+  'gpt-5.6-luna': { input: 0.2, output: 1.2 },
+  'openai/gpt-5.6-luna': { input: 0.2, output: 1.2 },
+  'gpt-5.6-sol': { input: 4.0, output: 20.0 },
+  'openai/gpt-5.6-sol': { input: 4.0, output: 20.0 },
+  // Qwen Flash через OpenRouter
+  'qwen/qwen3.7-flash': { input: 0.03, output: 0.13 },
+  'qwen/qwen3.8-flash': { input: 0.15, output: 0.47 },
   // Fine-tuned gpt-4o-mini обычно в ~2 раза дороже за токен использования
   // (обучение оплачивается отдельно, разово, см. finetune_openai.py).
   'ft:gpt-4o-mini': { input: 0.3, output: 1.2 },
@@ -31,11 +41,18 @@ const MODEL_PRICING = {
  * "ft:gpt-4o-mini-2024-07-18:org::abc123" — сверяем по префиксу.
  */
 function getPricing(model) {
+  if (!model) return null;
   if (MODEL_PRICING[model]) return MODEL_PRICING[model];
   if (model.startsWith('ft:gpt-4o-mini')) return MODEL_PRICING['ft:gpt-4o-mini'];
   if (model.startsWith('ft:gpt-4o')) return { input: 5.0, output: 20.0 };
-  if (model.startsWith('gpt-4o-mini')) return MODEL_PRICING['gpt-4o-mini'];
-  if (model.startsWith('gpt-4o')) return MODEL_PRICING['gpt-4o'];
+  if (model.includes('gpt-5.6-luna')) return MODEL_PRICING['openai/gpt-5.6-luna'];
+  if (model.includes('gpt-5.6-sol')) return MODEL_PRICING['openai/gpt-5.6-sol'];
+  if (model.includes('qwen3.7-flash')) return MODEL_PRICING['qwen/qwen3.7-flash'];
+  if (model.includes('qwen3.8-flash')) return MODEL_PRICING['qwen/qwen3.8-flash'];
+  if (model.startsWith('gpt-4o-mini') || model.endsWith('/gpt-4o-mini')) {
+    return MODEL_PRICING['gpt-4o-mini'];
+  }
+  if (model.startsWith('gpt-4o') || model.endsWith('/gpt-4o')) return MODEL_PRICING['gpt-4o'];
   return null;
 }
 

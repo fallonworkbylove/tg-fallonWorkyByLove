@@ -22,7 +22,7 @@
  */
 
 const db = require('../db');
-const { buildOpenAIOptions } = require('./aiResponder');
+const { buildOpenAIOptions, getAnalysisModel } = require('./aiResponder');
 const OpenAI = require('openai');
 const { pushActivity } = require('./opsActivityLog');
 
@@ -488,7 +488,7 @@ async function aiDetectAgreement(message) {
   try {
     const client = getScorerClient();
     const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: getAnalysisModel(),
       messages: [
         {
           role: 'system',

@@ -15,7 +15,19 @@ const ADMIN_CHAT_ID = String(process.env.ADMIN_ALERT_CHAT_ID || '').trim();
 if (!ADMIN_CHAT_ID) {
   console.warn('[adminMenu] ADMIN_ALERT_CHAT_ID не задан — админ-меню суперадмина недоступно.');
 }
-const PING_MODEL = 'gpt-4o-mini';
+// OpenRouter требует author/model; нормализуем через aiResponder.
+function resolvePingModel() {
+  try {
+    const { LIGHT_MODEL, normalizeModelId } = require('./aiResponder');
+    if (LIGHT_MODEL) return LIGHT_MODEL;
+    return normalizeModelId(
+      process.env.OPENAI_MODEL_LIGHT || process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    );
+  } catch (_) {
+    return process.env.OPENAI_MODEL_LIGHT || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  }
+}
+const PING_MODEL = resolvePingModel();
 const BILLING_URL = 'https://platform.openai.com/settings/organization/billing';
 const TG_PROBE_HOST = '149.154.167.50';
 const TG_PROBE_PORT = 443;
@@ -348,14 +360,31 @@ async function buildStatsText() {
 let pingClient = null;
 
 async function pingOpenAi() {
+  let reasoningOpts = {};
   if (!pingClient) {
-    const { buildOpenAIOptions } = require('./aiResponder');
+    const { buildOpenAIOptions, reasoningOptionsForModel } = require('./aiResponder');
     pingClient = new OpenAI({ ...buildOpenAIOptions(), maxRetries: 0, timeout: 20000 });
+    try {
+      reasoningOpts = reasoningOptionsForModel(PING_MODEL) || {};
+    } catch (_) {
+      reasoningOpts = {};
+    }
+  } else {
+    try {
+      reasoningOpts = require('./aiResponder').reasoningOptionsForModel(PING_MODEL) || {};
+    } catch (_) {
+      /* optional */
+    }
   }
   const started = Date.now();
   try {
     const { response } = await pingClient.chat.completions
-      .create({ model: PING_MODEL, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
+      .create({
+        model: PING_MODEL,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 8,
+        ...reasoningOpts,
+      })
       .withResponse();
     const h = (k) => response.headers.get(k);
     return {
