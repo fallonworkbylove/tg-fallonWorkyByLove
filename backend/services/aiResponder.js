@@ -317,7 +317,7 @@ const FALLBACK_MODEL = normalizeModelId(
 );
 
 /**
- * Роутер: сложное → COMPLEX (Luna), лёгкое → LIGHT (Qwen).
+ * Роутер: по умолчанию LIGHT (Qwen); COMPLEX (Luna) только на жёстких кейсах.
  * options.forceComplex / forceLight перекрывают эвристику.
  */
 function pickChatModel(history, userMessage, options = {}) {
@@ -329,13 +329,17 @@ function pickChatModel(history, userMessage, options = {}) {
   const um = String(userMessage || '').trim();
   const ulen = um.length;
 
-  // Длинный диалог / длинная реплика / вопрос с контекстом → Luna.
-  if (turns >= 10 || ulen >= 120) return COMPLEX_MODEL;
-  if (turns >= 4 && (/[?]/.test(um) || /^(?:почему|зачем|как|что|how|why|when)\b/i.test(um))) {
+  // Оскорбления / созвон / конфликт — сразу Luna.
+  if (/(?:созвон|позвон|видеосвязь|ебнут|идиотк|псих|дур[ае])/i.test(um)) {
     return COMPLEX_MODEL;
   }
-  // Оскорбления / созвон / конфликт — лучше сильнее модель.
-  if (/(?:созвон|позвон|видеосвязь|ебнут|идиотк|псих|дур[ае])/i.test(um)) {
+  // Очень длинная реплика или глубокий диалог.
+  if (ulen >= 220 || turns >= 24) return COMPLEX_MODEL;
+  // Вопрос с уже накопленным контекстом (не каждый «как дела»).
+  if (
+    turns >= 12 &&
+    (/[?]/.test(um) || /^(?:почему|зачем|как\s|что\s|how\b|why\b|when\b)/i.test(um))
+  ) {
     return COMPLEX_MODEL;
   }
   return LIGHT_MODEL;
