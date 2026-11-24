@@ -2473,7 +2473,7 @@ function fixConfusedScript(reply, userMessage, history) {
 
   // После «???» / «странная» — не продолжать тот же скрипт.
   if (/^\?+$/i.test(msg) || /странн/i.test(msg)) {
-    return 'ахах ладно, проехали)';
+    return 'хех, проехали)';
   }
 
   const realTopic = REAL_TOPIC_Q_RE.test(msg);
