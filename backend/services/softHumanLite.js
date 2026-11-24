@@ -343,8 +343,8 @@ function softCompleteCut(reply) {
   ) {
     return (
       tag +
-      ['ну ладно тогда)', 'хм, поняла)', 'ок, я тут)'][
-        Math.floor(Math.random() * 3)
+      ['хм, поняла)', 'ну бывает)', 'о как)', 'хех ну да)'][
+        Math.floor(Math.random() * 4)
       ]
     );
   }
@@ -954,7 +954,7 @@ function stripFalseSeasonCorrection(reply, userMessage) {
         Math.floor(Math.random() * 3)
       ];
     }
-    return ['ну ладно)', 'хм, поняла)', 'ага, ясно)'][Math.floor(Math.random() * 3)];
+    return ['хм, поняла)', 'ой точно)', 'ну да)'][Math.floor(Math.random() * 3)];
   }
 
   // Вырезаем чужие сезоны из ответа, оставляя смысл.
@@ -1012,7 +1012,7 @@ function stripRoboticGirl(reply) {
   if (!body || body.length < 3) {
     return (
       tag +
-      ['ну ладно)', 'хм, ок)', 'поняла)'][Math.floor(Math.random() * 3)]
+      ['хм, ок)', 'поняла)', 'ну бывает)', 'о как)'][Math.floor(Math.random() * 4)]
     );
   }
   if (body !== before && !/[)….!?]$/.test(body)) body += ')';

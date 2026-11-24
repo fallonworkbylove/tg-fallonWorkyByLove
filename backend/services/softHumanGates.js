@@ -740,7 +740,9 @@ function fixOpenerLoop(reply, history) {
   const { tag, body } = stripTag(reply);
   if (!body || !OPENER_RE.test(body) || body.length > 70) return reply;
   const hits = recentAssistantBodies(history, 5).filter((t) => OPENER_RE.test(t)).length;
-  if (hits < 2) return reply;
+  // 0t22: «слушай» — уже со второго раза; остальное с третьего.
+  const isSlushay = /^слушай\b/i.test(body);
+  if (hits < (isSlushay ? 1 : 2)) return reply;
   // Срезаем opener, оставляем суть.
   const stripped = body.replace(/^(?:ну|хм|слушай|короче|типа)[,.]?\s+/i, '').trim();
   if (stripped.length >= 6) return tag + stripped;
@@ -832,7 +834,7 @@ function fixRepeatHowAsk(reply, history, userMessage) {
   if (!heAnsweredHow && recentHow < 1) return reply;
   const stripped = body.replace(HOW_ASK_STRIP_RE, '').trim();
   if (stripped.length >= 6) return tag + (/\)\s*$/.test(stripped) ? stripped : `${stripped})`);
-  return tag + pickAlt(['о как)', 'ага)', 'ну ты)', 'хм ок)', 'понятно)']);
+  return tag + pickAlt(['о как)', 'ага)', 'ну ты)', 'хех)', 'ясно)']);
 }
 
 const LOVE_STAMP_RE =
