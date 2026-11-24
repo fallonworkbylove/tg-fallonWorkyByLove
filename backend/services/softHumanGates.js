@@ -530,7 +530,8 @@ function fixDavaiLoop(reply, history, userMessage) {
 }
 
 const RADA_ECHO_RE = /^рада(?:\s+что|\s*,\s*что)(?:\s|$|[),.!])/i;
-const RADA_ALTS = ['мне приятно)', 'ну ты милый)', 'с тобой хорошо)', 'о как, рада)', 'приятно слышать)'];
+// 0t23: без «ну ты милый)» — иначе love-stamp петля
+const RADA_ALTS = ['мне приятно)', 'тепло от тебя)', 'с тобой хорошо)', 'о как)', 'приятно слышать)', 'радует)'];
 
 function fixRadaChtoEcho(reply, history) {
   if (!reply) return reply;
@@ -541,8 +542,22 @@ function fixRadaChtoEcho(reply, history) {
     .slice(-6)
     .map((h) => String(h.content || '').replace(/^\s*<<[^>\n]+>>\s*/, '').trim());
   const hits = recent.filter((t) => RADA_ECHO_RE.test(t)).length;
-  if (hits >= 1 || body.length <= 28) return tag + pickAlt(RADA_ALTS);
+  // 0t23: короткие и средние «рада что…» режем всегда; длинные — со 2-го раза
+  if (hits >= 1 || body.length <= 48) return tag + pickAlt(RADA_ALTS);
   return reply;
+}
+
+/** 0t23: голое «хех)» / «мм)» подряд — пустой ход. */
+const HEX_ALONE_RE = /^(?:хех+|мм+|эм+)\s*\){0,2}\.?$/i;
+const HEX_ALONE_ALTS = ['ну ты)', 'о как)', 'ага)', 'серьёзно?)', 'и что дальше?)'];
+
+function fixHexAloneOveruse(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !HEX_ALONE_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 6).filter((t) => HEX_ALONE_RE.test(t)).length;
+  if (hits < 1) return reply;
+  return tag + pickAlt(HEX_ALONE_ALTS);
 }
 
 const FRICTION_USER_RE =
@@ -913,6 +928,7 @@ function applyWave0t6Gates(reply, history, userMessage) {
   out = fixLaughOnlyOveruse(out, history);
   out = fixNuTakStamp(out, history);
   out = fixSpasiboStamp(out, history);
+  out = fixHexAloneOveruse(out, history);
   return out;
 }
 
@@ -1027,6 +1043,7 @@ module.exports = {
   fixLaughOnlyOveruse,
   fixNuTakStamp,
   fixSpasiboStamp,
+  fixHexAloneOveruse,
   applyWave0t2Gates,
   applyWave0t6Gates,
   applyWave0loGates,

@@ -295,7 +295,8 @@ function buildHisDetailCallbackHint(history, userMessage) {
     .map((h) => String(h.content || '').toLowerCase())
     .join('\n');
   if (recentBot.includes(key)) return null;
-  if (Math.random() > 0.22) return null;
+  // 0t23: чуть чаще возвращаться к его мелочи
+  if (Math.random() > 0.34) return null;
   return (
     `Можно вскользь вернуться к его теме «${m[0]}» одной короткой фразой или вопросом — ` +
     'только если сейчас не другой острый вопрос. Не каждый ответ.'
