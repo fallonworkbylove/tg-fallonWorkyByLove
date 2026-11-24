@@ -317,15 +317,15 @@ const FALLBACK_MODEL = normalizeModelId(
 );
 
 /**
- * Роутер: по умолчанию LIGHT (Qwen); COMPLEX (Luna) только на жёстких кейсах.
- * options.forceComplex / forceLight перекрывают эвристику.
+ * Роутер: по умолчанию LIGHT (Qwen). История у нас почти всегда длинная,
+ * поэтому глубина диалога НЕ триггерит Luna — иначе Qwen почти не вызывается.
+ * COMPLEX только на явных жёстких кейсах / forceComplex.
  */
 function pickChatModel(history, userMessage, options = {}) {
   if (options.forceComplex) return COMPLEX_MODEL;
   if (options.forceLight) return LIGHT_MODEL;
   if (COMPLEX_MODEL === LIGHT_MODEL) return LIGHT_MODEL;
 
-  const turns = Array.isArray(history) ? history.length : 0;
   const um = String(userMessage || '').trim();
   const ulen = um.length;
 
@@ -333,15 +333,10 @@ function pickChatModel(history, userMessage, options = {}) {
   if (/(?:созвон|позвон|видеосвязь|ебнут|идиотк|псих|дур[ае])/i.test(um)) {
     return COMPLEX_MODEL;
   }
-  // Очень длинная реплика или глубокий диалог.
-  if (ulen >= 220 || turns >= 24) return COMPLEX_MODEL;
-  // Вопрос с уже накопленным контекстом (не каждый «как дела»).
-  if (
-    turns >= 12 &&
-    (/[?]/.test(um) || /^(?:почему|зачем|как\s|что\s|how\b|why\b|when\b)/i.test(um))
-  ) {
-    return COMPLEX_MODEL;
-  }
+  // Длинная/многослойная реплика собеседника.
+  if (ulen >= 220) return COMPLEX_MODEL;
+  // Развёрнутый вопрос (не короткое «как дела?»).
+  if (ulen >= 100 && /[?]/.test(um)) return COMPLEX_MODEL;
   return LIGHT_MODEL;
 }
 
