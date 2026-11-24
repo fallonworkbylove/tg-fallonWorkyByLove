@@ -258,16 +258,28 @@ async function extractAndSaveFact(accountId, peerId, text, opts = {}) {
     const peer = String(peerId);
     if (IDENTITY_FACT_TYPES.has(match.type)) {
       // Долгосрок: одна актуальная запись на тип (имя/возраст/город/работа).
-      await db.execute(
-        `DELETE FROM peer_memory_facts
-         WHERE account_id = ? AND peer_id = ? AND fact_type = ?`,
+      // Graphify: без DELETE→INSERT дыры — обновляем in-place или вставляем.
+      const [[row]] = await db.execute(
+        `SELECT id, fact_text FROM peer_memory_facts
+         WHERE account_id = ? AND peer_id = ? AND fact_type = ?
+         ORDER BY id DESC LIMIT 1`,
         [accountId, peer, match.type],
       );
-      await db.execute(
-        `INSERT INTO peer_memory_facts (account_id, peer_id, fact_type, fact_text, created_at)
-         VALUES (?, ?, ?, ?, NOW())`,
-        [accountId, peer, match.type, factText],
-      );
+      if (row?.id) {
+        if (String(row.fact_text || '') === String(factText)) return;
+        await db.execute(
+          `UPDATE peer_memory_facts
+           SET fact_text = ?, created_at = NOW(), followed_up_at = NULL
+           WHERE id = ?`,
+          [factText, row.id],
+        );
+      } else {
+        await db.execute(
+          `INSERT INTO peer_memory_facts (account_id, peer_id, fact_type, fact_text, created_at)
+           VALUES (?, ?, ?, ?, NOW())`,
+          [accountId, peer, match.type, factText],
+        );
+      }
       return;
     }
 
