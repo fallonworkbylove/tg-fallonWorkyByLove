@@ -526,6 +526,8 @@ function rollDailyLife(dateKey) {
   }
 
   // Дневной «пэк» — сама пишет, если он затих (инициатива).
+  // 0t2: третье окно около полудня — чаще напоминает о себе.
+  const lateMorningMin = randInt(11 * 60, 12 * 60 + 40);
   const afternoonMin = randInt(13 * 60 + 30, 16 * 60 + 30);
   const eveningMin = randInt(18 * 60 + 30, 21 * 60);
   return {
@@ -536,6 +538,8 @@ function rollDailyLife(dateKey) {
     sleepKind,
     morningSent: false,
     nightSent: false,
+    lateMorningMin,
+    lateMorningSent: false,
     afternoonMin,
     afternoonSent: false,
     eveningMin,
@@ -574,7 +578,25 @@ function tickDailyLife(accountId) {
 
   if (life.booted || life.lastMin == null) {
     life.booted = false;
-    life.lastMin = now.minutes;
+    const nowM = now.minutes;
+    // 0t2: после рестарта не терять окна пинга «он замолчал».
+    const catchIdle = (flag, minKey, delayMs) => {
+      if (life[flag]) return;
+      if (life[minKey] == null || nowM < life[minKey] + 3) return;
+      life[flag] = true;
+      setTimeout(() => {
+        sendIdlePokes(accountId).catch((err) => {
+          console.error(
+            `[${accountLabel(accountId)}] Ошибка idle catch-up:`,
+            err.message,
+          );
+        });
+      }, delayMs);
+    };
+    catchIdle('lateMorningSent', 'lateMorningMin', 6000 + Math.random() * 12000);
+    catchIdle('afternoonSent', 'afternoonMin', 18000 + Math.random() * 25000);
+    catchIdle('eveningSent', 'eveningMin', 40000 + Math.random() * 35000);
+    life.lastMin = nowM;
     return;
   }
 
@@ -584,6 +606,20 @@ function tickDailyLife(accountId) {
     sendGreetings(accountId, 'morning', life.wakeKind).catch((err) => {
       console.error(
         `[${accountLabel(accountId)}] Ошибка рассылки доброго утра:`,
+        err.message,
+      );
+    });
+  }
+
+  if (
+    !life.lateMorningSent &&
+    life.lateMorningMin != null &&
+    crossedMinute(lastMin, now.minutes, life.lateMorningMin)
+  ) {
+    life.lateMorningSent = true;
+    sendIdlePokes(accountId).catch((err) => {
+      console.error(
+        `[${accountLabel(accountId)}] Ошибка дневной инициативы (утро):`,
         err.message,
       );
     });
@@ -655,6 +691,9 @@ const IDLE_POKE_RU = [
   'напиши как там у тебя',
   'как день проходит?',
   'я тут в телефоне, а ты чем занят?',
+  'эй, ты ещё на связи?)',
+  'подумала о тебе — как ты?)',
+  'не пропади совсем)',
 ];
 const IDLE_POKE_RU_COFFEE = 'я тут кофе пью, а ты чем занят?';
 const IDLE_POKE_EN = [
@@ -702,7 +741,8 @@ async function sendIdlePokes(accountId) {
       const message = dialog.message;
       if (!message || !message.out) continue; // последнее слово за нами
       const ageH = (Date.now() / 1000 - (message.date || 0)) / 3600;
-      if (ageH < 3 || ageH > 48) continue;
+      // 0t2: раньше с 3ч — лиды остывали; теперь с ~1.5ч, потолок 36ч.
+      if (ageH < 1.5 || ageH > 36) continue;
 
       const sender = dialog.entity;
       if (!sender || sender.bot || sender.self || isDeletedUser(sender) || isNeverContact(sender)) continue;

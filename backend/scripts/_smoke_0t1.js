@@ -25,9 +25,11 @@ assert(
     ar.LIGHT_MODEL,
   'long history still light',
 );
-assert(ar.pickChatModel([], 'x'.repeat(220), {}) === ar.COMPLEX_MODEL, 'long complex');
-assert(ar.pickChatModel([], `${'x'.repeat(100)}?`, {}) === ar.COMPLEX_MODEL, 'long question');
+assert(ar.pickChatModel([], 'x'.repeat(200), {}) === ar.COMPLEX_MODEL, 'long complex');
+assert(ar.pickChatModel([], `${'x'.repeat(90)}?`, {}) === ar.COMPLEX_MODEL, 'long question');
 assert(ar.pickChatModel([], 'как дела?', {}) === ar.LIGHT_MODEL, 'short question light');
+assert(ar.pickChatModel([], 'Так и будешь морозить?', {}) === ar.COMPLEX_MODEL, 'friction luna');
+assert(ar.pickChatModel([], 'скинь кружок', {}) === ar.COMPLEX_MODEL, 'circle luna');
 assert(ar.pickChatModel([], 'ок', { forceComplex: true }) === ar.COMPLEX_MODEL, 'force complex');
 assert(ar.getAnalysisModel() === ar.COMPLEX_MODEL, 'analysis');
 assert(ar.reasoningOptionsForModel('qwen/qwen3.7-flash').reasoning.effort === 'none', 'qwen no-think');

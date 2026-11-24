@@ -908,6 +908,7 @@ function getBlacklistUserId(item) {
   return (
     item.userId ??
     item.user_id ??
+    item.user_telegram_id ??
     item.telegram_user_id ??
     item.blocked_user_id ??
     ''
