@@ -132,6 +132,9 @@ async function buildPreferenceHint(accountId, peerId) {
   }
 }
 
+/** Долгоживущие черты — не режем через 7 дней. */
+const IDENTITY_FACT_TYPES = new Set(['name', 'age', 'city', 'work']);
+
 const FACT_PATTERNS = [
   { type: 'pet', re: /(собак|кот[аеу]?\b|кошк|песик|щенок|корги|котен[оё]к|хомяк|попугай|питомец)/i },
   { type: 'health', re: /(заболел|болею|температура|простыл|больниц|врач|таблетк|плохо себя чувству|температур|кашля)/i },
@@ -142,8 +145,21 @@ const FACT_PATTERNS = [
   { type: 'show', re: /(сериал|смотрю\s+\w+|досмотр\w+|нетфликс|netflix|кино\s+смотр|фильм\s+(?:смотр|нравит))/i },
   { type: 'car', re: /(моя?\s+(?:машин|тачк)|у меня\s+(?:машин|тачк)|еду\s+на\s+(?:машин|авто)|на\s+работе\s+на\s+машин)/i },
   { type: 'plans', re: /(завтра\s+(иду|поеду|буду|работаю)|на выходн|в субботу|в воскресенье|собираюсь\s+(пойти|поехать|вечером))/i },
-  // Без голого «я Завтра» — только явное представление.
-  { type: 'name', re: /(?:меня зовут|мо[её]\s+имя)\s+([А-ЯЁA-Z][а-яёa-z]{2,15})\b/ },
+  // Имя: только явное представление. Без голого «я думаю» → «Думаю».
+  {
+    type: 'name',
+    re: /(?:меня\s+зовут|мо[её]\s+имя|зови\s+меня)\s+([А-ЯЁA-Z][а-яёa-zЁё]{2,15})(?:\s|$|[),.!?])/i,
+  },
+  // «Я Максим» — заглавная после «я»; без /i на имени, чтобы «я думаю» не цеплялось.
+  {
+    type: 'name',
+    re: /(?:^|[.!?]\s+|\s)Я\s+([А-ЯЁA-Z][а-яёa-zЁё]{2,15})(?:\s|$|[),.!?])/,
+  },
+  // Возраст.
+  {
+    type: 'age',
+    re: /(?:мне|мне\s+уже)\s+(\d{2})\s*(?:год|лет)|(?:^|\s)я\s+(\d{2})\s*(?:год|лет)|(?:мне)\s+(\d{2})(?:\s|$|[),.!?])/i,
+  },
   { type: 'pref', re: /(не люблю|ненавижу|терпеть не могу|обожаю|кайфую от)\s+[а-яёa-z\s]{3,40}/i },
   { type: 'family', re: /(моя?\s+(мама|папа|брат|сестра|жена|девушка)|у меня\s+(мама|папа|брат|сестра))/i },
 ];
@@ -169,12 +185,18 @@ function clipFact(text) {
     .slice(0, 255);
 }
 
-async function extractAndSaveFact(accountId, peerId, text) {
+/**
+ * @param {{ skipPrefs?: boolean }} [opts] — skipPrefs: не трогать peer_chat_prefs
+ *   (нужно для backfill истории, иначе старые реплики раздувают стиль).
+ */
+async function extractAndSaveFact(accountId, peerId, text, opts = {}) {
   if (!text || text.length < 2) return;
   // Не сохраняем описания его медиа как «факты».
   if (/\[(?:кружок|фото|видео)\s+от\s+собеседника\]/i.test(text)) return;
-  // Стиль чата — всегда, даже если факта нет (бесплатно).
-  updateChatPrefs(accountId, peerId, text).catch(() => {});
+  // Стиль чата — только на живом входящем, не на replay истории.
+  if (!opts.skipPrefs) {
+    updateChatPrefs(accountId, peerId, text).catch(() => {});
+  }
   try {
     let match = FACT_PATTERNS.find((p) => p.re.test(text));
     let factText = clipFact(text);
@@ -206,14 +228,24 @@ async function extractAndSaveFact(accountId, peerId, text) {
 
     if (match.type === 'name') {
       const m = text.match(match.re);
-      if (m && m[1]) factText = m[1].slice(0, 40);
+      const captured = (m && (m[1] || m[2] || m[3])) || '';
+      if (captured) factText = String(captured).slice(0, 40);
       if (
-        /^(завтра|сегодня|вчера|просто|ладно|короче|слушай|привет|пока|хорошо|спасибо|сейчас)$/i.test(
+        /^(завтра|сегодня|вчера|просто|ладно|короче|слушай|привет|пока|хорошо|спасибо|сейчас|тут|там|дома|снова|тоже|ещё|еще|думаю|знаю|хочу|могу|буду|был|была|живу|работаю|смотрю|иду|поеду|люблю|ненавижу)$/i.test(
           String(factText || ''),
         )
       ) {
         return;
       }
+      // Имя должно начинаться с заглавной в исходном захвате.
+      if (!/^[А-ЯЁA-Z]/.test(String(factText || ''))) return;
+    }
+    if (match.type === 'age') {
+      const m = text.match(match.re);
+      const n = (m && (m[1] || m[2] || m[3])) || '';
+      const age = Number(n);
+      if (!age || age < 16 || age > 80) return;
+      factText = String(age);
     }
 
     await ensureSchema();
@@ -223,22 +255,61 @@ async function extractAndSaveFact(accountId, peerId, text) {
     // возвращаться к коробкам в каждом диалоге («собирается 24/7»).
     if (match.type === 'move') return;
 
+    const peer = String(peerId);
+    if (IDENTITY_FACT_TYPES.has(match.type)) {
+      // Долгосрок: одна актуальная запись на тип (имя/возраст/город/работа).
+      await db.execute(
+        `DELETE FROM peer_memory_facts
+         WHERE account_id = ? AND peer_id = ? AND fact_type = ?`,
+        [accountId, peer, match.type],
+      );
+      await db.execute(
+        `INSERT INTO peer_memory_facts (account_id, peer_id, fact_type, fact_text, created_at)
+         VALUES (?, ?, ?, ?, NOW())`,
+        [accountId, peer, match.type, factText],
+      );
+      return;
+    }
+
     const [[existing]] = await db.execute(
       `SELECT id FROM peer_memory_facts
        WHERE account_id = ? AND peer_id = ? AND fact_type = ?
-         AND created_at > (NOW() - INTERVAL 7 DAY)
+         AND created_at > (NOW() - INTERVAL 14 DAY)
        LIMIT 1`,
-      [accountId, String(peerId), match.type],
+      [accountId, peer, match.type],
     );
     if (existing) return;
 
     await db.execute(
       `INSERT INTO peer_memory_facts (account_id, peer_id, fact_type, fact_text, created_at)
        VALUES (?, ?, ?, ?, NOW())`,
-      [accountId, String(peerId), match.type, factText],
+      [accountId, peer, match.type, factText],
     );
   } catch (err) {
     console.error('[memoryTriggers] Не удалось сохранить факт:', err.message);
+  }
+}
+
+/**
+ * 0t4: пройти хвост истории (до ~80 user) и добрать identity-факты.
+ * Дёшево (regex), без LLM.
+ */
+async function backfillIdentityFromHistory(accountId, peerId, history) {
+  const users = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'user')
+    .slice(-80);
+  for (const h of users) {
+    const t = String(h.content || '');
+    if (!t || t.length < 2) continue;
+    if (
+      !/(?:меня\s+зовут|мо[её]\s+имя|зови\s+меня|(?:мне|я)\s+\d{2}|живу\s+в|я\s+из\s+|на\s+работе|работаю)/i.test(
+        t,
+      )
+    ) {
+      continue;
+    }
+    // Graphify P2: не крутить chat prefs на replay истории.
+    await extractAndSaveFact(accountId, peerId, t, { skipPrefs: true });
   }
 }
 
@@ -288,6 +359,8 @@ const FOLLOW_UP_HINTS = {
     `Ранее у него были планы («${fact}»). Можно вскользь опереться («ну как там с …»), без допроса.`,
   name: (fact) =>
     `Его зовут ${fact}. Можешь иногда обращаться по имени, без навязчивости.`,
+  age: (fact) =>
+    `Ему около ${fact}. Не переспрашивай возраст; если к месту — мягкая отсылка без допроса.`,
   pref: (fact) => {
     const f = String(fact || '');
     if (/не\s+люблю|ненавижу|терпеть\s+не\s+могу/i.test(f)) {
@@ -381,10 +454,14 @@ const TYPE_LABELS = {
   hobby: 'хобби',
   plans: 'планы',
   name: 'имя',
+  age: 'возраст',
   pref: 'предпочтения',
   family: 'семья',
   move: 'переезд',
   job: 'её работа',
+  sport: 'спорт',
+  show: 'кино',
+  car: 'машина',
 };
 
 /**
@@ -393,17 +470,24 @@ const TYPE_LABELS = {
 async function buildMemoryContextHint(accountId, peerId) {
   try {
     await ensureSchema();
+    // Identity — до 120 дней; остальное — 21 день.
     const [aboutHim] = await db.execute(
       `SELECT fact_type, fact_text FROM peer_memory_facts
        WHERE account_id = ? AND peer_id = ?
-         AND created_at > (NOW() - INTERVAL 7 DAY)
-       ORDER BY id DESC LIMIT 8`,
+         AND (
+           (fact_type IN ('name','age','city','work') AND created_at > (NOW() - INTERVAL 120 DAY))
+           OR (fact_type NOT IN ('name','age','city','work') AND created_at > (NOW() - INTERVAL 21 DAY))
+         )
+       ORDER BY
+         FIELD(fact_type,'name','age','city','work','pref','family','pet','hobby','sport','show','car','plans','health') ASC,
+         id DESC
+       LIMIT 14`,
       [accountId, String(peerId)],
     );
     const [aboutSelf] = await db.execute(
       `SELECT fact_type, fact_text FROM peer_self_told
        WHERE account_id = ? AND peer_id = ?
-         AND created_at > (NOW() - INTERVAL 7 DAY)
+         AND created_at > (NOW() - INTERVAL 21 DAY)
        ORDER BY id DESC LIMIT 8`,
       [accountId, String(peerId)],
     );
@@ -417,13 +501,14 @@ async function buildMemoryContextHint(accountId, peerId) {
     }
 
     const lines = [];
-    // #5 компактная карточка: город / работа / не любит / дети / имя
+    // #5 компактная карточка: имя / возраст / город / работа / не любит
     if (aboutHim.length) {
       const byType = (t) => aboutHim.find((f) => f.fact_type === t);
       const cardBits = [];
       const nameF = byType('name');
+      const ageF = byType('age');
       const cityF = byType('city');
-      const jobF = byType('job');
+      const jobF = byType('work') || byType('job');
       const kidsF = byType('family') || byType('kids');
       const petF = byType('pet');
       const hobbyF = byType('hobby');
@@ -433,6 +518,7 @@ async function buildMemoryContextHint(accountId, peerId) {
           /не\s+люблю|ненавижу|терпеть\s+не\s+могу/i.test(String(f.fact_text || '')),
       );
       if (nameF) cardBits.push(`имя ${String(nameF.fact_text).slice(0, 30)}`);
+      if (ageF) cardBits.push(`возраст ${String(ageF.fact_text).slice(0, 8)}`);
       if (cityF) cardBits.push(`город ${String(cityF.fact_text).slice(0, 40)}`);
       if (jobF) cardBits.push(`работа ${String(jobF.fact_text).slice(0, 40)}`);
       if (petF) cardBits.push(`питомец ${String(petF.fact_text).slice(0, 40)}`);
@@ -440,7 +526,10 @@ async function buildMemoryContextHint(accountId, peerId) {
       if (kidsF) cardBits.push(`семья ${String(kidsF.fact_text).slice(0, 40)}`);
       if (dislikeF) cardBits.push(`не любит ${String(dislikeF.fact_text).slice(0, 40)}`);
       if (cardBits.length) {
-        lines.push('КАРТОЧКА собеседника (держись фактов, не выдумывай): ' + cardBits.join(' · '));
+        lines.push(
+          'КАРТОЧКА собеседника (долгосрок — держись фактов, иногда обратись по имени): ' +
+            cardBits.join(' · '),
+        );
       }
       lines.push(
         'ПАМЯТЬ о нём (уже знаешь, не переспрашивай как в первый раз): ' +
@@ -500,8 +589,11 @@ async function listPeerFacts(accountId, peerId) {
     const [rows] = await db.execute(
       `SELECT fact_type, fact_text FROM peer_memory_facts
        WHERE account_id = ? AND peer_id = ?
-         AND created_at > (NOW() - INTERVAL 7 DAY)
-       ORDER BY id DESC LIMIT 16`,
+         AND (
+           (fact_type IN ('name','age','city','work') AND created_at > (NOW() - INTERVAL 120 DAY))
+           OR (fact_type NOT IN ('name','age','city','work') AND created_at > (NOW() - INTERVAL 21 DAY))
+         )
+       ORDER BY id DESC LIMIT 24`,
       [accountId, String(peerId)],
     );
     return Array.isArray(rows) ? rows : [];
@@ -511,12 +603,21 @@ async function listPeerFacts(accountId, peerId) {
   }
 }
 
-/** Чистка старше 7 дней — память не раздувается. */
+/** Чистка: identity 120д, остальное 21д — имя/возраст не сгорают за неделю. */
 async function pruneOldMemory() {
   try {
     await ensureSchema();
-    await db.execute(`DELETE FROM peer_memory_facts WHERE created_at < (NOW() - INTERVAL 7 DAY)`);
-    await db.execute(`DELETE FROM peer_self_told WHERE created_at < (NOW() - INTERVAL 7 DAY)`);
+    await db.execute(
+      `DELETE FROM peer_memory_facts
+       WHERE fact_type NOT IN ('name','age','city','work')
+         AND created_at < (NOW() - INTERVAL 21 DAY)`,
+    );
+    await db.execute(
+      `DELETE FROM peer_memory_facts
+       WHERE fact_type IN ('name','age','city','work')
+         AND created_at < (NOW() - INTERVAL 120 DAY)`,
+    );
+    await db.execute(`DELETE FROM peer_self_told WHERE created_at < (NOW() - INTERVAL 21 DAY)`);
   } catch (err) {
     console.warn('[memoryTriggers] prune:', err.message);
   }
@@ -525,6 +626,7 @@ async function pruneOldMemory() {
 module.exports = {
   extractAndSaveFact,
   extractSelfTold,
+  backfillIdentityFromHistory,
   getDueFollowUp,
   pickMemoryPoke,
   markFollowedUp,
@@ -533,4 +635,6 @@ module.exports = {
   buildPreferenceHint,
   listPeerFacts,
   pruneOldMemory,
+  IDENTITY_FACT_TYPES,
+  FACT_PATTERNS,
 };

@@ -688,6 +688,10 @@ async function fireReengage(accountId, peerId) {
     ]);
     // Факт + стиль чата запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
+    // 0t4: добрать имя/возраст/город из хвоста истории (контекст ~80).
+    memoryTriggers
+      .backfillIdentityFromHistory(accountId, peerId, replyHistory)
+      .catch(() => {});
     peerProfile.maybeUpdate(accountId, peerId, replyHistory).catch(() => {});
 
     const emotionHint = buildEmotionHint(replyHistory);
@@ -2210,6 +2214,7 @@ async function processBufferedMessages(
     ]);
     // Факт + стиль чата запоминаем «на будущее» (не блокирует ответ).
     memoryTriggers.extractAndSaveFact(accountId, peerId, text).catch(() => {});
+    memoryTriggers.backfillIdentityFromHistory(accountId, peerId, history).catch(() => {});
     peerProfile.maybeUpdate(accountId, peerId, history).catch(() => {});
 
     const emotionHint = buildEmotionHint(history);

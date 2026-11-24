@@ -6,7 +6,8 @@ const { isRussianConversation, detectReplyLanguage } = require('./aiResponder');
 const { accountLabel } = require('./clientPool');
 
 // Сколько последних сообщений диалога передавать модели как контекст.
-const HISTORY_LIMIT = 60;
+// 0t4: ~90 — контекстная память 50–100 сообщений текущей сессии.
+const HISTORY_LIMIT = 90;
 
 /** Пауза ≥72ч — старый диалог в БД считаем законченным, возраст с нуля. */
 const SESSION_GAP_HOURS = 72;

@@ -9,8 +9,9 @@ const OpenAI = require('openai');
 const { buildOpenAIOptions, getAnalysisModel } = require('./aiResponder');
 
 const PEER_PROFILE_EVERY = 8;
-const MAX_HISTORY_TURNS = 12;
-const MAX_OUT_TOKENS = 120;
+// 0t4: шире окно для стиля + явных фактов (имя/возраст).
+const MAX_HISTORY_TURNS = 24;
+const MAX_OUT_TOKENS = 160;
 
 const openai = new OpenAI(buildOpenAIOptions());
 
@@ -71,10 +72,10 @@ async function buildHint(accountId, peerId) {
     const tags = String(profile.tags || '').trim();
     if (!summary && !tags) return null;
 
-    const parts = ['Профиль собеседника:'];
+    const parts = ['Профиль собеседника (стиль + факты, если есть):'];
     if (summary) parts.push(summary);
     if (tags) parts.push(`Теги: ${tags}`);
-    parts.push('Подстрой тон под него, не зеркаль вслух.');
+    parts.push('Учитывай имя/возраст если знаешь. Подстрой тон, не зеркаль вслух.');
     return parts.join(' ');
   } catch {
     return null;
@@ -140,11 +141,10 @@ async function maybeUpdate(accountId, peerId, history, userMessage) {
         {
           role: 'system',
           content:
-            'Ты кратко описываешь ХАРАКТЕР и СТИЛЬ общения СОБЕСЕДНИКА (не бота) ' +
-            'по фрагменту переписки. Ответь строго JSON: ' +
-            '{"summary":"1-2 коротких предложения на русском о характере/тоне собеседника",' +
-            '"tags":"через запятую 3-6 коротких тегов (напр. сухой, шутит, осторожный, прямолинейный)"}. ' +
-            'Без выдумок фактов биографии. Только стиль общения.',
+            'Ты кратко описываешь СОБЕСЕДНИКА (не бота) по фрагменту переписки. Ответь строго JSON: ' +
+            '{"summary":"1-2 коротких предложения: стиль + ЯВНЫЕ факты (имя/возраст/город/работа), если он сам сказал",' +
+            '"tags":"через запятую 3-8 тегов (стиль + факты вроде имя:Иван, возраст:28, город:Казань)"}. ' +
+            'Факты биографии — ТОЛЬКО если он прямо написал. Не выдумывай.',
         },
         {
           role: 'user',

@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t4. 24 ноя — память 90 сообщений + identity + живность
+
+HISTORY_LIMIT=90. Identity (имя/возраст/город/работа) до 120д, upsert; backfill из хвоста истории; карточка с возрастом; peerProfile шире + факты. aliveStyle живее (реакции, имя, мелочь про себя). Лента: (updates.js?v=512).
+
 ## 0t3. 24 ноя — мозг: friction / долг / позиция / Qwen·Luna craft
 
 messageAnalysis: акты bot_test/friction/media_ask + detectThreadDebt (Долг/Факт о нём) в analysisHint. aliveStyle — своё мнение; craft — ветка Qwen vs Luna; роутер читает speechAct. Idle catch-up: одно окно после рестарта (Graphify P2). Лента: (updates.js?v=511).
