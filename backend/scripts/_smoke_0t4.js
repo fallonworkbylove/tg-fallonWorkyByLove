@@ -22,9 +22,14 @@ assert(/INTERVAL 120 DAY/.test(src), 'long-term 120d');
 assert(/backfillIdentityFromHistory/.test(src), 'backfill export');
 assert(/fact_type NOT IN \('name','age','city','work'\)/.test(src), 'prune keeps identity');
 
-const nameRe = /(?:меня\s+зовут|мо[её]\s+имя|зови\s+меня|(?:^|\s)я)\s+([А-ЯЁA-Z][а-яёa-zЁё]{2,15})(?:\s|$|[),.!?])/i;
-assert(nameRe.test('меня зовут Артём'), 'name match');
-assert(nameRe.test('Я Максим'), 'name ya');
+const nameIntro =
+  /(?:меня\s+зовут|мо[её]\s+имя|зови\s+меня)\s+([А-ЯЁA-Z][а-яёa-zЁё]{2,15})(?:\s|$|[),.!?])/i;
+const nameYa = /(?:^|[.!?]\s+|\s)Я\s+([А-ЯЁA-Z][а-яёa-zЁё]{2,15})(?:\s|$|[),.!?])/;
+assert(nameIntro.test('меня зовут Артём'), 'name match');
+assert(nameYa.test('Я Максим'), 'name ya capital');
+assert(!nameIntro.test('я думаю что'), 'no name from думаю intro');
+assert(!nameYa.test('я думаю что'), 'no name from думаю ya');
+assert(/skipPrefs/.test(src), 'backfill skipPrefs guard');
 const ageRe = /(?:мне|мне\s+уже)\s+(\d{2})\s*(?:год|лет)|(?:^|\s)я\s+(\d{2})\s*(?:год|лет)|(?:мне)\s+(\d{2})(?:\s|$|[),.!?])/i;
 assert(ageRe.test('мне 28 лет'), 'age match');
 assert(ageRe.test('я 32 года'), 'age ya');

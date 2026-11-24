@@ -145,10 +145,15 @@ const FACT_PATTERNS = [
   { type: 'show', re: /(сериал|смотрю\s+\w+|досмотр\w+|нетфликс|netflix|кино\s+смотр|фильм\s+(?:смотр|нравит))/i },
   { type: 'car', re: /(моя?\s+(?:машин|тачк)|у меня\s+(?:машин|тачк)|еду\s+на\s+(?:машин|авто)|на\s+работе\s+на\s+машин)/i },
   { type: 'plans', re: /(завтра\s+(иду|поеду|буду|работаю)|на выходн|в субботу|в воскресенье|собираюсь\s+(пойти|поехать|вечером))/i },
-  // Имя: явное представление (не «я завтра»).
+  // Имя: только явное представление. Без голого «я думаю» → «Думаю».
   {
     type: 'name',
-    re: /(?:меня\s+зовут|мо[её]\s+имя|зови\s+меня|(?:^|\s)я)\s+([А-ЯЁA-Z][а-яёa-zЁё]{2,15})(?:\s|$|[),.!?])/i,
+    re: /(?:меня\s+зовут|мо[её]\s+имя|зови\s+меня)\s+([А-ЯЁA-Z][а-яёa-zЁё]{2,15})(?:\s|$|[),.!?])/i,
+  },
+  // «Я Максим» — заглавная после «я»; без /i на имени, чтобы «я думаю» не цеплялось.
+  {
+    type: 'name',
+    re: /(?:^|[.!?]\s+|\s)Я\s+([А-ЯЁA-Z][а-яёa-zЁё]{2,15})(?:\s|$|[),.!?])/,
   },
   // Возраст.
   {
@@ -180,12 +185,18 @@ function clipFact(text) {
     .slice(0, 255);
 }
 
-async function extractAndSaveFact(accountId, peerId, text) {
+/**
+ * @param {{ skipPrefs?: boolean }} [opts] — skipPrefs: не трогать peer_chat_prefs
+ *   (нужно для backfill истории, иначе старые реплики раздувают стиль).
+ */
+async function extractAndSaveFact(accountId, peerId, text, opts = {}) {
   if (!text || text.length < 2) return;
   // Не сохраняем описания его медиа как «факты».
   if (/\[(?:кружок|фото|видео)\s+от\s+собеседника\]/i.test(text)) return;
-  // Стиль чата — всегда, даже если факта нет (бесплатно).
-  updateChatPrefs(accountId, peerId, text).catch(() => {});
+  // Стиль чата — только на живом входящем, не на replay истории.
+  if (!opts.skipPrefs) {
+    updateChatPrefs(accountId, peerId, text).catch(() => {});
+  }
   try {
     let match = FACT_PATTERNS.find((p) => p.re.test(text));
     let factText = clipFact(text);
@@ -220,12 +231,14 @@ async function extractAndSaveFact(accountId, peerId, text) {
       const captured = (m && (m[1] || m[2] || m[3])) || '';
       if (captured) factText = String(captured).slice(0, 40);
       if (
-        /^(завтра|сегодня|вчера|просто|ладно|короче|слушай|привет|пока|хорошо|спасибо|сейчас|тут|там|дома|снова|тоже|ещё|еще)$/i.test(
+        /^(завтра|сегодня|вчера|просто|ладно|короче|слушай|привет|пока|хорошо|спасибо|сейчас|тут|там|дома|снова|тоже|ещё|еще|думаю|знаю|хочу|могу|буду|был|была|живу|работаю|смотрю|иду|поеду|люблю|ненавижу)$/i.test(
           String(factText || ''),
         )
       ) {
         return;
       }
+      // Имя должно начинаться с заглавной в исходном захвате.
+      if (!/^[А-ЯЁA-Z]/.test(String(factText || ''))) return;
     }
     if (match.type === 'age') {
       const m = text.match(match.re);
@@ -295,7 +308,8 @@ async function backfillIdentityFromHistory(accountId, peerId, history) {
     ) {
       continue;
     }
-    await extractAndSaveFact(accountId, peerId, t);
+    // Graphify P2: не крутить chat prefs на replay истории.
+    await extractAndSaveFact(accountId, peerId, t, { skipPrefs: true });
   }
 }
 
