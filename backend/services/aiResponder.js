@@ -207,11 +207,19 @@ async function openaiCreateWithProxyFailover(run) {
 
 function buildOpenAIOptions(socksOverride = null) {
   const opts = { apiKey: process.env.OPENAI_API_KEY };
-  // Позволяет переключить провайдера (напр. freemodel) без правки кода:
-  // задай OPENAI_BASE_URL=https://api.freemodel.dev/v1 в .env.
+  // Позволяет переключить провайдера (напр. freemodel / OpenRouter) без правки кода:
+  // задай OPENAI_BASE_URL=https://openrouter.ai/api/v1 в .env.
   if (process.env.OPENAI_BASE_URL) {
     opts.baseURL = process.env.OPENAI_BASE_URL;
     console.log(`[openai] Базовый URL переопределён: ${process.env.OPENAI_BASE_URL}`);
+  }
+  // OpenRouter: опциональные заголовки для рейтинга приложения.
+  if (/openrouter\.ai/i.test(String(process.env.OPENAI_BASE_URL || ''))) {
+    opts.defaultHeaders = {
+      'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'https://loverussian.app',
+      'X-OpenRouter-Title': process.env.OPENROUTER_APP_TITLE || 'LoveRussian',
+      ...(opts.defaultHeaders || {}),
+    };
   }
   const socks = socksOverride || firstSocks5FromEnv();
   if (socks) {
@@ -281,20 +289,88 @@ module.exports.openaiCreateWithProxyFailover = openaiCreateWithProxyFailover;
 module.exports.isOpenAiProxyTransportError = isOpenAiProxyTransportError;
 module.exports.isOpenAiCircuitOpen = isOpenAiCircuitOpen;
 
-// Модель для чата (ответы). Задаётся через .env: OPENAI_MODEL=gpt-4o.
-// Значение читается один раз при старте процесса и не меняется во время
-// работы бота — чтобы переключить модель, поменяй .env и перезапусти pm2.
-// Если переменная не задана вовсе — используется gpt-4o по умолчанию.
-//
-// Fine-tuning: после обучения (см. scripts/finetune_openai.py) сюда
-// достаточно вписать полученный id вида "ft:gpt-4o-mini-2024-07-18:org::abc123" —
-// весь остальной код ничего не знает о fine-tuning и работает как раньше.
-const CHAT_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
+// Модели чата. OpenRouter: openai/gpt-5.6-luna + qwen/qwen3.7-flash.
+// OPENAI_MODEL — лёгкая (по умолчанию), OPENAI_MODEL_COMPLEX — сложная.
+// Значения читаются при старте; смена .env → pm2 restart.
+function normalizeModelId(model) {
+  const m = String(model || '').trim();
+  if (!m) return m;
+  const base = String(process.env.OPENAI_BASE_URL || '');
+  if (/openrouter\.ai/i.test(base) && !m.includes('/') && !m.startsWith('ft:')) {
+    return `openai/${m}`;
+  }
+  return m;
+}
 
-// Запасная модель — используется автоматически, если основная (например,
-// fine-tuned) вернёт ошибку (модель удалена/деактивирована/недоступна).
-// Без фолбэка бот полностью замолчит, если fine-tuned модель отключат.
-const FALLBACK_MODEL = process.env.OPENAI_MODEL_FALLBACK || 'gpt-4o-mini';
+const LIGHT_MODEL = normalizeModelId(
+  process.env.OPENAI_MODEL_LIGHT || process.env.OPENAI_MODEL || 'gpt-4o-mini',
+);
+const COMPLEX_MODEL = normalizeModelId(
+  process.env.OPENAI_MODEL_COMPLEX || process.env.OPENAI_MODEL || LIGHT_MODEL,
+);
+// Обратная совместимость: CHAT_MODEL = лёгкая (основной объём трафика).
+const CHAT_MODEL = LIGHT_MODEL;
+
+// Запасная модель — если основная/complex недоступна.
+const FALLBACK_MODEL = normalizeModelId(
+  process.env.OPENAI_MODEL_FALLBACK || LIGHT_MODEL,
+);
+
+/**
+ * Роутер: сложное → COMPLEX (Luna), лёгкое → LIGHT (Qwen).
+ * options.forceComplex / forceLight перекрывают эвристику.
+ */
+function pickChatModel(history, userMessage, options = {}) {
+  if (options.forceComplex) return COMPLEX_MODEL;
+  if (options.forceLight) return LIGHT_MODEL;
+  if (COMPLEX_MODEL === LIGHT_MODEL) return LIGHT_MODEL;
+
+  const turns = Array.isArray(history) ? history.length : 0;
+  const um = String(userMessage || '').trim();
+  const ulen = um.length;
+
+  // Длинный диалог / длинная реплика / вопрос с контекстом → Luna.
+  if (turns >= 10 || ulen >= 120) return COMPLEX_MODEL;
+  if (turns >= 4 && (/[?]/.test(um) || /^(?:почему|зачем|как|что|how|why|when)\b/i.test(um))) {
+    return COMPLEX_MODEL;
+  }
+  // Оскорбления / созвон / конфликт — лучше сильнее модель.
+  if (/(?:созвон|позвон|видеосвязь|ебнут|идиотк|псих|дур[ае])/i.test(um)) {
+    return COMPLEX_MODEL;
+  }
+  return LIGHT_MODEL;
+}
+
+/** Модель для peer_profiles / learning / смысловой оценки. */
+function getAnalysisModel() {
+  return COMPLEX_MODEL;
+}
+
+/**
+ * OpenRouter: у Qwen Flash thinking включён по умолчанию и съедает max_tokens
+ * → пустой content. Для лёгкого чата глушим reasoning; для Luna — low.
+ */
+function reasoningOptionsForModel(model) {
+  const m = String(model || '').toLowerCase();
+  if (m.includes('qwen')) {
+    return { reasoning: { effort: 'none' } };
+  }
+  if (m.includes('gpt-5.6-luna') || m.includes('gpt-5.6-sol') || m.includes('gpt-5.6-terra')) {
+    const effort = String(process.env.OPENAI_REASONING_EFFORT || 'low').trim() || 'low';
+    if (effort === 'none' || effort === 'off') return { reasoning: { effort: 'none' } };
+    return { reasoning: { effort } };
+  }
+  return {};
+}
+
+module.exports.pickChatModel = pickChatModel;
+module.exports.getAnalysisModel = getAnalysisModel;
+module.exports.normalizeModelId = normalizeModelId;
+module.exports.reasoningOptionsForModel = reasoningOptionsForModel;
+module.exports.LIGHT_MODEL = LIGHT_MODEL;
+module.exports.COMPLEX_MODEL = COMPLEX_MODEL;
+module.exports.CHAT_MODEL = CHAT_MODEL;
+module.exports.FALLBACK_MODEL = FALLBACK_MODEL;
 
 // Отдельный клиент для ГОЛОСА (whisper) и ФОТО (vision). Freemodel обычно
 // НЕ поддерживает эти модели, поэтому если задан OPENAI_FALLBACK_KEY (ключ
@@ -1074,9 +1150,10 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   }
   const cleanMessages = messages.filter((m) => m && m.content && String(m.content).trim());
 
+  const primaryModel = pickChatModel(history, contextualUserMessage, options);
   // [v0] ВРЕМЕННЫЙ ЛОГ: печатает реально используемую модель и endpoint.
   console.log(
-    `[v0] Запрос к модели: "${CHAT_MODEL}" | baseURL: ${process.env.OPENAI_BASE_URL || 'api.openai.com (по умолчанию)'}`,
+    `[v0] Запрос к модели: "${primaryModel}" (light=${LIGHT_MODEL} complex=${COMPLEX_MODEL}) | baseURL: ${process.env.OPENAI_BASE_URL || 'api.openai.com (по умолчанию)'}`,
   );
 
   const requestOptions = {
@@ -1090,7 +1167,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   };
 
   let completion;
-  let usedModel = CHAT_MODEL;
+  let usedModel = primaryModel;
   let fellBack = false;
   // Лениво: helpRequestNotifier сам импортирует aiResponder.
   const notifier = require('./helpRequestNotifier');
@@ -1099,7 +1176,8 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
       try {
         return await client.chat.completions.create({
           ...requestOptions,
-          model: CHAT_MODEL,
+          ...reasoningOptionsForModel(primaryModel),
+          model: primaryModel,
         });
       } catch (err) {
         if (/Invalid body|failed to parse JSON/i.test(String(err && err.message))) {
@@ -1112,14 +1190,15 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
         }
         // Транспорт/прокси — наружу для failover; модельные ошибки — fallback model.
         if (isOpenAiProxyTransportError(err)) throw err;
-        if (CHAT_MODEL === FALLBACK_MODEL || notifier.classifyOpenAiError(err)) throw err;
+        if (primaryModel === FALLBACK_MODEL || notifier.classifyOpenAiError(err)) throw err;
         console.error(
-          `[openai] Модель "${CHAT_MODEL}" вернула ошибку (${err.message}), пробую запасную "${FALLBACK_MODEL}".`,
+          `[openai] Модель "${primaryModel}" вернула ошибку (${err.message}), пробую запасную "${FALLBACK_MODEL}".`,
         );
         usedModel = FALLBACK_MODEL;
         fellBack = true;
         return client.chat.completions.create({
           ...requestOptions,
+          ...reasoningOptionsForModel(FALLBACK_MODEL),
           model: FALLBACK_MODEL,
         });
       }

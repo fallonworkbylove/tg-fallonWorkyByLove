@@ -15,7 +15,10 @@ const ADMIN_CHAT_ID = String(process.env.ADMIN_ALERT_CHAT_ID || '').trim();
 if (!ADMIN_CHAT_ID) {
   console.warn('[adminMenu] ADMIN_ALERT_CHAT_ID не задан — админ-меню суперадмина недоступно.');
 }
-const PING_MODEL = 'gpt-4o-mini';
+const PING_MODEL =
+  process.env.OPENAI_MODEL_LIGHT ||
+  process.env.OPENAI_MODEL ||
+  'gpt-4o-mini';
 const BILLING_URL = 'https://platform.openai.com/settings/organization/billing';
 const TG_PROBE_HOST = '149.154.167.50';
 const TG_PROBE_PORT = 443;
