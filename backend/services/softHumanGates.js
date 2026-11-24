@@ -995,6 +995,7 @@ module.exports = {
   fixOKakStamp,
   fixLaughOnlyOveruse,
   fixNuTakStamp,
+  fixSpasiboStamp,
   applyWave0t2Gates,
   applyWave0t6Gates,
   applyWave0loGates,
