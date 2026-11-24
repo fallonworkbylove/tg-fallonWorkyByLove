@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t28. 24 ноя — утро без «солнышко» + soft без «хех ясно»
+
+Убрали «солнышко» из morning pool, добавили живые утренние. softCompleteCut без «хех, ясно)». Лента: (updates.js?v=535).
+
 ## 0t27. 24 ноя — вычистка «ясно/хм ок/поняла тебя» из alts
 
 replyGate/scaleOps/softHumanLite: запасные фразы без dead filler и therapist. Лента: (updates.js?v=534).
