@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t26. 24 ноя — поняла/терапевт alts + reciprocal без «как дела»
+
+PONJALA/THERAPIST alts без dead filler. Reciprocal не дописывает «?» если уже спрашивала про день. Лента: (updates.js?v=533).
+
 ## 0t25. 24 ноя — характер чуть чаще + ласка без «милый»
 
 Attitude disagree/характер чаще. Хинты ласки без «ну ты милый)». Лента: (updates.js?v=532).

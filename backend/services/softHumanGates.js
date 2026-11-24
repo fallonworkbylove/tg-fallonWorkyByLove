@@ -704,9 +704,10 @@ const THERAPIST_RE =
 const THERAPIST_ALTS = [
   'ой жесть)',
   'ну да, тяжёлое)',
-  'понимаю… держись)',
   'блин, сочувствую)',
   'хм тяжёло звучит)',
+  'капец конечно)',
+  'ну ты держись)',
 ];
 
 function fixTherapistTone(reply) {
@@ -718,7 +719,8 @@ function fixTherapistTone(reply) {
 }
 
 const PONJALA_RE = /^поняла\s*\){0,2}\.?$/i;
-const PONJALA_ALTS = ['ага)', 'хм ок)', 'ясно)', 'ну да)', 'о как)'];
+// 0t26: без «ясно)» / «хм ок)» — dead filler
+const PONJALA_ALTS = ['ага)', 'ну да)', 'о как)', 'хех)', 'ну ты)'];
 
 function fixPonjalaStamp(reply, history) {
   if (!reply) return reply;

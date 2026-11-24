@@ -744,15 +744,17 @@ function scrubRuLatinGarbage(reply) {
     .trim() || reply;
 }
 
+// 0t26: без «как дела» — иначе петля с fixRepeatHowAsk
 const RECIPROCAL_QS = [
   'а ты как день?',
   'чем сейчас занят?)',
-  'а у тебя как дела?)',
   'ты чего делаешь?)',
   'как настроение?)',
   'а ты чего?)',
   'ну а у тебя как?)',
   'что у тебя нового?)',
+  'ты как там?)',
+  'расскажи про свой день?)',
 ];
 
 /**
@@ -770,6 +772,20 @@ function ensureReciprocalQuestion(reply, history, userMessage) {
   if (
     /(?:скинь|запиши|пришли|кинь).{0,40}(?:фот|круж|селфи|видео)|сначала\s+ты|сперва\s+ты|не\s+собач/i.test(
       `${u}\n${text}`,
+    )
+  ) {
+    return reply;
+  }
+  // 0t26: если недавно уже спрашивала про день/дела — не дописываем ещё один.
+  const recentAsst = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-5)
+    .map((h) => String(h.content || ''));
+  if (
+    recentAsst.some((t) =>
+      /(?:как\s+(?:дела|день|ты|настроение)|чем\s+(?:сейчас\s+)?занят|что\s+делаешь|а\s+ты\s+как)/i.test(
+        t,
+      ),
     )
   ) {
     return reply;
