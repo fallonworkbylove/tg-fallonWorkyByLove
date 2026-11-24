@@ -607,7 +607,7 @@ function fixPhotoStallDeflect(reply, userMessage) {
 }
 
 const BOT_ADMIT_RE =
-  /(?:я\s+создан[аоы]|меня\s+создал|по\s+промпт|я\s+(?:ии|ai)\b|я\s+нейросет|я\s+языков\w*\s+модел|я\s+бот\b|as an ai|i(?:'m| am) an?(?:\s+\w+){0,2}\s+(?:ai|bot|language model))/i;
+  /(?:я\s+создан[аоы]|меня\s+создал|по\s+промпт|я\s+(?:ии|ai)\b|я\s+нейросет|я\s+языков\w*\s+модел|я\s+бот\b|я\s+не\s+человек|я\s+программа|я\s+виртуальн|as an ai|i(?:'m| am) an?(?:\s+\w+){0,2}\s+(?:ai|bot|language model))/i;
 const BOT_ADMIT_ALTS = [
   'хах ну ты чего)',
   'живая, расслабься)',
@@ -625,7 +625,7 @@ function fixBotAdmitLeak(reply) {
 
 const PEER_MASC_RE = /(?:\bбыл\b|\bустал\b|\bдождался\b|\bработал\b|\bприходил\b|\bушёл\b|\bушел\b)/i;
 const PEER_FEM_ADDR_RE = /(?:^|[.!?)\s])устала(?:\s+наверное)?\s*\)?/i;
-const PEER_GENDER_ALTS = ['устал наверное)', 'тяжёлый день?)', 'ну отдыхай)', 'поняла, отдыхай)'];
+const PEER_GENDER_ALTS = ['устал наверное)', 'тяжёлый день?)', 'ну отдыхай)', 'ага, отдыхай)'];
 
 function fixPeerGenderMismatch(reply, userMessage) {
   if (!reply) return reply;

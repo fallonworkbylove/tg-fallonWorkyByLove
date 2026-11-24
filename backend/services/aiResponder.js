@@ -357,6 +357,16 @@ function pickChatModel(history, userMessage, options = {}) {
   }
   // Длинная/многослойная реплика собеседника (0t15: порог 160 — истории).
   if (ulen >= 160) return COMPLEX_MODEL;
+  // 0t29: короткая, но многослойная история (3+ предложения) — тоже Luna.
+  const sentences = (um.match(/[.!?…]+/g) || []).length;
+  if (ulen >= 100 && sentences >= 3) return COMPLEX_MODEL;
+  // Эмоциональный рассказ средней длины.
+  if (
+    ulen >= 110 &&
+    /(?:устал|грустн|обид|страшно|пережива|разв[её]л|увол|болел|скуча|одинок)/i.test(um)
+  ) {
+    return COMPLEX_MODEL;
+  }
   // Развёрнутый вопрос (не короткое «как дела?»).
   if (ulen >= 90 && /[?]/.test(um)) return COMPLEX_MODEL;
   // Претензия/давление без мата — тоже сложнее Qwen short-ack.
