@@ -764,6 +764,15 @@ function ensureReciprocalQuestion(reply, history, userMessage) {
   if (!text || /^<<(?:REACT|PHOTO|VIDEO|CIRCLE|LAUGH)/i.test(text)) return reply;
   if (/\?/.test(text)) return reply;
   if (REPLY_FAREWELL_RE.test(text)) return reply;
+  // 0t11: бартер медиа / давление — не дописываем «а ты как?» поверх.
+  const u = String(userMessage || '');
+  if (
+    /(?:скинь|запиши|пришли|кинь).{0,40}(?:фот|круж|селфи|видео)|сначала\s+ты|сперва\s+ты|не\s+собач/i.test(
+      `${u}\n${text}`,
+    )
+  ) {
+    return reply;
+  }
   // Уже длинновато — не раздуваем.
   if (text.length > 160) return reply;
   const q = RECIPROCAL_QS[Math.floor(Math.random() * RECIPROCAL_QS.length)];
