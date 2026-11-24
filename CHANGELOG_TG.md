@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t25. 24 ноя — характер чуть чаще + ласка без «милый»
+
+Attitude disagree/характер чаще. Хинты ласки без «ну ты милый)». Лента: (updates.js?v=532).
+
 ## 0t24. 24 ноя — craft без штампов + memory poke
 
 Craft/alive: бан «слушай/хех/мило». Safe-ack без «слушай». Memory-poke: спорт/шоу/машина + живее work. Лента: (updates.js?v=531).
