@@ -479,12 +479,12 @@ function enrichBareAckOnSubstance(reply, userMessage) {
   const variants = hook
     ? [
         `ого, ${hook.toLowerCase()})`,
-        `ну ясно)`,
+        `о как)`,
         `о как) а дальше?`,
         `ага, и как тебе?)`,
         `хех ну да) а ты?`,
       ]
-    : ['ну ясно)', 'интересно) а ты?', 'о как)', 'хех ну да)', 'ого)'];
+    : ['о как)', 'интересно) а ты?', 'хех ну да)', 'ого)', 'ну ты)'];
   return tag + variants[Math.floor(Math.random() * variants.length)];
 }
 
@@ -661,15 +661,15 @@ function fixAwkwardNuOkPredicate(reply) {
   body = body.replace(
     /^(?:слушай|эм|хм|хах+|ахах+),?\s*ну\s+ок\s*\)?\s*(?=\S)/i,
     () => {
-      const alts = ['ладно) ', 'ок) ', 'хм ок) '];
+      const alts = ['ок) ', 'ну да) ', 'ага) '];
       return alts[Math.floor(Math.random() * alts.length)];
     },
   );
-  // 0o9: голое «слушай/хаха, ну ок)» без хвоста
+  // 0o9: голое «слушай/хаха, ну ок)» без хвоста — 0t27 без хм ок/ладно stubs
   body = body.replace(
     /^(?:слушай|эм|хм|хах+|ахах+),?\s*ну\s+ок\s*\)?\s*$/i,
     () => {
-      const alts = ['ладно)', 'хм ок)', 'ага)', 'ну да)'];
+      const alts = ['ага)', 'ну да)', 'о как)', 'хех)'];
       return alts[Math.floor(Math.random() * alts.length)];
     },
   );
@@ -1194,7 +1194,7 @@ function breakKaifEcho(reply, history, userMessage) {
     'ага) чем ещё день скрашиваешь?',
     'поняла) а ты сейчас дома?',
     'ок) что по планам на вечер?',
-    'ясно) слушай, а ты откуда сам?',
+    'о как) а ты откуда сам?',
     'мм) а ты чем занят сейчас?',
     'хех) что интересного?',
     'ну да) а ты как обычно вечер проводишь?',

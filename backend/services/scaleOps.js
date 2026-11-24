@@ -537,7 +537,8 @@ function breakShortAckEcho(reply, history) {
   const same = recent.filter((c) => /^(?:ну\s+)?(?:да\s+)?(?:ага|угу|ок|ладно|поняла?|ну да)\s*\)?\.?$/i.test(c))
     .length;
   if (same < 1) return reply;
-  const alts = ['хм, ясно)', 'мм, я тут)', 'поняла тебя)', 'слышу)', 'ну смотри)'];
+  // 0t27: без «поняла тебя)» / «хм, ясно)» — therapist/dead filler
+  const alts = ['мм, я тут)', 'слышу)', 'ну смотри)', 'о как)', 'ну ты)'];
   return alts[Math.floor(Math.random() * alts.length)];
 }
 

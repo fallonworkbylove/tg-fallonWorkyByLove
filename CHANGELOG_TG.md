@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t27. 24 ноя — вычистка «ясно/хм ок/поняла тебя» из alts
+
+replyGate/scaleOps/softHumanLite: запасные фразы без dead filler и therapist. Лента: (updates.js?v=534).
+
 ## 0t26. 24 ноя — поняла/терапевт alts + reciprocal без «как дела»
 
 PONJALA/THERAPIST alts без dead filler. Reciprocal не дописывает «?» если уже спрашивала про день. Лента: (updates.js?v=533).
