@@ -570,11 +570,12 @@ function fixDeflectOnFriction(reply, userMessage) {
 const PHOTO_WAIT_USER_RE =
   /(?:не\s+дождал|жду\s+(?:фото|фотк|круж)|где\s+(?:фото|фотк|круж|селфи)|когда\s+(?:фото|скинешь|пришл)|обещанн\w*\s+фото)/i;
 const PHOTO_STALL_BAD_RE = /терпелив|морозить|уточни|лол|потом\s*\)|позже\s*\)/i;
+// Он уже ждёт после её обещания — не уводим в новый бартер «сначала ты».
 const PHOTO_STALL_ALTS = [
-  'ок кину — только ты первый)',
-  'хорошо, но сначала ты скинь)',
-  'давай обмен: сначала ты)',
-  'помню — кину после тебя)',
+  'ой да, задержала — чуть позже кину)',
+  'правда должна, сейчас неудобно, скоро скину)',
+  'не морожу специально, чуть позже пришлю)',
+  'ок, помню про фото — скоро)',
 ];
 
 function fixPhotoStallDeflect(reply, userMessage) {
@@ -783,6 +784,36 @@ function fixWhyHereScript(reply, userMessage) {
   return reply;
 }
 
+const PARROT_ALTS = ['хм ну да)', 'о как)', 'ага)', 'ну ты)', 'серьёзно?)', 'хах)'];
+
+/** Не зеркалить его фразу дословно / почти дословно. */
+function fixParrotEcho(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage)
+    .toLowerCase()
+    .replace(/[^\p{L}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const { tag, body } = stripTag(reply);
+  const b = String(body || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!b || u.length < 12 || b.length < 6) return reply;
+  if (b.includes(u) || (u.length >= 16 && u.includes(b) && b.length >= u.length * 0.65)) {
+    return tag + pickAlt(PARROT_ALTS);
+  }
+  const uw = [...new Set(u.split(/\s+/).filter((w) => w.length > 3))];
+  const bw = b.split(/\s+/).filter((w) => w.length > 3);
+  if (uw.length >= 3 && bw.length >= 3) {
+    const set = new Set(uw);
+    const hits = bw.filter((w) => set.has(w)).length;
+    if (hits / bw.length >= 0.72) return tag + pickAlt(PARROT_ALTS);
+  }
+  return reply;
+}
+
 /** Пачка 0t6 — anti-script для марафона. */
 function applyWave0t6Gates(reply, history, userMessage) {
   let out = reply;
@@ -792,6 +823,7 @@ function applyWave0t6Gates(reply, history, userMessage) {
   out = fixOpenerLoop(out, history);
   out = fixAgreeableStack(out, userMessage);
   out = fixWhyHereScript(out, userMessage);
+  out = fixParrotEcho(out, userMessage);
   return out;
 }
 
@@ -858,6 +890,7 @@ module.exports = {
   fixOpenerLoop,
   fixAgreeableStack,
   fixWhyHereScript,
+  fixParrotEcho,
   applyWave0t2Gates,
   applyWave0t6Gates,
   applyWave0loGates,
