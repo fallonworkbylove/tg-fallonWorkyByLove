@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t30. 24 ноя — soft-close silence + ночь без «целую»
+
+Silence не догоняет «спасибо/норм». Night без «целую/снись». Therapist alts без «держись». Лента: (updates.js?v=537).
+
 ## 0t29. 24 ноя — Luna на многослойные истории
 
 Роутер: 3+ предложения ≥100 / эмоциональный рассказ ≥110 → Luna. Шире anti bot-admit. Лента: (updates.js?v=536).
