@@ -30,6 +30,16 @@ assert(ar.pickChatModel([], 'ок', { forceComplex: true }) === ar.COMPLEX_MODEL
 assert(ar.getAnalysisModel() === ar.COMPLEX_MODEL, 'analysis');
 assert(ar.reasoningOptionsForModel('qwen/qwen3.7-flash').reasoning.effort === 'none', 'qwen no-think');
 assert(ar.reasoningOptionsForModel('openai/gpt-5.6-luna').reasoning.effort === 'low', 'luna low');
+// media client must pin api.openai.com when OPENAI_BASE_URL=OpenRouter
+assert(
+  /api\.openai\.com/.test(
+    String(require('fs').readFileSync(path.join(__dirname, '../services/aiResponder.js'), 'utf8')),
+  ) &&
+    /OPENAI_FALLBACK_BASE_URL|api\.openai\.com\/v1/.test(
+      require('fs').readFileSync(path.join(__dirname, '../services/aiResponder.js'), 'utf8'),
+    ),
+  'media baseURL pin',
+);
 
 const { getPricing } = require(path.join(__dirname, '../services/finetuneUsage'));
 assert(getPricing('openai/gpt-5.6-luna').input === 0.2, 'luna price');

@@ -6,7 +6,7 @@ Changelog LoveRussian — лента тегов для TG.
 
 ## 0t1. 24 ноя — OpenRouter: Luna + Qwen 3.7 Flash
 
-Чат через OpenRouter: лёгкие реплики → `qwen/qwen3.7-flash`, сложные/анализ → `openai/gpt-5.6-luna`. Голос/фото — старый OpenAI ключ (`OPENAI_FALLBACK_KEY`). Роутер в aiResponder + цены в finetuneUsage.
+Чат через OpenRouter: лёгкие реплики → `qwen/qwen3.7-flash`, сложные/анализ → `openai/gpt-5.6-luna`. Голос/фото — старый OpenAI ключ (`OPENAI_FALLBACK_KEY`) с явным `api.openai.com` (SDK иначе тащит OpenRouter baseURL → 401). Роутер в aiResponder + цены в finetuneUsage.
 
 ## 0t0. 21 ноя — меньше шума в промпте: сжаты noRepeat + craft
 

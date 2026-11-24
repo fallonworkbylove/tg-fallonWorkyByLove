@@ -382,6 +382,11 @@ let mediaClientLogged = false;
 
 function buildMediaClientDedicated() {
   const opts = { apiKey: process.env.OPENAI_FALLBACK_KEY };
+  // Важно: OpenAI SDK сам читает process.env.OPENAI_BASE_URL. Если чат
+  // идёт через OpenRouter, без явного baseURL голос/фото утащат sk-proj
+  // на openrouter.ai → 401 "this is not an OpenRouter API key".
+  opts.baseURL =
+    process.env.OPENAI_FALLBACK_BASE_URL || 'https://api.openai.com/v1';
   const socks = firstSocks5FromEnv();
   if (socks) {
     try {
@@ -393,7 +398,9 @@ function buildMediaClientDedicated() {
   }
   if (!mediaClientLogged) {
     mediaClientLogged = true;
-    console.log('[openai] Голос/фото идут через отдельный ключ OpenAI (fallback).');
+    console.log(
+      `[openai] Голос/фото через OpenAI fallback (${opts.baseURL}).`,
+    );
   }
   return new OpenAI(opts);
 }
