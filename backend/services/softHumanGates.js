@@ -836,14 +836,14 @@ function fixRepeatHowAsk(reply, history, userMessage) {
 }
 
 const LOVE_STAMP_RE =
-  /^(?:ну\s+ты\s+милый|мне\s+(?:тоже\s+)?приятно|с\s+тобой\s+хорошо|приятно\s+слышать)\s*\){0,2}\.?$/i;
+  /^(?:ну\s+ты\s+милый|мне\s+(?:тоже\s+)?приятно|с\s+тобой\s+хорошо|приятно\s+слышать|(?:ой[,.]?\s*|очень\s+|так\s+)?мило)\s*\){0,2}\.?$/i;
 const LOVE_STAMP_ALTS = [
   'хех ну ты)',
-  'ой мило)',
   'тепло от тебя)',
   'ну вот так и нравится)',
   'радует)',
   'кайф с тобой, коротко)',
+  'мне тоже)',
 ];
 
 /** Не штамповать одну и ту же ласку подряд. */
@@ -854,6 +854,19 @@ function fixLoveStampOveruse(reply, history) {
   const hits = recentAssistantBodies(history, 8).filter((t) => LOVE_STAMP_RE.test(t)).length;
   if (hits < 1) return reply;
   return tag + pickAlt(LOVE_STAMP_ALTS);
+}
+
+/** 0t21: голое «мило)» на содержательное сообщение — слишком пусто. */
+const MILO_ALONE_RE = /^(?:ой[,.]?\s*|очень\s+|так\s+)?мило\s*\){0,2}\.?$/i;
+const MILO_ALONE_ALTS = ['хех ну ты)', 'тепло)', 'мне приятно слышать)', 'ну ты)', 'радует)'];
+
+function fixMiloAlone(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (u.length < 10) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !MILO_ALONE_RE.test(body)) return reply;
+  return tag + pickAlt(MILO_ALONE_ALTS);
 }
 
 const INTERESTING_ALONE_RE = /^(?:хм[,.]?\s*)?интересно\s*\){0,2}\.?$/i;
@@ -892,10 +905,12 @@ function applyWave0t6Gates(reply, history, userMessage) {
   out = fixParrotEcho(out, userMessage);
   out = fixRepeatHowAsk(out, history, userMessage);
   out = fixLoveStampOveruse(out, history);
+  out = fixMiloAlone(out, userMessage);
   out = fixInterestingAlone(out, userMessage);
   out = fixOKakStamp(out, history);
   out = fixLaughOnlyOveruse(out, history);
   out = fixNuTakStamp(out, history);
+  out = fixSpasiboStamp(out, history);
   return out;
 }
 
@@ -909,6 +924,19 @@ function fixNuTakStamp(reply, history) {
   const hits = recentAssistantBodies(history, 6).filter((t) => NU_TAK_RE.test(t)).length;
   if (hits < 1 && body.length > 10) return reply;
   return tag + pickAlt(NU_TAK_ALTS);
+}
+
+const SPASIBO_STAMP_RE =
+  /^(?:спасибо|благодар(?:ю|на))\s+что\s+написа[а-яё]*\s*\){0,2}\.?$/i;
+const SPASIBO_ALTS = ['мне тоже приятно)', 'ну ты)', 'рада)', 'хех спасиб)', 'тепло)'];
+
+function fixSpasiboStamp(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !SPASIBO_STAMP_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 8).filter((t) => SPASIBO_STAMP_RE.test(t)).length;
+  if (hits < 1) return reply;
+  return tag + pickAlt(SPASIBO_ALTS);
 }
 
 const LAUGH_ONLY_RE = /^(?:ахах+|хаха+|ахах\s*\)|хах\s*\))$/i;
@@ -991,6 +1019,7 @@ module.exports = {
   fixParrotEcho,
   fixRepeatHowAsk,
   fixLoveStampOveruse,
+  fixMiloAlone,
   fixInterestingAlone,
   fixOKakStamp,
   fixLaughOnlyOveruse,
