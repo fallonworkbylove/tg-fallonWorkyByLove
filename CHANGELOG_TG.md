@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t3. 24 ноя — мозг: friction / долг / позиция / Qwen·Luna craft
+
+messageAnalysis: акты bot_test/friction/media_ask + detectThreadDebt (Долг/Факт о нём) в analysisHint. aliveStyle — своё мнение; craft — ветка Qwen vs Luna; роутер читает speechAct. Idle catch-up: одно окно после рестарта (Graphify P2). Лента: (updates.js?v=511).
+
 ## 0t2. 24 ноя — вкус ответов + idle poke + blacklist ID
 
 Постфильтры 0t2: анти «уточни/лол» на претензии, фото-stall, бан признания ИИ, петля «ну давай», мёртвые filler, «рада что» echo, род peer, кружок-dodge. Роутер: конфликт/бот/кружок/мороз → Luna. Idle poke с 1.5ч + окно ~11–12 + catch-up после рестарта. Blacklist UI: `user_telegram_id`. Лента: (updates.js?v=510).

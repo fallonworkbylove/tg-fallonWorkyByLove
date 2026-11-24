@@ -579,11 +579,26 @@ function tickDailyLife(accountId) {
   if (life.booted || life.lastMin == null) {
     life.booted = false;
     const nowM = now.minutes;
-    // 0t2: после рестарта не терять окна пинга «он замолчал».
-    const catchIdle = (flag, minKey, delayMs) => {
-      if (life[flag]) return;
-      if (life[minKey] == null || nowM < life[minKey] + 3) return;
-      life[flag] = true;
+    // 0t3: один catch-up — самое позднее прошедшее окно.
+    // Три параллельных setTimeout раньше молча скипались (greetingInFlight).
+    const windows = [
+      ['lateMorningSent', 'lateMorningMin'],
+      ['afternoonSent', 'afternoonMin'],
+      ['eveningSent', 'eveningMin'],
+    ];
+    let pickFlag = null;
+    for (const [flag, minKey] of windows) {
+      if (life[flag]) continue;
+      if (life[minKey] == null) continue;
+      if (nowM >= life[minKey]) pickFlag = flag;
+    }
+    for (const [flag, minKey] of windows) {
+      if (life[minKey] != null && nowM >= life[minKey] && flag !== pickFlag) {
+        life[flag] = true;
+      }
+    }
+    if (pickFlag) {
+      life[pickFlag] = true;
       setTimeout(() => {
         sendIdlePokes(accountId).catch((err) => {
           console.error(
@@ -591,11 +606,8 @@ function tickDailyLife(accountId) {
             err.message,
           );
         });
-      }, delayMs);
-    };
-    catchIdle('lateMorningSent', 'lateMorningMin', 6000 + Math.random() * 12000);
-    catchIdle('afternoonSent', 'afternoonMin', 18000 + Math.random() * 25000);
-    catchIdle('eveningSent', 'eveningMin', 40000 + Math.random() * 35000);
+      }, 8000 + Math.random() * 16000);
+    }
     life.lastMin = nowM;
     return;
   }

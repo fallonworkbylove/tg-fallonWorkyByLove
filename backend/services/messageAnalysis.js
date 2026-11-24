@@ -62,6 +62,28 @@ function detectSpeechAct(msg) {
   if (/(?:ебнут|псих|дур[ае]|идиотк|туп(?:ая|о)|пизд|сука|урод|дебилк)/i.test(msg)) {
     return 'insult';
   }
+  // 0t3: разоблачение / трение / медиа-долг — до общего «question».
+  if (
+    /(?:ты\s+бот|это\s+бот|как\s+бот|как\s+робот|нейросеть|промпт|chatgpt|gpt[- ]?\d|ты\s+ии|\bии\b|you(?:'re|\s+are)\s+a?\s*bot)/i.test(
+      msg,
+    )
+  ) {
+    return 'bot_test';
+  }
+  if (
+    /(?:морози|морозить|динамиш|игнор(?:ишь)?|не\s+дождал|вр[её]шь|обещала|где\s+(?:фото|фотк|круж|селфи|видео)|когда\s+(?:скинешь|пришл|фото))/i.test(
+      msg,
+    )
+  ) {
+    return 'friction';
+  }
+  if (
+    /(?:скинь|запиши|пришли|хочу|можешь|дай).{0,48}(?:круж|видео|видос|фот|селфи)|(?:кружок|видеосообщение|селфи|фотку).{0,24}(?:скинь|запиши|пришли|можешь)/i.test(
+      msg,
+    )
+  ) {
+    return 'media_ask';
+  }
   if (/^(?:а+|угу|ага|мм|хм|ок|окей|ясно|лол|ну\s+да)\s*\)?\.?$/i.test(msg)) {
     return 'short_ack';
   }
@@ -160,6 +182,9 @@ function resolveReferent(userMessage, history, speechAct) {
 
 function pickHerMood(speechAct, emotion) {
   if (speechAct === 'insult' || emotion === 'angry') return 'calm_boundary';
+  if (speechAct === 'bot_test') return 'calm_human';
+  if (speechAct === 'friction') return 'accountable_warm';
+  if (speechAct === 'media_ask') return 'honest_timing';
   if (speechAct === 'tired' || emotion === 'tired') return 'caring';
   if (speechAct === 'warm' || emotion === 'warm') return 'warm_reciprocal';
   if (speechAct === 'greeting') return 'warm_hello';
@@ -174,6 +199,9 @@ function pickHerMood(speechAct, emotion) {
 /** Как это ощущается, когда читаешь как девушка. */
 function detectVibe(speechAct, emotion, topics, msg) {
   if (speechAct === 'insult' || emotion === 'angry') return 'напряг — грубит';
+  if (speechAct === 'bot_test') return 'проверяет, живая ли ты — без оправданий';
+  if (speechAct === 'friction') return 'обижен / давит: ждал ответа или медиа';
+  if (speechAct === 'media_ask') return 'просит кружок/фото — честный срок';
   if (speechAct === 'tired' || emotion === 'tired') return 'жалко его, устал';
   if (emotion === 'sad') return 'тихо и тяжеловато';
   if (speechAct === 'warm' || emotion === 'warm') return 'тепло, приятно';
@@ -195,6 +223,9 @@ function detectVibe(speechAct, emotion, topics, msg) {
 function detectSubtext(speechAct, emotion, topics, msg, referent) {
   if (speechAct === 'greeting') return 'контакт: услышать привет в ответ';
   if (speechAct === 'insult') return 'сбить / проверить реакцию — не зеркаль';
+  if (speechAct === 'bot_test') return 'убедиться что ты человек — коротко по-живому, без «я не бот»';
+  if (speechAct === 'friction') return 'чтобы ты признала задержку и дала план, не «уточни/лол»';
+  if (speechAct === 'media_ask') return 'кружок/фото или честный «чуть позже» без слива';
   if (speechAct === 'tired' || emotion === 'tired' || emotion === 'sad') {
     return 'поддержку одной фразой, не лекцию';
   }
@@ -207,7 +238,7 @@ function detectSubtext(speechAct, emotion, topics, msg, referent) {
   if (topics.includes('name')) return 'имя';
   if (topics.includes('roots')) return 'есть ли жизнь на месте (работа/люди)';
   if (topics.includes('how_are_you')) return 'мелочь дня (кофе/дома/сериал), не переезд и не отчёт';
-  if (topics.includes('opinion')) return 'твоё короткое мнение';
+  if (topics.includes('opinion')) return 'твоё короткое мнение — можно не согласиться';
   if (topics.includes('media')) return 'реакцию на фото/видео';
   if (topics.includes('recall')) return 'чтобы ты вспомнила факт';
   if (referent && referent.text) return `уточнение к «${referent.text.slice(0, 60)}»`;
@@ -224,6 +255,15 @@ function detectTalkAlive(speechAct, emotion, vibe) {
   if (speechAct === 'insult' || emotion === 'angry') {
     return 'спокойно и коротко, без оправданий — мягкая граница, не ледяная';
   }
+  if (speechAct === 'bot_test') {
+    return 'живо и коротко («хах ну ты чего)»), без лекции что ты человек';
+  }
+  if (speechAct === 'friction') {
+    return 'честно и тепло: признай задержку, без «уточни/лол/терпеливый»';
+  }
+  if (speechAct === 'media_ask') {
+    return 'по-человечески: срок или мягкий отказ с альтернативой текстом';
+  }
   if (speechAct === 'tired' || emotion === 'tired' || emotion === 'sad') {
     return 'заботливо и нежно: одна тёплая фраза, как близкой';
   }
@@ -234,7 +274,7 @@ function detectTalkAlive(speechAct, emotion, vibe) {
     return 'с улыбкой и лёгким флиртом: можно «ахах», тепло';
   }
   if (speechAct === 'greeting') {
-    return 'тёплый живой привет, как рада что написал — без анкеты';
+    return 'тёплый живой привет — без анкеты и без штампа «рада что» каждый раз';
   }
   if (speechAct === 'question') {
     return 'по сути тепло и по-человечески, потом можно мягкий вопрос ему';
@@ -256,6 +296,15 @@ function detectHerMove(speechAct, emotion, topics, vibe, subtext, focus, referen
   if (speechAct === 'insult') {
     return 'спокойно осадить («ну ты чего)» / «эй)»), коротко, без холода навсегда';
   }
+  if (speechAct === 'bot_test') {
+    return 'коротко по-живому («хах)» / «эй)»), сменить угол — не оправдываться';
+  }
+  if (speechAct === 'friction') {
+    return 'признать + план («ой затянула, чуть позже…») — без шутки в лицо';
+  }
+  if (speechAct === 'media_ask') {
+    return 'срок («чуть позже кину)») или честно «сейчас неудобно, текстом ок?)»';
+  }
   if (speechAct === 'tired' || emotion === 'tired') {
     return 'нежная забота («ой жесть, отдыхай)» / «держись)»), без нравоучений';
   }
@@ -275,6 +324,9 @@ function detectHerMove(speechAct, emotion, topics, vibe, subtext, focus, referen
     return 'коротко онлайн/чем занята по легенде';
   }
   if (topics.includes('name')) return 'сказать имя из карточки';
+  if (topics.includes('opinion')) {
+    return 'своё короткое мнение — можно не согласиться мягко';
+  }
   if (referent && referent.text && (speechAct === 'followup' || speechAct === 'question')) {
     return `ответить про «${referent.text.slice(0, 55)}», не прыгать в новое`;
   }
@@ -297,6 +349,9 @@ function interpretMeaning(msg, speechAct, topics, emotion, referent) {
   const sub = detectSubtext(speechAct, emotion, topics, msg, referent);
   if (speechAct === 'greeting') return 'просто здоровается';
   if (speechAct === 'insult') return `грубит: «${msg.slice(0, 50)}»`;
+  if (speechAct === 'bot_test') return `проверяет на бота: «${msg.slice(0, 60)}»`;
+  if (speechAct === 'friction') return `давит/ждёт: «${msg.slice(0, 70)}»`;
+  if (speechAct === 'media_ask') return `просит медиа: «${msg.slice(0, 70)}»`;
   if (speechAct === 'tired' || emotion === 'tired') return `усталый: «${msg.slice(0, 60)}»`;
   if (speechAct === 'warm' || emotion === 'warm') return `тепло: «${msg.slice(0, 60)}»`;
   if (referent && referent.text && (speechAct === 'followup' || (speechAct === 'question' && msg.length <= 40))) {
@@ -311,6 +366,9 @@ function interpretMeaning(msg, speechAct, topics, emotion, referent) {
 function detectExpect(speechAct, emotion, topics) {
   if (speechAct === 'greeting') return 'greeting_back';
   if (speechAct === 'insult' || emotion === 'angry') return 'calm_boundary';
+  if (speechAct === 'bot_test') return 'human_short';
+  if (speechAct === 'friction') return 'own_up_plan';
+  if (speechAct === 'media_ask') return 'media_timing';
   if (speechAct === 'tired' || emotion === 'tired' || emotion === 'sad') return 'care';
   if (speechAct === 'warm' || emotion === 'warm') return 'warm_ack';
   if (speechAct === 'call_ask' || topics.includes('meetup')) return 'soft_defer';
@@ -319,6 +377,48 @@ function detectExpect(speechAct, emotion, topics) {
   if (speechAct === 'short_ack') return 'continue_thread';
   if (speechAct === 'followup') return 'answer_about_referent';
   return 'natural_continue';
+}
+
+/**
+ * Короткий долг/факт из хвоста истории — чтобы не забывать нить.
+ */
+function detectThreadDebt(history, userMessage) {
+  const h = Array.isArray(history) ? history : [];
+  const recent = h.slice(-18);
+  const asst = recent
+    .filter((x) => x && x.role === 'assistant')
+    .map((x) => String(x.content || ''));
+  const users = recent
+    .filter((x) => x && x.role === 'user')
+    .map((x) => String(x.content || ''));
+  const blobA = asst.join('\n');
+  const blobU = `${users.join('\n')}\n${String(userMessage || '')}`;
+  const debts = [];
+  const facts = [];
+
+  const promisedMedia =
+    /(?:кину|скину|пришлю|запишу|позже|скоро).{0,48}(?:фото|фотк|круж|селфи|видео)|(?:фото|круж|селфи).{0,24}(?:позже|скоро|кину)/i.test(
+      blobA,
+    );
+  const sentMedia = /\[медиа:|<<PHOTO|<<CIRCLE|<<VIDEO|\{кружок:/i.test(blobA);
+  if (promisedMedia && !sentMedia) debts.push('ты обещала фото/кружок — он может ждать');
+  if (/(?:морози|не\s+дождал|где\s+(?:фото|фотк|круж)|когда\s+скинешь)/i.test(blobU)) {
+    debts.push('он уже напомнил про медиа/ожидание');
+  }
+  if (/(?:на\s+работе\s+был|я\s+на\s+работе|на\s+смене|только\s+с\s+работы)/i.test(blobU)) {
+    facts.push('он после работы / на работе');
+  }
+  const city = blobU.match(
+    /(?:я\s+(?:из|в)\s+|живу\s+в\s+|из\s+)([А-ЯЁA-Z][а-яёa-z-]{2,20})/,
+  );
+  if (city) facts.push(`его город/место: ${city[1]}`);
+  const name = blobU.match(/(?:меня\s+зовут|я\s+)\s*([А-ЯЁ][а-яё]{2,14})(?:\s|$|[),.])/);
+  if (name && !/^(Я|Он|Нет|Да|Как)$/i.test(name[1])) facts.push(`его имя: ${name[1]}`);
+
+  return {
+    debts: debts.slice(0, 2),
+    facts: facts.slice(0, 2),
+  };
 }
 
 function analyzeIncoming(userMessage, history) {
@@ -336,6 +436,7 @@ function analyzeIncoming(userMessage, history) {
   const talkAlive = detectTalkAlive(speechAct, emotion, vibe);
   const meaning = interpretMeaning(msg, speechAct, topics, emotion, referent);
   const expect = detectExpect(speechAct, emotion, topics);
+  const thread = detectThreadDebt(history, userMessage);
 
   return {
     speechAct,
@@ -352,6 +453,8 @@ function analyzeIncoming(userMessage, history) {
     subtext,
     herMove,
     talkAlive,
+    debts: thread.debts,
+    facts: thread.facts,
   };
 }
 
@@ -371,6 +474,12 @@ function buildAnalysisHint(userMessage, history) {
     `Как говорить: ${a.talkAlive}.`,
     `Ход: ${a.herMove}.`,
   ];
+  if (a.debts && a.debts.length) {
+    lines.push(`Долг: ${a.debts.join('; ')}.`);
+  }
+  if (a.facts && a.facts.length) {
+    lines.push(`Факт о нём: ${a.facts.join('; ')}.`);
+  }
   if (a.referent && a.referent.text && a.referent.kind !== 'none') {
     lines.push(`К чему: «${a.referent.text.slice(0, 70)}».`);
   }
@@ -378,7 +487,8 @@ function buildAnalysisHint(userMessage, history) {
     lines.push(`Слова: ${a.focus.slice(0, 3).map((w) => `«${w}»`).join(', ')}.`);
   }
   lines.push(
-    'Пиши с телефона: 1 короткая любвеобильная фраза по ходу, женский род, «)» ок. Тепло важнее сухости. Не канцелярит, не мимо темы.',
+    'Пиши с телефона: 1 короткая фраза по ходу, женский род, «)» ок. ' +
+      'Иногда своё мнение — не всегда соглашайся. Тепло важнее сухости. Не мимо темы.',
   );
   return lines.join(' ');
 }
@@ -434,6 +544,7 @@ module.exports = {
   detectSubtext,
   detectHerMove,
   detectTalkAlive,
+  detectThreadDebt,
   pickHerMood,
   extractFocusWords,
   moodDirective,
