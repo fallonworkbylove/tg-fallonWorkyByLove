@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t31. 24 ноя — anti «ну ясно)» в dead filler
+
+Dead-filler ловит «ну ясно)». Убраны alts с «ну ясно» из gates/humanIdeas13. Лента: (updates.js?v=538).
+
 ## 0t30. 24 ноя — soft-close silence + ночь без «целую»
 
 Silence не догоняет «спасибо/норм». Night без «целую/снись». Therapist alts без «держись». Лента: (updates.js?v=537).
