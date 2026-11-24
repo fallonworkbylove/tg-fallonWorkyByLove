@@ -329,6 +329,24 @@ function pickChatModel(history, userMessage, options = {}) {
   const um = String(userMessage || '').trim();
   const ulen = um.length;
 
+  // 0t3: речь-акты мозга → Luna (трение / бот / медиа / оскорбление / созвон).
+  try {
+    const act = require('./messageAnalysis').detectSpeechAct(
+      require('./messageAnalysis').bare(um),
+    );
+    if (
+      act === 'friction' ||
+      act === 'bot_test' ||
+      act === 'media_ask' ||
+      act === 'insult' ||
+      act === 'call_ask'
+    ) {
+      return COMPLEX_MODEL;
+    }
+  } catch (_) {
+    /* optional */
+  }
+
   // Конфликт / разоблачение / медиа-тест / созвон — Luna.
   if (
     /(?:созвон|позвон|видеосвязь|ебнут|идиотк|псих|дур[ае]|морози|морозить|динамиш|не\s+дождал|ты\s+бот|как\s+бот|нейросеть|промпт|chatgpt|ты\s+ии|\bии\b|кружок|видеосообщ|скинь\s+(?:видео|видос|фот))/i.test(
@@ -833,18 +851,25 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   const aliveStyleReminder =
     'Общение: любвеобильная девушка в личке — коротко, тепло, с нежностью и интересом к нему. ' +
     'Мягкая ласка по делу: «мне приятно)», «ну ты милый)», «с тобой хорошо)» — не штампуй одно и то же. ' +
+    'Иногда своё короткое мнение или мягкий отказ — не всегда соглашайся («ну не знаю)» / «мне скорее вот так)»). ' +
     'Если он тёплый/флиртует — отвечай теплее и взаимно; если холоден — мягче, но не сухо. ' +
     'Без тяжёлого «я тебя люблю» в каждом сообщении и без нытья. Эмодзи редко, чаще «)». ' +
     'Если реально смешно — «ахаха» или <<LAUGH>>/<<REACT:😂>>. Цепляйся к его словам. На вопрос — сначала ответ. Женский род.';
 
+  const routedModel = pickChatModel(history, contextualUserMessage, options);
+  const isComplexTurn = routedModel === COMPLEX_MODEL && COMPLEX_MODEL !== LIGHT_MODEL;
   // Длина + сначала ответ + встречи — один блок вместо трёх простыней.
   const craftReminder =
     'Форма: 1 короткая фраза (макс 2), сначала по делу на то, что он СЕЙЧАС написал. ' +
     'На претензию/вопрос — по сути, без «уточни/лол/хм ясно» и без петли «ну давай». ' +
     'Не признавай ИИ/промпт. Род про него — по его словам (был→устал, не устала). ' +
+    (isComplexTurn
+      ? 'Сейчас сложный ход (Luna): глубже по смыслу претензии/теста/медиа, 1–2 живые фразы, без filler. '
+      : 'Сейчас лёгкий чат (Qwen): одна мысль, сразу по делу, без «хм ясно/лол/ну давай». ') +
     'Несколько вопросов — коротко на каждый. Фото/голос — на содержимое. Без эссе и NFT. ' +
     'Встреча: мягко на будущее («как буду на месте)»), без точного места/времени и без контактов. ' +
-    'Иногда один вопрос ему («как день?»), не допрос и не зеркало «а ты откуда?» после своего города.';
+    'Иногда один вопрос ему («как день?»), не допрос. ' +
+    'Если он затих после тебя — в жизни можно мягко напомнить о себе (не в каждом ответе).';
 
   const contextGuard = buildContextGuard(history, contextualUserMessage);
 
@@ -1172,7 +1197,7 @@ async function generateReply(systemPrompt, history, userMessage, options = {}) {
   }
   const cleanMessages = messages.filter((m) => m && m.content && String(m.content).trim());
 
-  const primaryModel = pickChatModel(history, contextualUserMessage, options);
+  const primaryModel = routedModel || pickChatModel(history, contextualUserMessage, options);
   // [v0] ВРЕМЕННЫЙ ЛОГ: печатает реально используемую модель и endpoint.
   console.log(
     `[v0] Запрос к модели: "${primaryModel}" (light=${LIGHT_MODEL} complex=${COMPLEX_MODEL}) | baseURL: ${process.env.OPENAI_BASE_URL || 'api.openai.com (по умолчанию)'}`,
