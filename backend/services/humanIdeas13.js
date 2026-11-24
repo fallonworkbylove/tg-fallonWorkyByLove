@@ -111,7 +111,7 @@ function stripStaleHowAsk(reply, userMessage, history) {
     .trim();
 
   if (!cleaned || cleaned.length < 3) {
-    return pick(['поняла)', 'ну ясно)', 'ага, слышу)', 'ок, ясно)']);
+    return pick(['поняла)', 'о как)', 'ага, слышу)', 'хех ну да)']);
   }
   if (!/[)….!?]$/.test(cleaned)) cleaned += ')';
   return cleaned;

@@ -124,7 +124,7 @@ const THERAPIST_ALTS = [
   'ну бывает)',
   'хм, слышу тебя)',
   'жаль) а дальше как?',
-  'поняла) держись)',
+  'ой жесть)',
 ];
 
 function stripTherapistTone(reply) {

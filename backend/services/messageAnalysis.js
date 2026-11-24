@@ -268,7 +268,7 @@ function detectTalkAlive(speechAct, emotion, vibe) {
     return 'заботливо и нежно: одна тёплая фраза, как близкой';
   }
   if (speechAct === 'warm' || emotion === 'warm') {
-    return 'любвеобильно и взаимно: тепло в словах («мне тоже приятно)» / «с тобой хорошо)»)';
+    return 'любвеобильно и взаимно: тепло в словах («мне тоже приятно)» / «тепло от тебя)» / «с тобой хорошо)»)';
   }
   if (emotion === 'playful') {
     return 'с улыбкой и лёгким флиртом: можно «ахах», тепло';
@@ -303,13 +303,13 @@ function detectHerMove(speechAct, emotion, topics, vibe, subtext, focus, referen
     return 'признать + план («ой затянула, чуть позже…») — без шутки в лицо';
   }
   if (speechAct === 'media_ask') {
-    return 'срок («чуть позже кину)») или честно «сейчас неудобно, текстом ок?)»';
+    return 'бартер: «хорошо скину, но сначала ты)» — без файла, пока он сам не скинет';
   }
   if (speechAct === 'tired' || emotion === 'tired') {
-    return 'нежная забота («ой жесть, отдыхай)» / «держись)»), без нравоучений';
+    return 'нежная забота («ой жесть, отдыхай)» / «ну ты)»), без нравоучений';
   }
   if (speechAct === 'warm' || emotion === 'warm') {
-    return 'любвеобильно взаимно («мне тоже приятно)» / «с тобой хорошо)» / «ну ты милый)»)';
+    return 'любвеобильно взаимно («мне тоже приятно)» / «тепло от тебя)» / «с тобой хорошо)»)';
   }
   if (speechAct === 'call_ask') {
     return 'мягко «давай пока тут текстом)»';
@@ -396,14 +396,24 @@ function detectThreadDebt(history, userMessage) {
   const debts = [];
   const facts = [];
 
+  const barterYouFirst = /сначала\s+ты|сперва\s+ты|ты\s+перв/i.test(blobA);
   const promisedMedia =
     /(?:кину|скину|пришлю|запишу|позже|скоро).{0,48}(?:фото|фотк|круж|селфи|видео)|(?:фото|круж|селфи).{0,24}(?:позже|скоро|кину)/i.test(
       blobA,
     );
   const sentMedia = /\[медиа:|<<PHOTO|<<CIRCLE|<<VIDEO|\{кружок:/i.test(blobA);
-  if (promisedMedia && !sentMedia) debts.push('ты обещала фото/кружок — он может ждать');
+  const peerMedia = /\[(?:фото|кружок|видео)\s+от\s+собеседника\]/i.test(blobU);
+  // Бартер: долг не «скинь сама», а жди его / отдай после него.
+  if (barterYouFirst && !peerMedia) {
+    debts.push('бартер медиа: жди его фото/кружок, сама пока не шли');
+  } else if (promisedMedia && !sentMedia && !barterYouFirst) {
+    debts.push('ты обещала фото/кружок — он может ждать');
+  }
+  if (barterYouFirst && peerMedia && !sentMedia) {
+    debts.push('он скинул своё — можно отдать медиа');
+  }
   if (/(?:морози|не\s+дождал|где\s+(?:фото|фотк|круж)|когда\s+скинешь)/i.test(blobU)) {
-    debts.push('он уже напомнил про медиа/ожидание');
+    debts.push(barterYouFirst ? 'он давит — держи бартер или отказ «не собачка»' : 'он уже напомнил про медиа/ожидание');
   }
   if (/(?:на\s+работе\s+был|я\s+на\s+работе|на\s+смене|только\s+с\s+работы)/i.test(blobU)) {
     facts.push('он после работы / на работе');
@@ -412,12 +422,17 @@ function detectThreadDebt(history, userMessage) {
     /(?:я\s+(?:из|в)\s+|живу\s+в\s+|из\s+)([А-ЯЁA-Z][а-яёa-z-]{2,20})/,
   );
   if (city) facts.push(`его город/место: ${city[1]}`);
-  const name = blobU.match(/(?:меня\s+зовут|я\s+)\s*([А-ЯЁ][а-яё]{2,14})(?:\s|$|[),.])/);
-  if (name && !/^(Я|Он|Нет|Да|Как)$/i.test(name[1])) facts.push(`его имя: ${name[1]}`);
+  const name = blobU.match(
+    /(?:меня\s+зовут|мо[её]\s+имя|зови\s+меня)\s+([А-ЯЁA-Z][а-яёa-zЁё]{2,14})(?:\s|$|[),.!?])/i,
+  );
+  if (name && !/^(Я|Он|Нет|Да|Как|Думаю)$/i.test(name[1])) facts.push(`его имя: ${name[1]}`);
+  const age = blobU.match(/(?:мне|мне\s+уже)\s+(\d{2})\s*(?:год|лет)|(?:^|\s)я\s+(\d{2})\s*(?:год|лет)/i);
+  const ageN = age && (age[1] || age[2]);
+  if (ageN && Number(ageN) >= 16 && Number(ageN) <= 80) facts.push(`его возраст: ${ageN}`);
 
   return {
-    debts: debts.slice(0, 2),
-    facts: facts.slice(0, 2),
+    debts: debts.slice(0, 3),
+    facts: facts.slice(0, 4),
   };
 }
 

@@ -105,7 +105,7 @@ function stripOpenerRepeat(reply, history) {
   return out
     .replace(/[^.?!]*?(?:чем\s+(?:занимаешь|занят)|как\s+(?:день|дела)|что\s+делаешь|расскажи\s+о\s+себе)[^.?!]*[.?!]?/gi, '')
     .replace(/\s{2,}/g, ' ')
-    .trim() || 'поняла тебя)';
+    .trim() || 'о как)';
 }
 
 /** #5 EN office fillers */
@@ -114,7 +114,7 @@ function stripEnOffice(reply) {
   if (!EN_OFFICE_RE.test(out)) return out;
   EN_OFFICE_RE.lastIndex = 0;
   out = out.replace(EN_OFFICE_RE, '').replace(/\s{2,}/g, ' ').trim();
-  return out || 'поняла тебя)';
+  return out || 'о как)';
 }
 
 /** #6 иногда короткий префикс «подумала» */
@@ -173,7 +173,7 @@ function topicStitchHint(history, userMessage) {
 function stripEmptyEmpathy(reply) {
   const out = String(reply || '').trim();
   if (!EMPTY_EMPATHY_RE.test(out)) return out;
-  const alts = ['ну жесть)', 'ох тяжёлое)', 'поняла тебя)', 'ага слышу)'];
+  const alts = ['ну жесть)', 'ох тяжёлое)', 'ага слышу)', 'капец конечно)'];
   return alts[Math.floor(Math.random() * alts.length)];
 }
 
@@ -187,7 +187,7 @@ function shortenOnTinyAsk(reply, userMessage) {
   if (out.length <= 36) return out;
   const cut = out.split(/(?<=[.!)])\s+/)[0] || out;
   const short = cut.slice(0, 36).trim();
-  return short || 'поняла тебя)';
+  return short || 'ага)';
 }
 
 function applyIdeas11Postfilters(reply, history, userMessage) {

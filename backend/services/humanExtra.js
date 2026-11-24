@@ -241,10 +241,15 @@ function morningApologyHint() {
 function awayReturnHint(lastAssistantAgeMin) {
   if (lastAssistantAgeMin == null || lastAssistantAgeMin < 40) return null;
   if (lastAssistantAgeMin > 20 * 60) return null;
-  return (
-    'Ты давно не отвечала в этом чате. Можно коротко «ой сорри)» / «ой только увидела)» / «сек)» ' +
-    'перед ответом по сути — не обязательно. НЕ пиши слово «отвлеклась».'
-  );
+  // 0t15/0t35: варианты живее, без одного клише.
+  const variants = [
+    'Ты давно не отвечала. Можно коротко «ой сорри)» / «ой только увидела)» перед сутью. Без «отвлеклась».',
+    'Ты молчала >40 мин. Можно «сек)» / «ой пропустила)» и сразу по делу. Не извиняйся эссе.',
+    'Пауза с твоей стороны. Короткий «ой)» ок, потом ответ на его слова. Без «была занята» простынёй.',
+    'Ты была оффлайн. Можно «хех только сейчас)» и сразу по его словам. Без оправданий.',
+    'Долгая пауза. «ой)» + ответ по сути. Не «прости что молчала» эссе.',
+  ];
+  return variants[Math.floor(Math.random() * variants.length)];
 }
 
 /** Возраст последнего assistant-сообщения в минутах. db — свой, не аргумент. */
@@ -292,7 +297,8 @@ function buildHisDetailCallbackHint(history, userMessage) {
     .map((h) => String(h.content || '').toLowerCase())
     .join('\n');
   if (recentBot.includes(key)) return null;
-  if (Math.random() > 0.22) return null;
+  // 0t23: чуть чаще возвращаться к его мелочи
+  if (Math.random() > 0.34) return null;
   return (
     `Можно вскользь вернуться к его теме «${m[0]}» одной короткой фразой или вопросом — ` +
     'только если сейчас не другой острый вопрос. Не каждый ответ.'

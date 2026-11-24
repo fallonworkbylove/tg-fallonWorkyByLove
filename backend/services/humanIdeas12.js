@@ -184,7 +184,7 @@ function stripQuestionsIfInterrogating(reply, history) {
     .replace(/\s{2,}/g, ' ')
     .replace(/\s+([.!)])/g, '$1')
     .trim();
-  return out || 'поняла тебя)';
+  return out || 'о как)';
 }
 
 /**
@@ -204,7 +204,7 @@ function stripFalseMishear(reply, userMessage) {
     (u.length <= 4 && !/[а-яa-z]/i.test(u));
   if (isVoice || garbage) return reply;
   // нормальный текст — не прикидываться глухой
-  const alts = ['поняла тебя)', 'ага, ясно)', 'ну ладно)', 'мм, поняла)'];
+  const alts = ['о как)', 'ага)', 'хех ну да)', 'мм, поняла)'];
   return alts[Math.floor(Math.random() * alts.length)];
 }
 

@@ -144,7 +144,7 @@ function fixBrokenWords(reply) {
   });
   if (STUCK_TAIL_RE.test(out) && out.length < 80) {
     out = out.replace(STUCK_TAIL_RE, '').trim();
-    if (!out) return pick(['поняла тебя)', 'ну ладно)', 'ага, ясно)']);
+    if (!out) return pick(['о как)', 'хех ну да)', 'ага)']);
   }
   return out;
 }

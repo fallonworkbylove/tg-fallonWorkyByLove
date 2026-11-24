@@ -13,6 +13,16 @@ let CLICHE_TRACK = [
   'ну ок',
   'кайф',
   'ага)',
+  'поняла)',
+  'слушай',
+  'ну ты)',
+  'интересно)',
+  'о как)',
+  'ну ты милый)',
+  'спасибо что написал)',
+  'мило)',
+  'хех)',
+  'ахах ладно)',
 ];
 try {
   const live = require('./opsLiveMetrics');
@@ -25,12 +35,22 @@ try {
 
 const CLICHE_ALTS = {
   кайф: ['норм)', 'прикольно)', 'о как)'],
-  'ну ок': ['поняла)', 'ясно)', 'хм ок)'],
-  'ага)': ['угу)', 'ясно)', 'мм)'],
+  'ну ок': ['ага)', 'ну да)', 'хех)'],
+  'ага)': ['угу)', 'ну да)', 'мм)'],
   'как тебе': ['ну и как?)', 'что скажешь?)', 'интересн?)'],
   'просто общаюсь': ['ну вот так)', 'да просто)', 'сама по себе)'],
   'я обычная': ['ну обычная)', 'да обычная)', 'сама по себе)'],
   'не покажу': ['не сейчас)', 'потом как-нибудь)', 'не хочу пока)'],
+  'поняла)': ['ага)', 'ну да)', 'о как)', 'хех)'],
+  слушай: ['хм)', 'ну)', 'эй)'],
+  'ну ты)': ['хах)', 'ой)', 'серьёзно?)'],
+  'интересно)': ['о как, расскажи)', 'ну и?)', 'а дальше?)'],
+  'о как)': ['серьёзно?)', 'ого)', 'ну ты)'],
+  'ну ты милый)': ['хех ну ты)', 'тепло от тебя)', 'радует)'],
+  'спасибо что написал)': ['мне тоже приятно)', 'рада)', 'тепло)'],
+  'мило)': ['хех ну ты)', 'тепло)', 'радует)'],
+  'хех)': ['ну ты)', 'о как)', 'ага)'],
+  'ахах ладно)': ['хех)', 'ну ты)', 'о как)'],
 };
 
 function pickAlt(arr) {
@@ -51,6 +71,7 @@ function listWaves() {
     { id: '0m1', apply: 'applyWave0m1Gates', src: 'scaleIdeasPack' },
     { id: '0m2', apply: 'fixLiveClicheOveruse', src: 'replyGateRegistry' },
     { id: '0t2', apply: 'applyWave0t2Gates', src: 'softHumanGates' },
+    { id: '0t6', apply: 'applyWave0t6Gates', src: 'softHumanGates' },
   ];
 }
 
@@ -95,6 +116,9 @@ function applyRegisteredGates(reply, history, userMessage) {
   out = fixLiveClicheOveruse(out, history);
   if (typeof gates.applyWave0t2Gates === 'function') {
     out = gates.applyWave0t2Gates(out, history, userMessage);
+  }
+  if (typeof gates.applyWave0t6Gates === 'function') {
+    out = gates.applyWave0t6Gates(out, history, userMessage);
   }
   return out;
 }

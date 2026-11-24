@@ -61,10 +61,10 @@ function configureDailyLife(next) {
 // Варианты фраз (случайный выбор — чтобы не выглядело шаблонно).
 const NIGHT_GREETINGS = [
   'спокойной ночи, сладких снов)',
-  'ладно, спать пора, целую, споки',
+  'ладно, спать пора, споки',
   'всё, отрубаюсь, сладких снов, береги себя',
-  'пойду спать, споки-споки, ты мне снись',
-  'доброй ночи, до завтра, буду скучать',
+  'пойду спать, споки-споки)',
+  'доброй ночи, до завтра)',
   'споки) сладких снов',
   'спокойной ночи)',
   'всё я спать, спокойной)',
@@ -77,9 +77,12 @@ const NIGHT_GREETINGS = [
   'иду спать, сладких)',
   'всё, вырубаюсь, доброй ночи)',
   'споки-споки)',
-  'спокойной ночи, обнимаю)',
   'пора в кровать, споки)',
   'до завтра, спокойной)',
+  // 0t30: живее, меньше «целую/снись»-штампа
+  'глаза слипаются, споки)',
+  'всё, телефон в сторону, спокойной)',
+  'ночь, пиши завтра если что)',
 ];
 const MORNING_GREETINGS = [
   'доброе утро, как спалось)',
@@ -94,7 +97,6 @@ const MORNING_GREETINGS = [
   'привет, доброе утро)',
   'проснулась, доброе)',
   'утречка тебе)',
-  'доброе утро, солнышко)',
   'о проснулась, привет)',
   'доброе) соскучилась чуть',
   'утро) как спал',
@@ -102,6 +104,15 @@ const MORNING_GREETINGS = [
   'доброе утречко)',
   'только встала, доброе)',
   'с утречком)',
+  // 0t17/0t28: живее, без «солнышко»-штампа
+  'утро, кофе уже?)',
+  'доброе) я ещё сонная',
+  'хей, с утром)',
+  'проснулась наконец)',
+  'утречко, ты как)',
+  'доброе) глаза ещё не открыла)',
+  'утро, лента уже открыта)',
+  'с добрым, чем день начнёшь?)',
 ];
 
 const NIGHT_GREETINGS_EN = [
@@ -695,19 +706,34 @@ function tickDailyLife(accountId) {
  */
 
 const IDLE_POKE_RU = [
-  'ты пропал совсем)',
-  'ку, как ты там',
+  'ку, как ты там)',
   'ну что молчишь)',
   'хех ты где)',
   'скучно без тебя немного)',
-  'напиши как там у тебя',
-  'как день проходит?',
-  'я тут в телефоне, а ты чем занят?',
+  'напиши как там у тебя)',
+  'как день проходит?)',
+  'я тут в телефоне, а ты чем занят?)',
   'эй, ты ещё на связи?)',
   'подумала о тебе — как ты?)',
   'не пропади совсем)',
+  'ну ты живой там?)',
+  'мне скучно, напиши)',
+  'чем занят сейчас?)',
+  'я на связи, если что)',
+  // 0t22: больше быта, меньше одного «как ты»
+  'чай заварила — напиши)',
+  'листаю ленту, скучно без тебя)',
+  'вышла пройтись, ты как?)',
+  'сижу у окна, чем занят?)',
 ];
-const IDLE_POKE_RU_COFFEE = 'я тут кофе пью, а ты чем занят?';
+const IDLE_POKE_RU_COFFEE = 'я тут кофе пью, а ты чем занят?)';
+const IDLE_POKE_RU_EVENING = [
+  'как вечер?)',
+  'ты ещё не спишь?)',
+  'я ещё тут — как ты?)',
+  'вечер тихий, напиши)',
+  'уже темно, ты где?)',
+];
 const IDLE_POKE_EN = [
   'hey you alive?',
   'yo',
@@ -772,15 +798,39 @@ async function sendIdlePokes(accountId) {
 
       const lang = await resolveGreetingLang(client, sender, message);
       const memPoke = lang === 'en' || lang === 'de' ? null : await memoryTriggers.pickMemoryPoke(accountId, peerId);
-      const bank =
+      let bank =
         lang === 'en'
           ? IDLE_POKE_EN
           : lang === 'de'
             ? IDLE_POKE_DE
             : timeStyle.isCoffeeOkHourMsk()
               ? [...IDLE_POKE_RU, IDLE_POKE_RU_COFFEE]
-              : IDLE_POKE_RU;
-      const phrase = memPoke?.phrase || bank[Math.floor(Math.random() * bank.length)];
+              : [...IDLE_POKE_RU];
+      // Вечер MSK — чуть другие покe.
+      try {
+        const h = new Date(Date.now() + 3 * 3600 * 1000).getUTCHours();
+        if (lang === 'ru' && h >= 19 && h <= 23) bank = [...bank, ...IDLE_POKE_RU_EVENING];
+      } catch (_) {}
+      let phrase = memPoke?.phrase || bank[Math.floor(Math.random() * bank.length)];
+      // 0t7: если знаем имя — иногда обратиться.
+      if (!memPoke && lang !== 'en' && lang !== 'de' && Math.random() < 0.35) {
+        try {
+          const facts = await memoryTriggers.listPeerFacts(accountId, peerId);
+          const nameF = (facts || []).find((f) => f.fact_type === 'name');
+          const nm = String(nameF?.fact_text || '')
+            .trim()
+            .split(/\s+/)[0];
+          if (nm && /^[А-ЯЁA-Z][а-яёa-zЁё]{1,14}$/.test(nm)) {
+            const named = [
+              `${nm}, ты как там)`,
+              `${nm}, не пропал?)`,
+              `эй ${nm}, живой?)`,
+              `${nm}, чем занят?)`,
+            ];
+            phrase = named[Math.floor(Math.random() * named.length)];
+          }
+        } catch (_) {}
+      }
       const senderName = sender.username || sender.firstName || peerId;
       try {
         await sleep(2500 + Math.random() * 4000);

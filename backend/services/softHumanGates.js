@@ -244,7 +244,7 @@ function mskHour() {
 /* ——— 2: анти-эхо 😂 / ахаха ——— */
 const LAUGH_ECHO_RE =
   /^(?:(?:а\s*)?ха+|ахах+|хаха+|лол|кек|😂|🤣|😆|😄|\(+\)+)\s*(?:😂|🤣|😆|ахах*|ха+|\)+)*$/iu;
-const LAUGH_ALTS = ['хех)', 'ну ты)', 'ахах ладно)', 'эм)', 'ок))'];
+const LAUGH_ALTS = ['хех)', 'ну ты)', 'ахах)', 'эм)', 'ого)'];
 
 function fixEmojiLaughEcho(reply, history) {
   if (!reply) return reply;
@@ -445,7 +445,7 @@ function fixTopicDriftReply(reply, history, userMessage) {
     if (!re.test(body)) continue;
     if (re.test(u)) continue;
     if (u.trim().length < 3) continue;
-    return tag + pickAlt(['о как)', 'ну ясно)', 'хм)', 'ахах ладно)']);
+    return tag + pickAlt(['о как)', 'ага)', 'хм)', 'хех)']);
   }
   return reply;
 }
@@ -490,13 +490,16 @@ function fixSmokingSoftYes(reply, userMessage) {
 /* ——— 0t2: скрины «как бот» — узкие постфильтры ——— */
 
 const DEAD_FILLER_RE =
-  /^(?:хм[,.]?\s*|ну[,.]?\s*|ахах+[,.]?\s*|хах[,.]?\s*)?(?:ясно|понятно|ну\s+бывает|бывает|ага|угу|лол|кек|ну\s+ок|ок)\s*\){0,2}\.?$/i;
+  /^(?:хм[,.]?\s*|ну[,.]?\s*|ахах+[,.]?\s*|хах[,.]?\s*)?(?:ясно|ну\s+ясно|понятно|ну\s+бывает|бывает|ага|угу|лол|кек|ну\s+ок|ок|ну\s+ладно|ладно|ну\s+давай\s+так|хорошо\s+тогда|ну\s+вот|вот\s+так|мм+|эм+)\s*\){0,2}\.?$/i;
 const DEAD_FILLER_ALTS = [
   'а подробнее?)',
   'хм, и что дальше?)',
   'ну расскажи)',
   'о как, и?',
-  'слушай, а ты как?)',
+  'ой ну и?)',
+  'ну и?)',
+  'а дальше что?)',
+  'серьёзно? и?',
 ];
 
 function fixDeadFillerReply(reply, userMessage) {
@@ -529,7 +532,8 @@ function fixDavaiLoop(reply, history, userMessage) {
 }
 
 const RADA_ECHO_RE = /^рада(?:\s+что|\s*,\s*что)(?:\s|$|[),.!])/i;
-const RADA_ALTS = ['мне приятно)', 'ну ты милый)', 'с тобой хорошо)', 'о как, рада)', 'приятно слышать)'];
+// 0t23: без «ну ты милый)» — иначе love-stamp петля
+const RADA_ALTS = ['мне приятно)', 'тепло от тебя)', 'с тобой хорошо)', 'о как)', 'приятно слышать)', 'радует)'];
 
 function fixRadaChtoEcho(reply, history) {
   if (!reply) return reply;
@@ -540,8 +544,22 @@ function fixRadaChtoEcho(reply, history) {
     .slice(-6)
     .map((h) => String(h.content || '').replace(/^\s*<<[^>\n]+>>\s*/, '').trim());
   const hits = recent.filter((t) => RADA_ECHO_RE.test(t)).length;
-  if (hits >= 1 || body.length <= 28) return tag + pickAlt(RADA_ALTS);
+  // 0t23: короткие и средние «рада что…» режем всегда; длинные — со 2-го раза
+  if (hits >= 1 || body.length <= 48) return tag + pickAlt(RADA_ALTS);
   return reply;
+}
+
+/** 0t23: голое «хех)» / «мм)» подряд — пустой ход. */
+const HEX_ALONE_RE = /^(?:хех+|мм+|эм+)\s*\){0,2}\.?$/i;
+const HEX_ALONE_ALTS = ['ну ты)', 'о как)', 'ага)', 'серьёзно?)', 'и что дальше?)'];
+
+function fixHexAloneOveruse(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !HEX_ALONE_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 6).filter((t) => HEX_ALONE_RE.test(t)).length;
+  if (hits < 1) return reply;
+  return tag + pickAlt(HEX_ALONE_ALTS);
 }
 
 const FRICTION_USER_RE =
@@ -570,6 +588,7 @@ function fixDeflectOnFriction(reply, userMessage) {
 const PHOTO_WAIT_USER_RE =
   /(?:не\s+дождал|жду\s+(?:фото|фотк|круж)|где\s+(?:фото|фотк|круж|селфи)|когда\s+(?:фото|скинешь|пришл)|обещанн\w*\s+фото)/i;
 const PHOTO_STALL_BAD_RE = /терпелив|морозить|уточни|лол|потом\s*\)|позже\s*\)/i;
+// Он уже ждёт после её обещания — не уводим в новый бартер «сначала ты».
 const PHOTO_STALL_ALTS = [
   'ой да, задержала — чуть позже кину)',
   'правда должна, сейчас неудобно, скоро скину)',
@@ -590,7 +609,7 @@ function fixPhotoStallDeflect(reply, userMessage) {
 }
 
 const BOT_ADMIT_RE =
-  /(?:я\s+создан[аоы]|меня\s+создал|по\s+промпт|я\s+(?:ии|ai)\b|я\s+нейросет|я\s+языков\w*\s+модел|я\s+бот\b|as an ai|i(?:'m| am) an?(?:\s+\w+){0,2}\s+(?:ai|bot|language model))/i;
+  /(?:я\s+создан[аоы]|меня\s+создал|по\s+промпт|я\s+(?:ии|ai)\b|я\s+нейросет|я\s+языков\w*\s+модел|я\s+бот\b|я\s+не\s+человек|я\s+программа|я\s+виртуальн|as an ai|i(?:'m| am) an?(?:\s+\w+){0,2}\s+(?:ai|bot|language model))/i;
 const BOT_ADMIT_ALTS = [
   'хах ну ты чего)',
   'живая, расслабься)',
@@ -608,7 +627,7 @@ function fixBotAdmitLeak(reply) {
 
 const PEER_MASC_RE = /(?:\bбыл\b|\bустал\b|\bдождался\b|\bработал\b|\bприходил\b|\bушёл\b|\bушел\b)/i;
 const PEER_FEM_ADDR_RE = /(?:^|[.!?)\s])устала(?:\s+наверное)?\s*\)?/i;
-const PEER_GENDER_ALTS = ['устал наверное)', 'тяжёлый день?)', 'ну отдыхай)', 'поняла, отдыхай)'];
+const PEER_GENDER_ALTS = ['устал наверное)', 'тяжёлый день?)', 'ну отдыхай)', 'ага, отдыхай)'];
 
 function fixPeerGenderMismatch(reply, userMessage) {
   if (!reply) return reply;
@@ -631,10 +650,10 @@ const CIRCLE_ASK_RE =
 const CIRCLE_DODGE_RE =
   /(?:не\s+могу\s+сейчас|потом|позже|уточни|лол|неудоб|занята)\s*\)?\.?$/i;
 const CIRCLE_ASK_ALTS = [
-  'сейчас неудобно в кружке, текстом ок?)',
-  'чуть позже запишу, сейчас руки заняты)',
-  'давай чуть погодя кружок, сейчас не выйдет)',
-  'ок, помню — чуть позже кружок)',
+  'хорошо запишу, но сначала ты)',
+  'ок кину кружок — только ты первый)',
+  'давай, но сперва ты скинь)',
+  'могу, но сначала ты)',
 ];
 
 function fixCircleAskDodge(reply, userMessage) {
@@ -643,9 +662,13 @@ function fixCircleAskDodge(reply, userMessage) {
   if (!CIRCLE_ASK_RE.test(u)) return reply;
   const { tag, body } = stripTag(reply);
   if (!body) return reply;
-  // Уже честный человечный отказ с альтернативой — ок.
-  if (/чуть\s+позже|сейчас\s+неудоб|текстом/i.test(body) && body.length >= 20) return reply;
+  // Уже бартер «сначала ты» — ок.
+  if (/сначала\s+ты|сперва\s+ты|ты\s+перв/i.test(body) && body.length >= 12) return reply;
   if (CIRCLE_DODGE_RE.test(body) || DEFLECT_BODY_RE.test(body) || body.length < 16) {
+    return tag + pickAlt(CIRCLE_ASK_ALTS);
+  }
+  // Обещает кинуть без условия — тоже в бартер.
+  if (/(?:скин|кину|запишу|пришлю)/i.test(body) && !/сначала|сперва|после\s+тебя/i.test(body)) {
     return tag + pickAlt(CIRCLE_ASK_ALTS);
   }
   return reply;
@@ -663,6 +686,308 @@ function applyWave0t2Gates(reply, history, userMessage) {
   out = fixRadaChtoEcho(out, history);
   out = fixPeerGenderMismatch(out, userMessage);
   return out;
+}
+
+/* ——— 0t6 marathon: anti-script / терапевт / двойной вопрос ——— */
+
+function recentAssistantBodies(history, n = 8) {
+  return (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-n)
+    .map((h) =>
+      String(h.content || '')
+        .replace(/^\s*<<[^>\n]+>>\s*/, '')
+        .trim(),
+    );
+}
+
+const THERAPIST_RE =
+  /^(?:я\s+)?(?:понимаю\s+тебя|поняла\s+тебя|это\s+нормально|важно\s+что\s+ты|ты\s+имеешь\s+право|спасибо\s+что\s+делишься|звучит\s+сложно|давай\s+разберём)/i;
+const THERAPIST_ALTS = [
+  'ой жесть)',
+  'ну да, тяжёлое)',
+  'блин, сочувствую)',
+  'хм тяжёло звучит)',
+  'капец конечно)',
+  'ну ты)',
+  'жесть конечно)',
+];
+
+function fixTherapistTone(reply) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || body.length > 120) return reply;
+  if (!THERAPIST_RE.test(body)) return reply;
+  return tag + pickAlt(THERAPIST_ALTS);
+}
+
+const PONJALA_RE = /^поняла\s*\){0,2}\.?$/i;
+// 0t26: без «ясно)» / «хм ок)» — dead filler
+const PONJALA_ALTS = ['ага)', 'ну да)', 'о как)', 'хех)', 'ну ты)'];
+
+function fixPonjalaStamp(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !PONJALA_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 6).filter((t) => PONJALA_RE.test(t)).length;
+  if (hits >= 1 || body.length <= 12) return tag + pickAlt(PONJALA_ALTS);
+  return reply;
+}
+
+function fixDoubleQuestion(reply) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || body.length > 140) return reply;
+  const marks = (body.match(/\?/g) || []).length;
+  if (marks < 2) return reply;
+  // Оставляем первый вопрос, хвост без второго «?».
+  const first = body.indexOf('?');
+  let kept = body.slice(0, first + 1).trim();
+  const rest = body.slice(first + 1).replace(/\?/g, '.').trim();
+  if (rest && rest.length > 8 && kept.length < 40) {
+    // слишком обрезали — просто убрать лишние ?
+    const cleaned = body.replace(/\?/g, (m, i) => (i === first ? '?' : ''));
+    return tag + cleaned.replace(/\s+/g, ' ').trim();
+  }
+  return tag + (kept || pickAlt(['а ты как?)', 'ну и как?)', 'что скажешь?)']));
+}
+
+const OPENER_RE = /^(?:ну|хм|слушай|короче|типа)\b/i;
+const OPENER_ALTS = ['о как)', 'ага)', 'хех)', 'мм)', 'ну ты)'];
+
+function fixOpenerLoop(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !OPENER_RE.test(body) || body.length > 70) return reply;
+  const hits = recentAssistantBodies(history, 5).filter((t) => OPENER_RE.test(t)).length;
+  // 0t22: «слушай» — уже со второго раза; остальное с третьего.
+  const isSlushay = /^слушай\b/i.test(body);
+  if (hits < (isSlushay ? 1 : 2)) return reply;
+  // Срезаем opener, оставляем суть.
+  const stripped = body.replace(/^(?:ну|хм|слушай|короче|типа)[,.]?\s+/i, '').trim();
+  if (stripped.length >= 6) return tag + stripped;
+  return tag + pickAlt(OPENER_ALTS);
+}
+
+const AGREE_STACK_RE =
+  /^(?:да\s+да|конечно\s+конечно|полностью\s+согласна|абсолютно|ты\s+прав)\b/i;
+const AGREE_ALTS = ['хм ну почти)', 'мне скорее вот так)', 'не знаю, спорно)', 'ну не всегда)', 'ага, но…'];
+
+function fixAgreeableStack(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  // Только если он высказал мнение, а не спросил.
+  if (!u || /\?/.test(u) || u.length < 12) return reply;
+  if (!/(?:мне\s+кажется|я\s+думаю|имхо|по-моему|надо|должен)/i.test(u)) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !AGREE_STACK_RE.test(body)) return reply;
+  return tag + pickAlt(AGREE_ALTS);
+}
+
+const WHY_HERE_SCRIPT_RE =
+  /^(?:ну\s+)?(?:просто\s+)?(?:общаюсь|ищу\s+общен|тут\s+из\s+интерес)/i;
+const WHY_HERE_ALTS = [
+  'да просто так зашла)',
+  'ну вот скучно было)',
+  'сама не знаю до конца)',
+  'просто поболтать)',
+];
+
+function fixWhyHereScript(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (!/(?:зачем\s+ты\s+здесь|что\s+ты\s+тут\s+делаешь|почему\s+в\s+тг|зачем\s+в\s+телег)/i.test(u)) {
+    return reply;
+  }
+  const { tag, body } = stripTag(reply);
+  if (!body) return reply;
+  if (WHY_HERE_SCRIPT_RE.test(body) || /просто общаюсь/i.test(body)) {
+    return tag + pickAlt(WHY_HERE_ALTS);
+  }
+  return reply;
+}
+
+const PARROT_ALTS = ['хм ну да)', 'о как)', 'ага)', 'ну ты)', 'серьёзно?)', 'хах)'];
+
+/** Не зеркалить его фразу дословно / почти дословно. */
+function fixParrotEcho(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage)
+    .toLowerCase()
+    .replace(/[^\p{L}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const { tag, body } = stripTag(reply);
+  const b = String(body || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\s]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!b || u.length < 12 || b.length < 6) return reply;
+  if (b.includes(u) || (u.length >= 16 && u.includes(b) && b.length >= u.length * 0.65)) {
+    return tag + pickAlt(PARROT_ALTS);
+  }
+  const uw = [...new Set(u.split(/\s+/).filter((w) => w.length > 3))];
+  const bw = b.split(/\s+/).filter((w) => w.length > 3);
+  if (uw.length >= 3 && bw.length >= 3) {
+    const set = new Set(uw);
+    const hits = bw.filter((w) => set.has(w)).length;
+    if (hits / bw.length >= 0.72) return tag + pickAlt(PARROT_ALTS);
+  }
+  return reply;
+}
+
+const HOW_ASK_RE = /(?:как\s+(?:дела|день|ты|настроение)|чем\s+занят|что\s+делаешь)\s*\??\s*\)?$/i;
+const HOW_ASK_STRIP_RE =
+  /\s*[,.]?\s*(?:а\s+)?(?:как\s+(?:дела|день|ты|настроение)|чем\s+(?:сейчас\s+)?занят|что\s+делаешь)\s*\??\s*\)?\s*$/i;
+
+/** Не спрашивать «как дела» снова, если он только что ответил про день/дела. */
+function fixRepeatHowAsk(reply, history, userMessage) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !HOW_ASK_RE.test(body)) return reply;
+  const u = normalizeBareUserText(userMessage);
+  const heAnsweredHow =
+    /(?:норм|нормально|уста|работ|дома|сплю|спал|занят|день\s+|сегодня|сейчас\s+)/i.test(u) &&
+    u.length >= 6;
+  const recentHow = recentAssistantBodies(history, 5).filter((t) => HOW_ASK_RE.test(t)).length;
+  if (!heAnsweredHow && recentHow < 1) return reply;
+  const stripped = body.replace(HOW_ASK_STRIP_RE, '').trim();
+  if (stripped.length >= 6) return tag + (/\)\s*$/.test(stripped) ? stripped : `${stripped})`);
+  return tag + pickAlt(['о как)', 'ага)', 'ну ты)', 'хех)', 'ясно)']);
+}
+
+const LOVE_STAMP_RE =
+  /^(?:ну\s+ты\s+милый|мне\s+(?:тоже\s+)?приятно|с\s+тобой\s+хорошо|приятно\s+слышать|(?:ой[,.]?\s*|очень\s+|так\s+)?мило)\s*\){0,2}\.?$/i;
+const LOVE_STAMP_ALTS = [
+  'хех ну ты)',
+  'тепло от тебя)',
+  'ну вот так и нравится)',
+  'радует)',
+  'кайф с тобой, коротко)',
+  'мне тоже)',
+];
+
+/** Не штамповать одну и ту же ласку подряд. */
+function fixLoveStampOveruse(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !LOVE_STAMP_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 8).filter((t) => LOVE_STAMP_RE.test(t)).length;
+  if (hits < 1) return reply;
+  return tag + pickAlt(LOVE_STAMP_ALTS);
+}
+
+/** 0t21: голое «мило)» на содержательное сообщение — слишком пусто. */
+const MILO_ALONE_RE = /^(?:ой[,.]?\s*|очень\s+|так\s+)?мило\s*\){0,2}\.?$/i;
+const MILO_ALONE_ALTS = ['хех ну ты)', 'тепло)', 'мне приятно слышать)', 'ну ты)', 'радует)'];
+
+function fixMiloAlone(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (u.length < 10) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !MILO_ALONE_RE.test(body)) return reply;
+  return tag + pickAlt(MILO_ALONE_ALTS);
+}
+
+const INTERESTING_ALONE_RE = /^(?:хм[,.]?\s*)?интересно\s*\){0,2}\.?$/i;
+const INTERESTING_ALTS = ['о как, расскажи)', 'ну и?)', 'а дальше?)', 'хм, подробнее)'];
+
+function fixInterestingAlone(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (u.length < 8) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !INTERESTING_ALONE_RE.test(body)) return reply;
+  return tag + pickAlt(INTERESTING_ALTS);
+}
+
+const O_KAK_RE = /^о\s+как\s*\){0,2}\.?$/i;
+const O_KAK_ALTS = ['серьёзно?)', 'ну ты)', 'хах)', 'ого)', 'и что дальше?)'];
+
+function fixOKakStamp(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !O_KAK_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 6).filter((t) => O_KAK_RE.test(t) || /^о\s+как\b/i.test(t)).length;
+  if (hits < 1) return reply;
+  return tag + pickAlt(O_KAK_ALTS);
+}
+
+/** Пачка 0t6 — anti-script для марафона. */
+function applyWave0t6Gates(reply, history, userMessage) {
+  let out = reply;
+  out = fixTherapistTone(out);
+  out = fixPonjalaStamp(out, history);
+  out = fixDoubleQuestion(out);
+  out = fixOpenerLoop(out, history);
+  out = fixAgreeableStack(out, userMessage);
+  out = fixWhyHereScript(out, userMessage);
+  out = fixParrotEcho(out, userMessage);
+  out = fixRepeatHowAsk(out, history, userMessage);
+  out = fixLoveStampOveruse(out, history);
+  out = fixMiloAlone(out, userMessage);
+  out = fixInterestingAlone(out, userMessage);
+  out = fixOKakStamp(out, history);
+  out = fixLaughOnlyOveruse(out, history);
+  out = fixNuTakStamp(out, history);
+  out = fixSpasiboStamp(out, history);
+  out = fixHexAloneOveruse(out, history);
+  out = fixAhahLadnoStamp(out, history);
+  return out;
+}
+
+/** 0t33: «ахах ладно)» / «хах ладно)» подряд — пустой сброс. */
+const AHAH_LADNO_RE = /^(?:ахах+|хаха+|хах)\s*ладно\s*\){0,2}\.?$/i;
+const AHAH_LADNO_ALTS = ['хех)', 'ну ты)', 'о как)', 'ага)', 'серьёзно?)'];
+
+function fixAhahLadnoStamp(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !AHAH_LADNO_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 6).filter((t) => AHAH_LADNO_RE.test(t)).length;
+  if (hits < 1 && body.length > 18) return reply;
+  return tag + pickAlt(AHAH_LADNO_ALTS);
+}
+
+const NU_TAK_RE = /^(?:ну\s+так|так\s+себе|ну\s+типа)\s*\){0,2}\.?$/i;
+const NU_TAK_ALTS = ['хм ну да)', 'о как)', 'ага)', 'ну ты)', 'и что дальше?)'];
+
+function fixNuTakStamp(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !NU_TAK_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 6).filter((t) => NU_TAK_RE.test(t)).length;
+  if (hits < 1 && body.length > 10) return reply;
+  return tag + pickAlt(NU_TAK_ALTS);
+}
+
+const SPASIBO_STAMP_RE =
+  /^(?:спасибо|благодар(?:ю|на))\s+что\s+написа[а-яё]*\s*\){0,2}\.?$/i;
+const SPASIBO_ALTS = ['мне тоже приятно)', 'ну ты)', 'рада)', 'хех спасиб)', 'тепло)'];
+
+function fixSpasiboStamp(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !SPASIBO_STAMP_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 8).filter((t) => SPASIBO_STAMP_RE.test(t)).length;
+  if (hits < 1) return reply;
+  return tag + pickAlt(SPASIBO_ALTS);
+}
+
+const LAUGH_ONLY_RE = /^(?:ахах+|хаха+|ахах\s*\)|хах\s*\))$/i;
+const LAUGH_ONLY_ALTS = ['ну ты)', 'ой жесть)', 'серьёзно?)', 'хах ну да)', 'ого)'];
+
+function fixLaughOnlyOveruse(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !LAUGH_ONLY_RE.test(body.replace(/\s+/g, ''))) return reply;
+  const hits = recentAssistantBodies(history, 5).filter((t) =>
+    LAUGH_ONLY_RE.test(String(t).replace(/\s+/g, '')),
+  ).length;
+  if (hits < 1) return reply;
+  return tag + pickAlt(LAUGH_ONLY_ALTS);
 }
 
 /** Пачка гейтов волны 0lo — вызывать из applySoftLite. */
@@ -722,7 +1047,25 @@ module.exports = {
   fixBotAdmitLeak,
   fixPeerGenderMismatch,
   fixCircleAskDodge,
+  fixTherapistTone,
+  fixPonjalaStamp,
+  fixDoubleQuestion,
+  fixOpenerLoop,
+  fixAgreeableStack,
+  fixWhyHereScript,
+  fixParrotEcho,
+  fixRepeatHowAsk,
+  fixLoveStampOveruse,
+  fixMiloAlone,
+  fixInterestingAlone,
+  fixOKakStamp,
+  fixLaughOnlyOveruse,
+  fixNuTakStamp,
+  fixSpasiboStamp,
+  fixHexAloneOveruse,
+  fixAhahLadnoStamp,
   applyWave0t2Gates,
+  applyWave0t6Gates,
   applyWave0loGates,
   applyWave0m1Gates,
   detectUserLangBlob,

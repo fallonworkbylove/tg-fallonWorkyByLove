@@ -258,16 +258,28 @@ async function extractAndSaveFact(accountId, peerId, text, opts = {}) {
     const peer = String(peerId);
     if (IDENTITY_FACT_TYPES.has(match.type)) {
       // Долгосрок: одна актуальная запись на тип (имя/возраст/город/работа).
-      await db.execute(
-        `DELETE FROM peer_memory_facts
-         WHERE account_id = ? AND peer_id = ? AND fact_type = ?`,
+      // Graphify: без DELETE→INSERT дыры — обновляем in-place или вставляем.
+      const [[row]] = await db.execute(
+        `SELECT id, fact_text FROM peer_memory_facts
+         WHERE account_id = ? AND peer_id = ? AND fact_type = ?
+         ORDER BY id DESC LIMIT 1`,
         [accountId, peer, match.type],
       );
-      await db.execute(
-        `INSERT INTO peer_memory_facts (account_id, peer_id, fact_type, fact_text, created_at)
-         VALUES (?, ?, ?, ?, NOW())`,
-        [accountId, peer, match.type, factText],
-      );
+      if (row?.id) {
+        if (String(row.fact_text || '') === String(factText)) return;
+        await db.execute(
+          `UPDATE peer_memory_facts
+           SET fact_text = ?, created_at = NOW(), followed_up_at = NULL
+           WHERE id = ?`,
+          [factText, row.id],
+        );
+      } else {
+        await db.execute(
+          `INSERT INTO peer_memory_facts (account_id, peer_id, fact_type, fact_text, created_at)
+           VALUES (?, ?, ?, ?, NOW())`,
+          [accountId, peer, match.type, factText],
+        );
+      }
       return;
     }
 
@@ -389,16 +401,34 @@ const POKE_PHRASES = {
     );
   },
   health: () => pickPoke(['ты как, получше уже?)', 'ну что, уже норм себя чувствуешь?)', 'температуры больше нет?)']),
-  work: () => pickPoke(['ну что как работа сегодня)', 'смена норм прошла?)', 'на работе не завалили?)']),
+  work: () =>
+    pickPoke([
+      'ну что как работа сегодня)',
+      'смена норм прошла?)',
+      'на работе не завалили?)',
+      'уже дома после работы?)',
+      'работа отпустила хоть?)',
+    ]),
   city: () => pickPoke(['как у тебя там погода)', 'у тебя там тепло хоть?)', 'как город, не скучно?)']),
-  hobby: () => pickPoke(['ты чем сегодня занимался?)', 'успел чем-то своим позаняться?)', 'ну что, хобби не забросил?)']),
+  hobby: () =>
+    pickPoke([
+      'ты чем сегодня занимался?)',
+      'успел чем-то своим позаняться?)',
+      'ну что, хобби не забросил?)',
+      'было время на своё?)',
+    ]),
   plans: () => pickPoke(['ну что, как планы?)', 'получилось как хотел?)', 'ну как, сходило?)']),
   family: () => pickPoke(['как ты там)', 'ну что дома как)', 'как там ваши?)']),
   name: (fact) => {
     const n = String(fact).split(/\s+/)[0];
-    return pickPoke([`${n}, ты как там)`, `${n}, не пропал?)`, `эй ${n}, живой?)`]);
+    return pickPoke([`${n}, ты как там)`, `${n}, не пропал?)`, `эй ${n}, живой?)`, `${n}, чем занят?)`]);
   },
   pref: () => pickPoke(['ты как там)', 'ну что новенького)', 'как день)']),
+  // 0t24: poke по спорту/шоу/машине/возрасту (если факт есть)
+  sport: () => pickPoke(['ну что, тренировка была?)', 'спорт не забросил?)', 'как тело после зала?)']),
+  show: () => pickPoke(['досмотрел то шоу?)', 'ну что сериал как?)', 'кино ещё смотришь?)']),
+  car: () => pickPoke(['машина не подвела?)', 'ну что, на колёсах сегодня?)', 'как дорога?)']),
+  age: () => pickPoke(['ты как там)', 'ну что новенького)', 'как день проходит?)']),
 };
 
 async function getDueFollowUp(accountId, peerId) {

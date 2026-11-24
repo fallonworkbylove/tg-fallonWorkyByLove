@@ -234,7 +234,8 @@ const COACHY_PHRASE_RE =
 const COACHY_HIT_RE =
   /не\s+переживай|вс[её]\s+будет\s+(?:хорошо|ок)|не\s+торопи|быть\s+в\s+форме|правильно\s+питаться|ценить\s+(?:время|близких)|поддержка\s+важна|без\s+поддержки|беречь\s+себя|радость,?\s*когда\s+дела|переживать\s+нормально/i;
 
-const SOFT_ALTS = ['ну бывает)', 'хм, поняла)', 'ну ладно)', 'жесть конечно)'];
+// 0t21: без «ну ладно)» — dead filler / audit-stub
+const SOFT_ALTS = ['ну бывает)', 'хм, поняла)', 'о как)', 'жесть конечно)', 'хех ну да)'];
 
 function softenCoachy(reply) {
   if (!reply || !COACHY_HIT_RE.test(String(reply))) return reply;
@@ -284,7 +285,7 @@ function humanizeChatTexture(reply) {
     .replace(new RegExp(`${b}я\\s+хотела\\s+бы${e}`, 'gi'), 'я б хотела')
     .replace(new RegExp(`${b}хотелось\\s+бы${e}`, 'gi'), 'хочется')
     .replace(new RegExp(`${b}безусловно${e}`, 'gi'), 'ну да')
-    .replace(new RegExp(`${b}разумеется${e}`, 'gi'), 'ну ясно')
+    .replace(new RegExp(`${b}разумеется${e}`, 'gi'), 'ну да')
     .replace(new RegExp(`${b}конечно\\s+же${e}`, 'gi'), 'ну да')
     .replace(new RegExp(`${b}в\\s+любом\\s+случае${e}`, 'gi'), 'ну')
     .replace(new RegExp(`${b}тем\\s+не\\s+менее${e}`, 'gi'), 'но')
@@ -342,8 +343,8 @@ function softCompleteCut(reply) {
   ) {
     return (
       tag +
-      ['ну ладно тогда)', 'хм, поняла)', 'ок, я тут)'][
-        Math.floor(Math.random() * 3)
+      ['хм, поняла)', 'ну бывает)', 'о как)', 'хех ну да)'][
+        Math.floor(Math.random() * 4)
       ]
     );
   }
@@ -360,7 +361,7 @@ function softCompleteCut(reply) {
   ) {
     return (
       tag +
-      ['ох, звучит)', 'ну это да)', 'хех, ясно)', 'ага, прикольно звучит)'][
+      ['ох, звучит)', 'ну это да)', 'хех ну да)', 'ага, прикольно звучит)'][
         Math.floor(Math.random() * 4)
       ]
     );
@@ -478,12 +479,12 @@ function enrichBareAckOnSubstance(reply, userMessage) {
   const variants = hook
     ? [
         `ого, ${hook.toLowerCase()})`,
-        `ну ясно)`,
+        `о как)`,
         `о как) а дальше?`,
         `ага, и как тебе?)`,
         `хех ну да) а ты?`,
       ]
-    : ['ну ясно)', 'интересно) а ты?', 'о как)', 'хех ну да)', 'ого)'];
+    : ['о как)', 'интересно) а ты?', 'хех ну да)', 'ого)', 'ну ты)'];
   return tag + variants[Math.floor(Math.random() * variants.length)];
 }
 
@@ -660,15 +661,15 @@ function fixAwkwardNuOkPredicate(reply) {
   body = body.replace(
     /^(?:слушай|эм|хм|хах+|ахах+),?\s*ну\s+ок\s*\)?\s*(?=\S)/i,
     () => {
-      const alts = ['ладно) ', 'ок) ', 'хм ок) '];
+      const alts = ['ок) ', 'ну да) ', 'ага) '];
       return alts[Math.floor(Math.random() * alts.length)];
     },
   );
-  // 0o9: голое «слушай/хаха, ну ок)» без хвоста
+  // 0o9: голое «слушай/хаха, ну ок)» без хвоста — 0t27 без хм ок/ладно stubs
   body = body.replace(
     /^(?:слушай|эм|хм|хах+|ахах+),?\s*ну\s+ок\s*\)?\s*$/i,
     () => {
-      const alts = ['ладно)', 'хм ок)', 'ага)', 'ну да)'];
+      const alts = ['ага)', 'ну да)', 'о как)', 'хех)'];
       return alts[Math.floor(Math.random() * alts.length)];
     },
   );
@@ -743,15 +744,17 @@ function scrubRuLatinGarbage(reply) {
     .trim() || reply;
 }
 
+// 0t26: без «как дела» — иначе петля с fixRepeatHowAsk
 const RECIPROCAL_QS = [
   'а ты как день?',
   'чем сейчас занят?)',
-  'а у тебя как дела?)',
   'ты чего делаешь?)',
   'как настроение?)',
   'а ты чего?)',
   'ну а у тебя как?)',
   'что у тебя нового?)',
+  'ты как там?)',
+  'расскажи про свой день?)',
 ];
 
 /**
@@ -764,6 +767,29 @@ function ensureReciprocalQuestion(reply, history, userMessage) {
   if (!text || /^<<(?:REACT|PHOTO|VIDEO|CIRCLE|LAUGH)/i.test(text)) return reply;
   if (/\?/.test(text)) return reply;
   if (REPLY_FAREWELL_RE.test(text)) return reply;
+  // 0t11: бартер медиа / давление — не дописываем «а ты как?» поверх.
+  const u = String(userMessage || '');
+  if (
+    /(?:скинь|запиши|пришли|кинь).{0,40}(?:фот|круж|селфи|видео)|сначала\s+ты|сперва\s+ты|не\s+собач/i.test(
+      `${u}\n${text}`,
+    )
+  ) {
+    return reply;
+  }
+  // 0t26: если недавно уже спрашивала про день/дела — не дописываем ещё один.
+  const recentAsst = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-5)
+    .map((h) => String(h.content || ''));
+  if (
+    recentAsst.some((t) =>
+      /(?:как\s+(?:дела|день|ты|настроение)|чем\s+(?:сейчас\s+)?занят|что\s+делаешь|а\s+ты\s+как)/i.test(
+        t,
+      ),
+    )
+  ) {
+    return reply;
+  }
   // Уже длинновато — не раздуваем.
   if (text.length > 160) return reply;
   const q = RECIPROCAL_QS[Math.floor(Math.random() * RECIPROCAL_QS.length)];
@@ -944,7 +970,7 @@ function stripFalseSeasonCorrection(reply, userMessage) {
         Math.floor(Math.random() * 3)
       ];
     }
-    return ['ну ладно)', 'хм, поняла)', 'ага, ясно)'][Math.floor(Math.random() * 3)];
+    return ['хм, поняла)', 'ой точно)', 'ну да)'][Math.floor(Math.random() * 3)];
   }
 
   // Вырезаем чужие сезоны из ответа, оставляя смысл.
@@ -1002,7 +1028,7 @@ function stripRoboticGirl(reply) {
   if (!body || body.length < 3) {
     return (
       tag +
-      ['ну ладно)', 'хм, ок)', 'поняла)'][Math.floor(Math.random() * 3)]
+      ['хм, ок)', 'поняла)', 'ну бывает)', 'о как)'][Math.floor(Math.random() * 4)]
     );
   }
   if (body !== before && !/[)….!?]$/.test(body)) body += ')';
@@ -1046,8 +1072,8 @@ const SAFE_ACK_VARIANTS = [
   'на связи)',
   'поняла)',
   'мм ок)',
-  'слушай)',
-  // 0qh: без «ну ладно)» / «ага, ясно)» / «ок, я тут)» / голого «ага)» (stubs)
+  'ну ты)',
+  // 0t24: без «слушай)» / «ну ладно)» / «ага, ясно)» / голого «ага)»
 ];
 
 /** 0pu/0qf: на голый «Класс» — тёплый пивот, не про поездки. */
@@ -1123,8 +1149,8 @@ const KAIF_ACK_ALTS = [
   'хех ну да)',
   'ну бывает)',
   'хех)',
-  'ага, ясно)',
   'мм да)',
+  'ну ты)',
 ];
 
 function isKaifHeavy(text) {
@@ -1168,7 +1194,7 @@ function breakKaifEcho(reply, history, userMessage) {
     'ага) чем ещё день скрашиваешь?',
     'поняла) а ты сейчас дома?',
     'ок) что по планам на вечер?',
-    'ясно) слушай, а ты откуда сам?',
+    'о как) а ты откуда сам?',
     'мм) а ты чем занят сейчас?',
     'хех) что интересного?',
     'ну да) а ты как обычно вечер проводишь?',
