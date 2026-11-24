@@ -695,19 +695,27 @@ function tickDailyLife(accountId) {
  */
 
 const IDLE_POKE_RU = [
-  'ты пропал совсем)',
-  'ку, как ты там',
+  'ку, как ты там)',
   'ну что молчишь)',
   'хех ты где)',
   'скучно без тебя немного)',
-  'напиши как там у тебя',
-  'как день проходит?',
-  'я тут в телефоне, а ты чем занят?',
+  'напиши как там у тебя)',
+  'как день проходит?)',
+  'я тут в телефоне, а ты чем занят?)',
   'эй, ты ещё на связи?)',
   'подумала о тебе — как ты?)',
   'не пропади совсем)',
+  'ну ты живой там?)',
+  'мне скучно, напиши)',
+  'чем занят сейчас?)',
+  'я на связи, если что)',
 ];
-const IDLE_POKE_RU_COFFEE = 'я тут кофе пью, а ты чем занят?';
+const IDLE_POKE_RU_COFFEE = 'я тут кофе пью, а ты чем занят?)';
+const IDLE_POKE_RU_EVENING = [
+  'как вечер?)',
+  'ты ещё не спишь?)',
+  'я ещё тут — как ты?)',
+];
 const IDLE_POKE_EN = [
   'hey you alive?',
   'yo',
@@ -772,15 +780,39 @@ async function sendIdlePokes(accountId) {
 
       const lang = await resolveGreetingLang(client, sender, message);
       const memPoke = lang === 'en' || lang === 'de' ? null : await memoryTriggers.pickMemoryPoke(accountId, peerId);
-      const bank =
+      let bank =
         lang === 'en'
           ? IDLE_POKE_EN
           : lang === 'de'
             ? IDLE_POKE_DE
             : timeStyle.isCoffeeOkHourMsk()
               ? [...IDLE_POKE_RU, IDLE_POKE_RU_COFFEE]
-              : IDLE_POKE_RU;
-      const phrase = memPoke?.phrase || bank[Math.floor(Math.random() * bank.length)];
+              : [...IDLE_POKE_RU];
+      // Вечер MSK — чуть другие покe.
+      try {
+        const h = new Date(Date.now() + 3 * 3600 * 1000).getUTCHours();
+        if (lang === 'ru' && h >= 19 && h <= 23) bank = [...bank, ...IDLE_POKE_RU_EVENING];
+      } catch (_) {}
+      let phrase = memPoke?.phrase || bank[Math.floor(Math.random() * bank.length)];
+      // 0t7: если знаем имя — иногда обратиться.
+      if (!memPoke && lang !== 'en' && lang !== 'de' && Math.random() < 0.35) {
+        try {
+          const facts = await memoryTriggers.listPeerFacts(accountId, peerId);
+          const nameF = (facts || []).find((f) => f.fact_type === 'name');
+          const nm = String(nameF?.fact_text || '')
+            .trim()
+            .split(/\s+/)[0];
+          if (nm && /^[А-ЯЁA-Z][а-яёa-zЁё]{1,14}$/.test(nm)) {
+            const named = [
+              `${nm}, ты как там)`,
+              `${nm}, не пропал?)`,
+              `эй ${nm}, живой?)`,
+              `${nm}, чем занят?)`,
+            ];
+            phrase = named[Math.floor(Math.random() * named.length)];
+          }
+        } catch (_) {}
+      }
       const senderName = sender.username || sender.firstName || peerId;
       try {
         await sleep(2500 + Math.random() * 4000);

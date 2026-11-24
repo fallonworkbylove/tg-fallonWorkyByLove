@@ -571,10 +571,10 @@ const PHOTO_WAIT_USER_RE =
   /(?:не\s+дождал|жду\s+(?:фото|фотк|круж)|где\s+(?:фото|фотк|круж|селфи)|когда\s+(?:фото|скинешь|пришл)|обещанн\w*\s+фото)/i;
 const PHOTO_STALL_BAD_RE = /терпелив|морозить|уточни|лол|потом\s*\)|позже\s*\)/i;
 const PHOTO_STALL_ALTS = [
-  'ой да, задержала — чуть позже кину)',
-  'правда должна, сейчас неудобно, скоро скину)',
-  'не морожу специально, чуть позже пришлю)',
-  'ок, помню про фото — скоро)',
+  'ок кину — только ты первый)',
+  'хорошо, но сначала ты скинь)',
+  'давай обмен: сначала ты)',
+  'помню — кину после тебя)',
 ];
 
 function fixPhotoStallDeflect(reply, userMessage) {
@@ -631,10 +631,10 @@ const CIRCLE_ASK_RE =
 const CIRCLE_DODGE_RE =
   /(?:не\s+могу\s+сейчас|потом|позже|уточни|лол|неудоб|занята)\s*\)?\.?$/i;
 const CIRCLE_ASK_ALTS = [
-  'сейчас неудобно в кружке, текстом ок?)',
-  'чуть позже запишу, сейчас руки заняты)',
-  'давай чуть погодя кружок, сейчас не выйдет)',
-  'ок, помню — чуть позже кружок)',
+  'хорошо запишу, но сначала ты)',
+  'ок кину кружок — только ты первый)',
+  'давай, но сперва ты скинь)',
+  'могу, но сначала ты)',
 ];
 
 function fixCircleAskDodge(reply, userMessage) {
@@ -643,9 +643,13 @@ function fixCircleAskDodge(reply, userMessage) {
   if (!CIRCLE_ASK_RE.test(u)) return reply;
   const { tag, body } = stripTag(reply);
   if (!body) return reply;
-  // Уже честный человечный отказ с альтернативой — ок.
-  if (/чуть\s+позже|сейчас\s+неудоб|текстом/i.test(body) && body.length >= 20) return reply;
+  // Уже бартер «сначала ты» — ок.
+  if (/сначала\s+ты|сперва\s+ты|ты\s+перв/i.test(body) && body.length >= 12) return reply;
   if (CIRCLE_DODGE_RE.test(body) || DEFLECT_BODY_RE.test(body) || body.length < 16) {
+    return tag + pickAlt(CIRCLE_ASK_ALTS);
+  }
+  // Обещает кинуть без условия — тоже в бартер.
+  if (/(?:скин|кину|запишу|пришлю)/i.test(body) && !/сначала|сперва|после\s+тебя/i.test(body)) {
     return tag + pickAlt(CIRCLE_ASK_ALTS);
   }
   return reply;
@@ -662,6 +666,132 @@ function applyWave0t2Gates(reply, history, userMessage) {
   out = fixDavaiLoop(out, history, userMessage);
   out = fixRadaChtoEcho(out, history);
   out = fixPeerGenderMismatch(out, userMessage);
+  return out;
+}
+
+/* ——— 0t6 marathon: anti-script / терапевт / двойной вопрос ——— */
+
+function recentAssistantBodies(history, n = 8) {
+  return (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-n)
+    .map((h) =>
+      String(h.content || '')
+        .replace(/^\s*<<[^>\n]+>>\s*/, '')
+        .trim(),
+    );
+}
+
+const THERAPIST_RE =
+  /^(?:я\s+)?(?:понимаю\s+тебя|это\s+нормально|важно\s+что\s+ты|ты\s+имеешь\s+право|спасибо\s+что\s+делишься|звучит\s+сложно|давай\s+разберём)/i;
+const THERAPIST_ALTS = [
+  'ой жесть)',
+  'ну да, тяжёлое)',
+  'понимаю… держись)',
+  'блин, сочувствую)',
+  'хм тяжёло звучит)',
+];
+
+function fixTherapistTone(reply) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || body.length > 120) return reply;
+  if (!THERAPIST_RE.test(body)) return reply;
+  return tag + pickAlt(THERAPIST_ALTS);
+}
+
+const PONJALA_RE = /^поняла\s*\){0,2}\.?$/i;
+const PONJALA_ALTS = ['ага)', 'хм ок)', 'ясно)', 'ну да)', 'о как)'];
+
+function fixPonjalaStamp(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !PONJALA_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 6).filter((t) => PONJALA_RE.test(t)).length;
+  if (hits >= 1 || body.length <= 12) return tag + pickAlt(PONJALA_ALTS);
+  return reply;
+}
+
+function fixDoubleQuestion(reply) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || body.length > 140) return reply;
+  const marks = (body.match(/\?/g) || []).length;
+  if (marks < 2) return reply;
+  // Оставляем первый вопрос, хвост без второго «?».
+  const first = body.indexOf('?');
+  let kept = body.slice(0, first + 1).trim();
+  const rest = body.slice(first + 1).replace(/\?/g, '.').trim();
+  if (rest && rest.length > 8 && kept.length < 40) {
+    // слишком обрезали — просто убрать лишние ?
+    const cleaned = body.replace(/\?/g, (m, i) => (i === first ? '?' : ''));
+    return tag + cleaned.replace(/\s+/g, ' ').trim();
+  }
+  return tag + (kept || pickAlt(['а ты как?)', 'ну и как?)', 'что скажешь?)']));
+}
+
+const OPENER_RE = /^(?:ну|хм|слушай|короче|типа)\b/i;
+const OPENER_ALTS = ['о как)', 'ага)', 'хех)', 'мм)', 'ну ты)'];
+
+function fixOpenerLoop(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !OPENER_RE.test(body) || body.length > 70) return reply;
+  const hits = recentAssistantBodies(history, 5).filter((t) => OPENER_RE.test(t)).length;
+  if (hits < 2) return reply;
+  // Срезаем opener, оставляем суть.
+  const stripped = body.replace(/^(?:ну|хм|слушай|короче|типа)[,.]?\s+/i, '').trim();
+  if (stripped.length >= 6) return tag + stripped;
+  return tag + pickAlt(OPENER_ALTS);
+}
+
+const AGREE_STACK_RE =
+  /^(?:да\s+да|конечно\s+конечно|полностью\s+согласна|абсолютно|ты\s+прав)\b/i;
+const AGREE_ALTS = ['хм ну почти)', 'мне скорее вот так)', 'не знаю, спорно)', 'ну не всегда)', 'ага, но…'];
+
+function fixAgreeableStack(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  // Только если он высказал мнение, а не спросил.
+  if (!u || /\?/.test(u) || u.length < 12) return reply;
+  if (!/(?:мне\s+кажется|я\s+думаю|имхо|по-моему|надо|должен)/i.test(u)) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !AGREE_STACK_RE.test(body)) return reply;
+  return tag + pickAlt(AGREE_ALTS);
+}
+
+const WHY_HERE_SCRIPT_RE =
+  /^(?:ну\s+)?(?:просто\s+)?(?:общаюсь|ищу\s+общен|тут\s+из\s+интерес)/i;
+const WHY_HERE_ALTS = [
+  'да просто так зашла)',
+  'ну вот скучно было)',
+  'сама не знаю до конца)',
+  'просто поболтать)',
+];
+
+function fixWhyHereScript(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (!/(?:зачем\s+ты\s+здесь|что\s+ты\s+тут\s+делаешь|почему\s+в\s+тг|зачем\s+в\s+телег)/i.test(u)) {
+    return reply;
+  }
+  const { tag, body } = stripTag(reply);
+  if (!body) return reply;
+  if (WHY_HERE_SCRIPT_RE.test(body) || /просто общаюсь/i.test(body)) {
+    return tag + pickAlt(WHY_HERE_ALTS);
+  }
+  return reply;
+}
+
+/** Пачка 0t6 — anti-script для марафона. */
+function applyWave0t6Gates(reply, history, userMessage) {
+  let out = reply;
+  out = fixTherapistTone(out);
+  out = fixPonjalaStamp(out, history);
+  out = fixDoubleQuestion(out);
+  out = fixOpenerLoop(out, history);
+  out = fixAgreeableStack(out, userMessage);
+  out = fixWhyHereScript(out, userMessage);
   return out;
 }
 
@@ -722,7 +852,14 @@ module.exports = {
   fixBotAdmitLeak,
   fixPeerGenderMismatch,
   fixCircleAskDodge,
+  fixTherapistTone,
+  fixPonjalaStamp,
+  fixDoubleQuestion,
+  fixOpenerLoop,
+  fixAgreeableStack,
+  fixWhyHereScript,
   applyWave0t2Gates,
+  applyWave0t6Gates,
   applyWave0loGates,
   applyWave0m1Gates,
   detectUserLangBlob,
