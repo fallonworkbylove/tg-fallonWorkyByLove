@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t33. 24 ноя — anti «ахах ладно)» + story 60%
+
+Гейт «ахах ладно)». разумеется→«ну да». Фон-сюжет ~60%. Лента: (updates.js?v=540).
+
 ## 0t32. 24 ноя — scrub «поняла тебя / ну ладно» в ideas*
 
 humanIdeas11/12/14/16 + thinLayer + broken fallbacks без therapist/dead filler. Лента: (updates.js?v=539).

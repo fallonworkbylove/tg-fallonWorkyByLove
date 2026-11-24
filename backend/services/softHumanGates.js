@@ -932,7 +932,21 @@ function applyWave0t6Gates(reply, history, userMessage) {
   out = fixNuTakStamp(out, history);
   out = fixSpasiboStamp(out, history);
   out = fixHexAloneOveruse(out, history);
+  out = fixAhahLadnoStamp(out, history);
   return out;
+}
+
+/** 0t33: «ахах ладно)» / «хах ладно)» подряд — пустой сброс. */
+const AHAH_LADNO_RE = /^(?:ахах+|хаха+|хах)\s*ладно\s*\){0,2}\.?$/i;
+const AHAH_LADNO_ALTS = ['хех)', 'ну ты)', 'о как)', 'ага)', 'серьёзно?)'];
+
+function fixAhahLadnoStamp(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !AHAH_LADNO_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 6).filter((t) => AHAH_LADNO_RE.test(t)).length;
+  if (hits < 1 && body.length > 18) return reply;
+  return tag + pickAlt(AHAH_LADNO_ALTS);
 }
 
 const NU_TAK_RE = /^(?:ну\s+так|так\s+себе|ну\s+типа)\s*\){0,2}\.?$/i;
@@ -1047,6 +1061,7 @@ module.exports = {
   fixNuTakStamp,
   fixSpasiboStamp,
   fixHexAloneOveruse,
+  fixAhahLadnoStamp,
   applyWave0t2Gates,
   applyWave0t6Gates,
   applyWave0loGates,

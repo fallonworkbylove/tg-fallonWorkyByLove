@@ -285,7 +285,7 @@ function humanizeChatTexture(reply) {
     .replace(new RegExp(`${b}я\\s+хотела\\s+бы${e}`, 'gi'), 'я б хотела')
     .replace(new RegExp(`${b}хотелось\\s+бы${e}`, 'gi'), 'хочется')
     .replace(new RegExp(`${b}безусловно${e}`, 'gi'), 'ну да')
-    .replace(new RegExp(`${b}разумеется${e}`, 'gi'), 'ну ясно')
+    .replace(new RegExp(`${b}разумеется${e}`, 'gi'), 'ну да')
     .replace(new RegExp(`${b}конечно\\s+же${e}`, 'gi'), 'ну да')
     .replace(new RegExp(`${b}в\\s+любом\\s+случае${e}`, 'gi'), 'ну')
     .replace(new RegExp(`${b}тем\\s+не\\s+менее${e}`, 'gi'), 'но')
