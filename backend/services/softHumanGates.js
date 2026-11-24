@@ -487,6 +487,184 @@ function fixSmokingSoftYes(reply, userMessage) {
   return tag + pickAlt(SMOKING_NO_ALTS);
 }
 
+/* ——— 0t2: скрины «как бот» — узкие постфильтры ——— */
+
+const DEAD_FILLER_RE =
+  /^(?:хм[,.]?\s*|ну[,.]?\s*|ахах+[,.]?\s*|хах[,.]?\s*)?(?:ясно|понятно|ну\s+бывает|бывает|ага|угу|лол|кек|ну\s+ок|ок)\s*\){0,2}\.?$/i;
+const DEAD_FILLER_ALTS = [
+  'а подробнее?)',
+  'хм, и что дальше?)',
+  'ну расскажи)',
+  'о как, и?',
+  'слушай, а ты как?)',
+];
+
+function fixDeadFillerReply(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (u.length < 2) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !DEAD_FILLER_RE.test(body)) return reply;
+  // На совсем короткое «ок» от него пустой ack ок.
+  if (u.length <= 6 && /^(?:ок|окей|угу|ага)\s*\)?$/i.test(u)) return reply;
+  return tag + pickAlt(DEAD_FILLER_ALTS);
+}
+
+const DAVAI_BODY_RE = /^(?:ну\s+)?давай\s*\){0,2}\.?$/i;
+const DAVAI_ALTS = ['ну напиши как будет)', 'ок, я на связи)', 'хорошо, пиши)', 'давай, жду)'];
+
+function fixDavaiLoop(reply, history, userMessage) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !DAVAI_BODY_RE.test(body)) return reply;
+  const u = normalizeBareUserText(userMessage);
+  const recent = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-4)
+    .map((h) => String(h.content || '').replace(/^\s*<<[^>\n]+>>\s*/, '').trim());
+  const priorDavai = recent.some((t) => DAVAI_BODY_RE.test(t));
+  const heDavai = /^(?:ну\s+)?давай\s*\)?\.?$/i.test(u);
+  if (priorDavai || heDavai) return tag + pickAlt(DAVAI_ALTS);
+  return reply;
+}
+
+const RADA_ECHO_RE = /^рада(?:\s+что|\s*,\s*что)(?:\s|$|[),.!])/i;
+const RADA_ALTS = ['мне приятно)', 'ну ты милый)', 'с тобой хорошо)', 'о как, рада)', 'приятно слышать)'];
+
+function fixRadaChtoEcho(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !RADA_ECHO_RE.test(body)) return reply;
+  const recent = (Array.isArray(history) ? history : [])
+    .filter((h) => h && h.role === 'assistant')
+    .slice(-6)
+    .map((h) => String(h.content || '').replace(/^\s*<<[^>\n]+>>\s*/, '').trim());
+  const hits = recent.filter((t) => RADA_ECHO_RE.test(t)).length;
+  if (hits >= 1 || body.length <= 28) return tag + pickAlt(RADA_ALTS);
+  return reply;
+}
+
+const FRICTION_USER_RE =
+  /морози|морозить|динамиш|игнор|не\s+дождал|где\s+(?:фото|фотк|круж|видео)|когда\s+(?:скинешь|фото|круж)|ты\s+бот|как\s+бот|нейросеть|промпт|обещала|вр[её]шь/i;
+const DEFLECT_BODY_RE =
+  /^(?:уточни|лол|кек|ахах+|хаха+|хм|эм)\s*\){0,2}\.?$/i;
+const FRICTION_ALTS = [
+  'ой, правда затянула — чуть позже напишу нормально)',
+  'поняла, не хочу морозить — скажи что важнее сейчас)',
+  'сорри, была занята, давай по делу)',
+  'слышу тебя, без шуток — что именно ждёшь?)',
+];
+
+function fixDeflectOnFriction(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (!FRICTION_USER_RE.test(u)) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body) return reply;
+  if (DEFLECT_BODY_RE.test(body) || (body.length <= 18 && /уточни|лол|терпелив/i.test(body))) {
+    return tag + pickAlt(FRICTION_ALTS);
+  }
+  return reply;
+}
+
+const PHOTO_WAIT_USER_RE =
+  /(?:не\s+дождал|жду\s+(?:фото|фотк|круж)|где\s+(?:фото|фотк|круж|селфи)|когда\s+(?:фото|скинешь|пришл)|обещанн\w*\s+фото)/i;
+const PHOTO_STALL_BAD_RE = /терпелив|морозить|уточни|лол|потом\s*\)|позже\s*\)/i;
+const PHOTO_STALL_ALTS = [
+  'ой да, задержала — чуть позже кину)',
+  'правда должна, сейчас неудобно, скоро скину)',
+  'не морожу специально, чуть позже пришлю)',
+  'ок, помню про фото — скоро)',
+];
+
+function fixPhotoStallDeflect(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (!PHOTO_WAIT_USER_RE.test(u)) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body) return reply;
+  if (PHOTO_STALL_BAD_RE.test(body) || body.length < 24) {
+    return tag + pickAlt(PHOTO_STALL_ALTS);
+  }
+  return reply;
+}
+
+const BOT_ADMIT_RE =
+  /(?:я\s+создан[аоы]|меня\s+создал|по\s+промпт|я\s+(?:ии|ai)\b|я\s+нейросет|я\s+языков\w*\s+модел|я\s+бот\b|as an ai|i(?:'m| am) an?(?:\s+\w+){0,2}\s+(?:ai|bot|language model))/i;
+const BOT_ADMIT_ALTS = [
+  'хах ну ты чего)',
+  'живая, расслабься)',
+  'эм?)',
+  'да ладно тебе)',
+  'странно звучит)',
+];
+
+function fixBotAdmitLeak(reply) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !BOT_ADMIT_RE.test(body)) return reply;
+  return tag + pickAlt(BOT_ADMIT_ALTS);
+}
+
+const PEER_MASC_RE = /(?:\bбыл\b|\bустал\b|\bдождался\b|\bработал\b|\bприходил\b|\bушёл\b|\bушел\b)/i;
+const PEER_FEM_ADDR_RE = /(?:^|[.!?)\s])устала(?:\s+наверное)?\s*\)?/i;
+const PEER_GENDER_ALTS = ['устал наверное)', 'тяжёлый день?)', 'ну отдыхай)', 'поняла, отдыхай)'];
+
+function fixPeerGenderMismatch(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (!PEER_MASC_RE.test(u)) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body) return reply;
+  if (/\bя\s+устала\b/i.test(body)) return reply;
+  if (/устала\s+наверное|^\s*устала\s*\)/i.test(body) || PEER_FEM_ADDR_RE.test(` ${body}`)) {
+    // «устала» про него, не про себя
+    if (!/\bя\b/i.test(body.slice(0, Math.max(0, body.search(/устала/i))))) {
+      return tag + pickAlt(PEER_GENDER_ALTS);
+    }
+  }
+  return reply;
+}
+
+const CIRCLE_ASK_RE =
+  /(?:скинь|запиши|пришли|хочу|можешь).{0,40}(?:круж|видеосообщ|video\s*note)|(?:кружок|видеосообщение).{0,20}(?:скинь|запиши|пришли|можешь)/i;
+const CIRCLE_DODGE_RE =
+  /(?:не\s+могу\s+сейчас|потом|позже|уточни|лол|неудоб|занята)\s*\)?\.?$/i;
+const CIRCLE_ASK_ALTS = [
+  'сейчас неудобно в кружке, текстом ок?)',
+  'чуть позже запишу, сейчас руки заняты)',
+  'давай чуть погодя кружок, сейчас не выйдет)',
+  'ок, помню — чуть позже кружок)',
+];
+
+function fixCircleAskDodge(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (!CIRCLE_ASK_RE.test(u)) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body) return reply;
+  // Уже честный человечный отказ с альтернативой — ок.
+  if (/чуть\s+позже|сейчас\s+неудоб|текстом/i.test(body) && body.length >= 20) return reply;
+  if (CIRCLE_DODGE_RE.test(body) || DEFLECT_BODY_RE.test(body) || body.length < 16) {
+    return tag + pickAlt(CIRCLE_ASK_ALTS);
+  }
+  return reply;
+}
+
+/** Пачка гейтов волны 0t2 — вкус ответов со скринов. */
+function applyWave0t2Gates(reply, history, userMessage) {
+  let out = reply;
+  out = fixBotAdmitLeak(out);
+  out = fixDeflectOnFriction(out, userMessage);
+  out = fixPhotoStallDeflect(out, userMessage);
+  out = fixCircleAskDodge(out, userMessage);
+  out = fixDeadFillerReply(out, userMessage);
+  out = fixDavaiLoop(out, history, userMessage);
+  out = fixRadaChtoEcho(out, history);
+  out = fixPeerGenderMismatch(out, userMessage);
+  return out;
+}
+
 /** Пачка гейтов волны 0lo — вызывать из applySoftLite. */
 function applyWave0loGates(reply, history, userMessage) {
   let out = reply;
@@ -536,6 +714,15 @@ module.exports = {
   fixRepeatWorkAsk,
   fixHeardTailOveruse,
   fixSmokingSoftYes,
+  fixDeadFillerReply,
+  fixDavaiLoop,
+  fixRadaChtoEcho,
+  fixDeflectOnFriction,
+  fixPhotoStallDeflect,
+  fixBotAdmitLeak,
+  fixPeerGenderMismatch,
+  fixCircleAskDodge,
+  applyWave0t2Gates,
   applyWave0loGates,
   applyWave0m1Gates,
   detectUserLangBlob,

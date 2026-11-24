@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t2. 24 ноя — вкус ответов + idle poke + blacklist ID
+
+Постфильтры 0t2: анти «уточни/лол» на претензии, фото-stall, бан признания ИИ, петля «ну давай», мёртвые filler, «рада что» echo, род peer, кружок-dodge. Роутер: конфликт/бот/кружок/мороз → Luna. Idle poke с 1.5ч + окно ~11–12 + catch-up после рестарта. Blacklist UI: `user_telegram_id`. Лента: (updates.js?v=510).
+
 ## 0t1. 24 ноя — OpenRouter: Luna + Qwen 3.7 Flash
 
 Чат через OpenRouter: по умолчанию `qwen/qwen3.7-flash`; Luna только на конфликте / длинной реплике / развёрнутом вопросе (глубина истории больше не триггерит). Анализ → Luna. Голос/фото — `OPENAI_FALLBACK_KEY` на `api.openai.com`.
