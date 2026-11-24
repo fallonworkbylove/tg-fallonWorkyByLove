@@ -814,6 +814,26 @@ function fixParrotEcho(reply, userMessage) {
   return reply;
 }
 
+const HOW_ASK_RE = /(?:как\s+(?:дела|день|ты|настроение)|чем\s+занят|что\s+делаешь)\s*\??\s*\)?$/i;
+const HOW_ASK_STRIP_RE =
+  /\s*[,.]?\s*(?:а\s+)?(?:как\s+(?:дела|день|ты|настроение)|чем\s+(?:сейчас\s+)?занят|что\s+делаешь)\s*\??\s*\)?\s*$/i;
+
+/** Не спрашивать «как дела» снова, если он только что ответил про день/дела. */
+function fixRepeatHowAsk(reply, history, userMessage) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !HOW_ASK_RE.test(body)) return reply;
+  const u = normalizeBareUserText(userMessage);
+  const heAnsweredHow =
+    /(?:норм|нормально|уста|работ|дома|сплю|спал|занят|день\s+|сегодня|сейчас\s+)/i.test(u) &&
+    u.length >= 6;
+  const recentHow = recentAssistantBodies(history, 5).filter((t) => HOW_ASK_RE.test(t)).length;
+  if (!heAnsweredHow && recentHow < 1) return reply;
+  const stripped = body.replace(HOW_ASK_STRIP_RE, '').trim();
+  if (stripped.length >= 6) return tag + (/\)\s*$/.test(stripped) ? stripped : `${stripped})`);
+  return tag + pickAlt(['о как)', 'ага)', 'ну ты)', 'хм ок)', 'понятно)']);
+}
+
 /** Пачка 0t6 — anti-script для марафона. */
 function applyWave0t6Gates(reply, history, userMessage) {
   let out = reply;
@@ -824,6 +844,7 @@ function applyWave0t6Gates(reply, history, userMessage) {
   out = fixAgreeableStack(out, userMessage);
   out = fixWhyHereScript(out, userMessage);
   out = fixParrotEcho(out, userMessage);
+  out = fixRepeatHowAsk(out, history, userMessage);
   return out;
 }
 
@@ -891,6 +912,7 @@ module.exports = {
   fixAgreeableStack,
   fixWhyHereScript,
   fixParrotEcho,
+  fixRepeatHowAsk,
   applyWave0t2Gates,
   applyWave0t6Gates,
   applyWave0loGates,
