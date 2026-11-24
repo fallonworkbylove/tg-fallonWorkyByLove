@@ -497,7 +497,9 @@ const DEAD_FILLER_ALTS = [
   'ну расскажи)',
   'о как, и?',
   'ой ну и?)',
-  'интересно, и что?)',
+  'ну и?)',
+  'а дальше что?)',
+  'серьёзно? и?',
 ];
 
 function fixDeadFillerReply(reply, userMessage) {
