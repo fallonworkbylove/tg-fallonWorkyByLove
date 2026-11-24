@@ -2498,7 +2498,7 @@ function fixConfusedScript(reply, userMessage, history) {
   return reply;
 }
 
-const BROKEN_CHAT_FALLBACKS = ['ахах ладно)', 'ну ок)', 'поняла)', 'хм окей)'];
+const BROKEN_CHAT_FALLBACKS = ['ахах)', 'ну ок)', 'поняла)', 'о как)'];
 
 /** Обрубки вроде «ну, что попал» / «просто читай» без объекта — звучат как сломанный скрипт. */
 function isBrokenChatLine(line) {

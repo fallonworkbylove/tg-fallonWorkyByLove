@@ -244,7 +244,7 @@ function mskHour() {
 /* ——— 2: анти-эхо 😂 / ахаха ——— */
 const LAUGH_ECHO_RE =
   /^(?:(?:а\s*)?ха+|ахах+|хаха+|лол|кек|😂|🤣|😆|😄|\(+\)+)\s*(?:😂|🤣|😆|ахах*|ха+|\)+)*$/iu;
-const LAUGH_ALTS = ['хех)', 'ну ты)', 'ахах ладно)', 'эм)', 'ок))'];
+const LAUGH_ALTS = ['хех)', 'ну ты)', 'ахах)', 'эм)', 'ого)'];
 
 function fixEmojiLaughEcho(reply, history) {
   if (!reply) return reply;

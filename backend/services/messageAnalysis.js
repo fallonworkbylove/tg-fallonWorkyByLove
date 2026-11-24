@@ -306,7 +306,7 @@ function detectHerMove(speechAct, emotion, topics, vibe, subtext, focus, referen
     return 'бартер: «хорошо скину, но сначала ты)» — без файла, пока он сам не скинет';
   }
   if (speechAct === 'tired' || emotion === 'tired') {
-    return 'нежная забота («ой жесть, отдыхай)» / «держись)»), без нравоучений';
+    return 'нежная забота («ой жесть, отдыхай)» / «ну ты)»), без нравоучений';
   }
   if (speechAct === 'warm' || emotion === 'warm') {
     return 'любвеобильно взаимно («мне тоже приятно)» / «тепло от тебя)» / «с тобой хорошо)»)';

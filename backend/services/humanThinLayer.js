@@ -402,7 +402,7 @@ function fixEditorialTone(reply) {
   if (!reply) return reply;
   const { tag, body } = stripTags(reply);
   if (!EDITORIAL_RE.test(body)) return reply;
-  return tag + ['хах ну да)', 'ахах)', 'ну бывает)', 'ага, ясно)'][Math.floor(Math.random() * 4)];
+  return tag + ['хах ну да)', 'ахах)', 'ну бывает)', 'о как)'][Math.floor(Math.random() * 4)];
 }
 
 const SERVICE_THANKS_RE =
@@ -412,7 +412,7 @@ function fixServiceThanks(reply) {
   if (!reply) return reply;
   const { tag, body } = stripTags(reply);
   if (!SERVICE_THANKS_RE.test(body)) return reply;
-  return tag + ['поняла тебя)', 'ну ок)', 'ну ладно)'][Math.floor(Math.random() * 3)];
+  return tag + ['о как)', 'ну ок)', 'ага)'][Math.floor(Math.random() * 3)];
 }
 
 /**
@@ -438,7 +438,7 @@ function fixMisplacedThanks(reply, userMessage) {
     if (/привет|хай|здаров|ты\s+как|как\s+дела|как\s+ты/i.test(msg)) {
       return tag + ['хорошо)', 'норм, ты как?)', 'да нормально)'][Math.floor(Math.random() * 3)];
     }
-    return tag + ['поняла тебя)', 'ну ок)', 'ну ладно)'][Math.floor(Math.random() * 3)];
+    return tag + ['о как)', 'ну ок)', 'ага)'][Math.floor(Math.random() * 3)];
   }
   if (!/[)….!?]$/.test(cleaned)) cleaned += ')';
   return tag + cleaned;

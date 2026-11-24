@@ -4,6 +4,10 @@ Changelog LoveRussian — лента тегов для TG.
 
 ---
 
+## 0t32. 24 ноя — scrub «поняла тебя / ну ладно» в ideas*
+
+humanIdeas11/12/14/16 + thinLayer + broken fallbacks без therapist/dead filler. Лента: (updates.js?v=539).
+
 ## 0t31. 24 ноя — anti «ну ясно)» в dead filler
 
 Dead-filler ловит «ну ясно)». Убраны alts с «ну ясно» из gates/humanIdeas13. Лента: (updates.js?v=538).
