@@ -895,7 +895,20 @@ function applyWave0t6Gates(reply, history, userMessage) {
   out = fixInterestingAlone(out, userMessage);
   out = fixOKakStamp(out, history);
   out = fixLaughOnlyOveruse(out, history);
+  out = fixNuTakStamp(out, history);
   return out;
+}
+
+const NU_TAK_RE = /^(?:ну\s+так|так\s+себе|ну\s+типа)\s*\){0,2}\.?$/i;
+const NU_TAK_ALTS = ['хм ну да)', 'о как)', 'ага)', 'ну ты)', 'и что дальше?)'];
+
+function fixNuTakStamp(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !NU_TAK_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 6).filter((t) => NU_TAK_RE.test(t)).length;
+  if (hits < 1 && body.length > 10) return reply;
+  return tag + pickAlt(NU_TAK_ALTS);
 }
 
 const LAUGH_ONLY_RE = /^(?:ахах+|хаха+|ахах\s*\)|хах\s*\))$/i;
@@ -981,6 +994,7 @@ module.exports = {
   fixInterestingAlone,
   fixOKakStamp,
   fixLaughOnlyOveruse,
+  fixNuTakStamp,
   applyWave0t2Gates,
   applyWave0t6Gates,
   applyWave0loGates,
