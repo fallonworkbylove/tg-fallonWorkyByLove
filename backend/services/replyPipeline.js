@@ -121,6 +121,7 @@ const {
   maybeNotifyMediaMissed,
   sendRequestedMediaOrDeflect,
 } = require('./mediaSend');
+const mediaReciprocity = require('./mediaReciprocity');
 
 /** Если файл уходит в этом ходе — отказный текст → короткий ack. */
 function ensureMediaAckText(outText, mediaType) {
@@ -611,6 +612,16 @@ async function fireReengage(accountId, peerId) {
       peerId,
     );
     const dialogAgeHours = await getDialogAgeHours(accountId, peerId);
+    // 0t5: взаимный обмен медиа («сначала ты» / отказ при давлении).
+    let mediaBarter = { blockSend: false, forceReply: null, hint: null };
+    try {
+      mediaBarter = await mediaReciprocity.evaluate(accountId, peerId, {
+        history: replyHistory,
+        userText: text,
+      });
+    } catch (_) {
+      mediaBarter = { blockSend: false, forceReply: null, hint: null };
+    }
     // How-long ack важнее generic later/dont_understand — иначе «потом» съедает реакцию на дв.
     let objectionHint = null;
     let ownAvatarHitEarly = false;
@@ -628,6 +639,9 @@ async function fireReengage(accountId, peerId) {
         systemPrompt: settings.prompt,
         dialogAgeHours,
       });
+    }
+    if (mediaBarter.hint) {
+      objectionHint = objectionHint ? `${objectionHint}\n${mediaBarter.hint}` : mediaBarter.hint;
     }
     {
       const hhExtra = humanHardening.buildHardeningHints(text, replyHistory, {
@@ -749,6 +763,12 @@ async function fireReengage(accountId, peerId) {
       );
       return;
     }
+    // 0t5: бартер медиа — «сначала ты» / отказ при давлении.
+    if (mediaBarter.forceReply && (String(text || '').length < 100 || mediaReciprocity.isMediaAsk(text))) {
+      rawReply = mediaBarter.forceReply;
+    } else {
+      rawReply = mediaReciprocity.enforceReply(rawReply, mediaBarter);
+    }
     rawReply = sanitizeReplyAgainstNftLeak(rawReply, objectionHint);
     try {
       rawReply = require('./humanRhythm').applyHonestForget(
@@ -834,12 +854,19 @@ async function fireReengage(accountId, peerId) {
     if (explicitMediaRequest && mediaLink && !mediaType) {
       mediaType = detectRequestedMediaType(text);
     }
+    // 0t5: он скинул своё после «сначала ты» — отдаём долг.
+    if (mediaBarter.fulfillNow && mediaLink && !sexualPressure) {
+      mediaType = mediaBarter.fulfillKind || mediaType || 'photo';
+      if (mediaBarter.fulfillKind === 'circle') mediaType = 'circle';
+      if (mediaBarter.fulfillKind === 'video') mediaType = 'video';
+      if (mediaBarter.fulfillKind === 'photo') mediaType = 'photo';
+    }
     if (sexualPressure && mediaType) {
       console.log(`[${accountLabel(accountId)}] Подавил медиа на секс-давление от ${senderName}.`);
       mediaType = null;
     }
     // Без прямой просьбы — НЕ шлём фото/видео (кроме утечки «[фото билета]» → реальный файл).
-    if (!explicitMediaRequest && !mediaFromLeak) {
+    if (!explicitMediaRequest && !mediaFromLeak && !mediaBarter.fulfillNow) {
       if (mediaType && mediaType !== 'circle') {
         if (rawMediaType === 'photo' || rawMediaType === 'video') {
           console.log(
@@ -855,7 +882,7 @@ async function fireReengage(accountId, peerId) {
         `[${accountLabel(accountId)}] Утечка псевдо-медиа → шлю реальный ${mediaType} для ${senderName}.`,
       );
     }
-    if (mediaType && !explicitMediaRequest && !mediaFromLeak && lastAssistantWasMedia(history)) {
+    if (mediaType && !explicitMediaRequest && !mediaFromLeak && !mediaBarter.fulfillNow && lastAssistantWasMedia(history)) {
       mediaType = null;
     }
     // Сомнение в свежести медиа — новый файл не шлём (см. peerComplainedMediaNotFresh).
@@ -879,11 +906,19 @@ async function fireReengage(accountId, peerId) {
       );
       mediaType = null;
     }
+    // 0t5: пока он не скинул / отказали за давление — медиа не шлём.
+    if (mediaType && mediaBarter.blockSend && !mediaBarter.fulfillNow) {
+      console.log(
+        `[${accountLabel(accountId)}] skip reason=media_reciprocity peer=${senderName} type=${mediaType} why=${mediaBarter.reason}`,
+      );
+      mediaType = null;
+    }
     // Must #55: не слать медиа сразу после питча/профит-скрина.
     if (
       mediaType &&
       !explicitMediaRequest &&
       !mediaFromLeak &&
+      !mediaBarter.fulfillNow &&
       (await humanHardening.shouldBlockMediaAfterPitchAsync(accountId, peerId))
     ) {
       console.log(
@@ -1153,17 +1188,24 @@ async function fireReengage(accountId, peerId) {
           `${outText || ''} ${(text || '') + leakHint}`.trim(),
           replyHistory,
         ),
-        { allowDeflect: explicitMediaRequest || mediaFromLeak || forcedMediaThisTurn },
+        {
+          allowDeflect:
+            explicitMediaRequest || mediaFromLeak || forcedMediaThisTurn || mediaBarter.fulfillNow,
+        },
       );
       mediaSentThisTurn = mediaResult === true || mediaResult?.ok === true;
       if (!mediaSentThisTurn) mediaFailReason = mediaResult?.reason || null;
+      if (mediaSentThisTurn) {
+        mediaReciprocity.markFulfilled(accountId, peerId).catch(() => {});
+      }
     }
     await maybeNotifyMediaMissed({
       accountId,
       peerId,
       senderName,
       settings,
-      explicitMediaRequest: explicitMediaRequest || mediaFromLeak || forcedMediaThisTurn,
+      explicitMediaRequest:
+        explicitMediaRequest || mediaFromLeak || forcedMediaThisTurn || mediaBarter.fulfillNow,
       mediaLink,
       mediaSentThisTurn,
       mediaType,
@@ -2135,6 +2177,16 @@ async function processBufferedMessages(
       if (evening) detailHint = detailHint ? `${detailHint}\n${evening}` : evening;
     }
     const dialogAgeHours = await getDialogAgeHours(accountId, peerId);
+    // 0t5: взаимный обмен медиа («сначала ты» / отказ при давлении).
+    let mediaBarter = { blockSend: false, forceReply: null, hint: null };
+    try {
+      mediaBarter = await mediaReciprocity.evaluate(accountId, peerId, {
+        history,
+        userText: contextualText || text,
+      });
+    } catch (_) {
+      mediaBarter = { blockSend: false, forceReply: null, hint: null };
+    }
     // How-long ack важнее generic later/dont_understand — иначе «потом» съедает реакцию на дв.
     let objectionHint = null;
     let ownAvatarHit = false;
@@ -2153,6 +2205,9 @@ async function processBufferedMessages(
         systemPrompt: settings.prompt,
         dialogAgeHours,
       });
+    }
+    if (mediaBarter.hint) {
+      objectionHint = objectionHint ? `${objectionHint}\n${mediaBarter.hint}` : mediaBarter.hint;
     }
     {
       const hhExtra = humanHardening.buildHardeningHints(contextualText || text, history, {
@@ -2276,6 +2331,18 @@ async function processBufferedMessages(
       );
       return;
     }
+    // 0t5: бартер медиа — «сначала ты» / отказ при давлении.
+    {
+      const askText = contextualText || text;
+      if (
+        mediaBarter.forceReply &&
+        (String(askText || '').length < 100 || mediaReciprocity.isMediaAsk(askText))
+      ) {
+        rawReply = mediaBarter.forceReply;
+      } else {
+        rawReply = mediaReciprocity.enforceReply(rawReply, mediaBarter);
+      }
+    }
     rawReply = sanitizeReplyAgainstNftLeak(rawReply, objectionHint);
     try {
       rawReply = require('./humanRhythm').applyHonestForget(
@@ -2383,12 +2450,19 @@ async function processBufferedMessages(
     if (explicitMediaRequest && mediaLink && !mediaType) {
       mediaType = detectRequestedMediaType(contextualText);
     }
+    // 0t5: он скинул своё после «сначала ты» — отдаём долг.
+    if (mediaBarter.fulfillNow && mediaLink && !sexualPressure) {
+      mediaType = mediaBarter.fulfillKind || mediaType || 'photo';
+      if (mediaBarter.fulfillKind === 'circle') mediaType = 'circle';
+      if (mediaBarter.fulfillKind === 'video') mediaType = 'video';
+      if (mediaBarter.fulfillKind === 'photo') mediaType = 'photo';
+    }
     if (sexualPressure && mediaType) {
       console.log(`[${accountLabel(accountId)}] Подавил медиа на секс-давление от ${senderName}.`);
       mediaType = null;
     }
     // Утечка «[фото билета]» / «[отправила фото]» — не глушим, шлём реальный файл.
-    if (!explicitMediaRequest && !mediaFromLeak) {
+    if (!explicitMediaRequest && !mediaFromLeak && !mediaBarter.fulfillNow) {
       if (mediaType && mediaType !== 'circle') {
         if (rawMediaType === 'photo' || rawMediaType === 'video') {
           console.log(
@@ -2404,7 +2478,13 @@ async function processBufferedMessages(
         `[${accountLabel(accountId)}] Утечка псевдо-медиа → шлю реальный ${mediaType} для ${senderName}.`,
       );
     }
-    if (mediaType && !explicitMediaRequest && !mediaFromLeak && lastAssistantWasMedia(history)) {
+    if (
+      mediaType &&
+      !explicitMediaRequest &&
+      !mediaFromLeak &&
+      !mediaBarter.fulfillNow &&
+      lastAssistantWasMedia(history)
+    ) {
       console.log(
         `[${accountLabel(accountId)}] Подавил повторное медиа (${mediaType}) для ${senderName}: прошлый ответ уже был медиа, явной просьбы нет.`,
       );
@@ -2436,11 +2516,19 @@ async function processBufferedMessages(
       );
       mediaType = null;
     }
+    // 0t5: пока он не скинул / отказали за давление — медиа не шлём.
+    if (mediaType && mediaBarter.blockSend && !mediaBarter.fulfillNow) {
+      console.log(
+        `[${accountLabel(accountId)}] skip reason=media_reciprocity peer=${senderName} type=${mediaType} why=${mediaBarter.reason}`,
+      );
+      mediaType = null;
+    }
     // Must #55: не слать медиа сразу после питча/профит-скрина.
     if (
       mediaType &&
       !explicitMediaRequest &&
       !mediaFromLeak &&
+      !mediaBarter.fulfillNow &&
       (await humanHardening.shouldBlockMediaAfterPitchAsync(accountId, peerId))
     ) {
       console.log(
@@ -2766,17 +2854,24 @@ async function processBufferedMessages(
           `${outText || ''} ${(contextualText || text || '') + leakHint}`.trim(),
           history,
         ),
-        { allowDeflect: explicitMediaRequest || mediaFromLeak || forcedMediaThisTurn },
+        {
+          allowDeflect:
+            explicitMediaRequest || mediaFromLeak || forcedMediaThisTurn || mediaBarter.fulfillNow,
+        },
       );
       mediaSentThisTurn = mediaResult === true || mediaResult?.ok === true;
       if (!mediaSentThisTurn) mediaFailReason = mediaResult?.reason || null;
+      if (mediaSentThisTurn) {
+        mediaReciprocity.markFulfilled(accountId, peerId).catch(() => {});
+      }
     }
     await maybeNotifyMediaMissed({
       accountId,
       peerId,
       senderName,
       settings,
-      explicitMediaRequest: explicitMediaRequest || mediaFromLeak || forcedMediaThisTurn,
+      explicitMediaRequest:
+        explicitMediaRequest || mediaFromLeak || forcedMediaThisTurn || mediaBarter.fulfillNow,
       mediaLink,
       mediaSentThisTurn,
       mediaType,
