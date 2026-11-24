@@ -835,6 +835,51 @@ function fixRepeatHowAsk(reply, history, userMessage) {
   return tag + pickAlt(['о как)', 'ага)', 'ну ты)', 'хм ок)', 'понятно)']);
 }
 
+const LOVE_STAMP_RE =
+  /^(?:ну\s+ты\s+милый|мне\s+(?:тоже\s+)?приятно|с\s+тобой\s+хорошо|приятно\s+слышать)\s*\){0,2}\.?$/i;
+const LOVE_STAMP_ALTS = [
+  'хех ну ты)',
+  'ой мило)',
+  'тепло от тебя)',
+  'ну вот так и нравится)',
+  'радует)',
+  'кайф с тобой, коротко)',
+];
+
+/** Не штамповать одну и ту же ласку подряд. */
+function fixLoveStampOveruse(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !LOVE_STAMP_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 8).filter((t) => LOVE_STAMP_RE.test(t)).length;
+  if (hits < 1) return reply;
+  return tag + pickAlt(LOVE_STAMP_ALTS);
+}
+
+const INTERESTING_ALONE_RE = /^(?:хм[,.]?\s*)?интересно\s*\){0,2}\.?$/i;
+const INTERESTING_ALTS = ['о как, расскажи)', 'ну и?)', 'а дальше?)', 'хм, подробнее)'];
+
+function fixInterestingAlone(reply, userMessage) {
+  if (!reply) return reply;
+  const u = normalizeBareUserText(userMessage);
+  if (u.length < 8) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !INTERESTING_ALONE_RE.test(body)) return reply;
+  return tag + pickAlt(INTERESTING_ALTS);
+}
+
+const O_KAK_RE = /^о\s+как\s*\){0,2}\.?$/i;
+const O_KAK_ALTS = ['серьёзно?)', 'ну ты)', 'хах)', 'ого)', 'и что дальше?)'];
+
+function fixOKakStamp(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !O_KAK_RE.test(body)) return reply;
+  const hits = recentAssistantBodies(history, 6).filter((t) => O_KAK_RE.test(t) || /^о\s+как\b/i.test(t)).length;
+  if (hits < 1) return reply;
+  return tag + pickAlt(O_KAK_ALTS);
+}
+
 /** Пачка 0t6 — anti-script для марафона. */
 function applyWave0t6Gates(reply, history, userMessage) {
   let out = reply;
@@ -846,7 +891,25 @@ function applyWave0t6Gates(reply, history, userMessage) {
   out = fixWhyHereScript(out, userMessage);
   out = fixParrotEcho(out, userMessage);
   out = fixRepeatHowAsk(out, history, userMessage);
+  out = fixLoveStampOveruse(out, history);
+  out = fixInterestingAlone(out, userMessage);
+  out = fixOKakStamp(out, history);
+  out = fixLaughOnlyOveruse(out, history);
   return out;
+}
+
+const LAUGH_ONLY_RE = /^(?:ахах+|хаха+|ахах\s*\)|хах\s*\))$/i;
+const LAUGH_ONLY_ALTS = ['ну ты)', 'ой жесть)', 'серьёзно?)', 'хах ну да)', 'ого)'];
+
+function fixLaughOnlyOveruse(reply, history) {
+  if (!reply) return reply;
+  const { tag, body } = stripTag(reply);
+  if (!body || !LAUGH_ONLY_RE.test(body.replace(/\s+/g, ''))) return reply;
+  const hits = recentAssistantBodies(history, 5).filter((t) =>
+    LAUGH_ONLY_RE.test(String(t).replace(/\s+/g, '')),
+  ).length;
+  if (hits < 1) return reply;
+  return tag + pickAlt(LAUGH_ONLY_ALTS);
 }
 
 /** Пачка гейтов волны 0lo — вызывать из applySoftLite. */
@@ -914,6 +977,10 @@ module.exports = {
   fixWhyHereScript,
   fixParrotEcho,
   fixRepeatHowAsk,
+  fixLoveStampOveruse,
+  fixInterestingAlone,
+  fixOKakStamp,
+  fixLaughOnlyOveruse,
   applyWave0t2Gates,
   applyWave0t6Gates,
   applyWave0loGates,

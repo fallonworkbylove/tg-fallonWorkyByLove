@@ -355,8 +355,8 @@ function pickChatModel(history, userMessage, options = {}) {
   ) {
     return COMPLEX_MODEL;
   }
-  // Длинная/многослойная реплика собеседника.
-  if (ulen >= 200) return COMPLEX_MODEL;
+  // Длинная/многослойная реплика собеседника (0t15: порог 160 — истории).
+  if (ulen >= 160) return COMPLEX_MODEL;
   // Развёрнутый вопрос (не короткое «как дела?»).
   if (ulen >= 90 && /[?]/.test(um)) return COMPLEX_MODEL;
   // Претензия/давление без мата — тоже сложнее Qwen short-ack.
