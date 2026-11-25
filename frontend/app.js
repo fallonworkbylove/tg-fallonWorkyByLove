@@ -2236,17 +2236,22 @@ async function loadAdminData({ force = false } = {}) {
   }
   const live = document.getElementById('admin-live');
   if (live) live.textContent = 'Загрузка…';
-  const [consoleRes, blRes, actRes] = await Promise.all([
-    api.getAdminConsole(),
-    api.getAdminBlacklist().catch(() => ({ blacklist: [] })),
-    api.getAdminActivity({ limit: 80 }).catch(() => ({ events: [] })),
-  ]);
-  state.admin.console = consoleRes.console || consoleRes;
-  state.admin.blacklist = blRes.blacklist || [];
-  state.admin.activity = actRes.events || actRes.items || actRes.activity || [];
-  state.admin.loaded = true;
-  renderAdmin();
-  if (state.activeTab === 'admin') setAdminSub(state.admin.sub);
+  try {
+    const [consoleRes, blRes, actRes] = await Promise.all([
+      api.getAdminConsole(),
+      api.getAdminBlacklist().catch(() => ({ blacklist: [] })),
+      api.getAdminActivity({ limit: 80 }).catch(() => ({ events: [] })),
+    ]);
+    state.admin.console = consoleRes.console || consoleRes;
+    state.admin.blacklist = blRes.blacklist || [];
+    state.admin.activity = actRes.events || actRes.items || actRes.activity || [];
+    state.admin.loaded = true;
+    renderAdmin();
+    if (state.activeTab === 'admin') setAdminSub(state.admin.sub);
+  } catch (err) {
+    if (live) live.textContent = 'Не удалось загрузить — нажми ↻';
+    throw err;
+  }
 }
 
 function adminAddPayload() {

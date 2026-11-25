@@ -172,34 +172,41 @@ async function getConsoleSnapshot() {
     hot = Number(h?.c || 0);
   } catch (_) {}
 
+  // Тяжёлые куски параллельно + таймаут — иначе миниапп-админка висит на «Загрузка…».
+  const withTimeout = (p, ms, label) =>
+    Promise.race([
+      p,
+      new Promise((_, rej) =>
+        setTimeout(() => rej(new Error(`${label} timeout ${ms}ms`)), ms),
+      ),
+    ]);
+
+  const [funnelSettled, liveSettled, costSettled, proxySettled] = await Promise.allSettled([
+    withTimeout(
+      require('./leadScoring').listGlobalScoredConversations({ limit: 120 }),
+      4000,
+      'funnel',
+    ),
+    withTimeout(require('./opsLiveMetrics').getLiveMetrics(), 8000, 'liveMetrics'),
+    withTimeout(require('./finetuneUsage').getCostSummary(), 3000, 'cost'),
+    Promise.resolve().then(() => require('./adminOps').listProxies()?.summary || null),
+  ]);
+
   let funnel = null;
-  try {
-    const lead = require('./leadScoring');
-    funnel = await lead.listGlobalScoredConversations({ limit: 450 });
-  } catch (err) {
-    console.warn('[adminConsoleStats] funnel:', err.message);
-  }
+  if (funnelSettled.status === 'fulfilled') funnel = funnelSettled.value;
+  else console.warn('[adminConsoleStats] funnel:', funnelSettled.reason?.message || funnelSettled.reason);
 
   let liveMetrics = null;
-  try {
-    liveMetrics = await require('./opsLiveMetrics').getLiveMetrics();
-  } catch (e) {
-    console.warn('[adminConsoleStats] liveMetrics:', e.message);
-  }
+  if (liveSettled.status === 'fulfilled') liveMetrics = liveSettled.value;
+  else console.warn('[adminConsoleStats] liveMetrics:', liveSettled.reason?.message || liveSettled.reason);
 
   let cost = null;
-  try {
-    cost = await require('./finetuneUsage').getCostSummary();
-  } catch (e) {
-    console.warn('[adminConsoleStats] cost:', e.message);
-  }
+  if (costSettled.status === 'fulfilled') cost = costSettled.value;
+  else console.warn('[adminConsoleStats] cost:', costSettled.reason?.message || costSettled.reason);
 
   let proxyHealth = null;
-  try {
-    proxyHealth = require('./adminOps').listProxies()?.summary || null;
-  } catch (e) {
-    console.warn('[adminConsoleStats] proxyHealth:', e.message);
-  }
+  if (proxySettled.status === 'fulfilled') proxyHealth = proxySettled.value;
+  else console.warn('[adminConsoleStats] proxyHealth:', proxySettled.reason?.message || proxySettled.reason);
 
   const nft = liveMetrics?.nftFunnel || {};
   const funnelBoard = {
